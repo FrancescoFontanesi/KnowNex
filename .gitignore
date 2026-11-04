@@ -1,0 +1,32 @@
+node_modules/
+.codex/hooks/events.jsonl
+.codex/hooks/feed-events.jsonl
+.knownex/
+dist/
+graft/
+
+# Cache e file temporanei.
+.cache/
+coverage/
+*.tsbuildinfo
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+
+# Credenziali e configurazione personale.
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.pfx
+*.p12
+.vscode/
+.idea/
+.local/
+tmp/
+Thumbs.db
+.DS_Store

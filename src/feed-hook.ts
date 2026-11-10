@@ -1,8 +1,10 @@
+import { workspaceLayout } from './layout.ts';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendFeedEvent, isFeedInput } from './feed.ts';
 import { captureCommentary } from './commentary.ts';
+import { nativeThread } from './native-history.ts';
 
 try {
   let input = '';
@@ -21,17 +23,26 @@ try {
     throw Object.assign(new Error(), {
       code: user ? 'MISSING_PROMPT' : 'MISSING_ASSISTANT_MESSAGE',
     });
-  const directory = resolve(
-    process.env.KNOWNEX_WORKSPACE ??
-      fileURLToPath(new URL('..', import.meta.url)),
-    '.knownex/feed',
-  );
+  const directory = workspaceLayout(
+    resolve(
+      process.env.KNOWNEX_WORKSPACE ??
+        fileURLToPath(new URL('..', import.meta.url)),
+    ),
+  ).feed;
   const event = {
     type: user ? 'user_message' : 'assistant_final',
     sessionId: payload.session_id,
     turnId: payload.turn_id,
     text,
     hook: payload.hook_event_name,
+    ...(typeof payload.transcript_path === 'string'
+      ? {
+          nativeThreadId: await nativeThread(
+            payload.transcript_path,
+            payload.session_id,
+          ).catch(() => null),
+        }
+      : {}),
   } as const;
   if (!isFeedInput(event))
     throw Object.assign(new Error(), { code: 'INVALID_HOOK_PAYLOAD' });

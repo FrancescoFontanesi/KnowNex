@@ -1,3 +1,4 @@
+import { workspaceLayout } from './layout.ts';
 import {
   lstat,
   mkdir,
@@ -5,43 +6,52 @@ import {
   readdir,
   realpath,
   rename,
+  rmdir,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { emptyMemory } from './curator.ts';
 
 const begin = '<!-- knownex:start -->';
 const end = '<!-- knownex:end -->';
-const policy = `${begin}
+const policy = `<!-- knownex:start -->
+
 ## KnowNex continuity
 
-Conversazione acquisita automaticamente: non chiedere all'utente cosa salvare.
-Riusa STATE da SessionStart; quando serve usa knownex-recall selettivamente.
-STATE e autorevole fino al checkpoint confermato; eventi successivi possono cambiarlo.
-Per continuita usa knownex-recall e knownex pending selettivamente, senza prepare,
-consensi, deleghe o scritture: la riconciliazione e solo nel contesto corrente.
-Se STATE manca o il pending e incompleto, dichiara i limiti senza fingere completezza.
-STATE rappresenta il presente, HISTORY le transizioni, Knowledge il dettaglio tematico.
-Preserva obiettivi, decisioni attive, prerequisiti, blocker e attivita critiche aperte.
-Aggiorna Knowledge per argomento, integrando piu momenti senza note per turno.
-Nei resoconti significativi chiarisci quando pertinenti risultati, decisioni,
-evidenze/verifiche, limiti/incertezze, problemi aperti e prossime azioni.
-Niente template, sezioni obbligatorie o riepiloghi per turno; non scrivere testo
-solo per KnowNex. Mantieni naturale il dialogo anche nelle conversazioni non tecniche.
-Riconosci autonomamente milestone: decisione/supersession, risultato verificato,
-cambio di focus, handoff o compattazione imminente con lavoro significativo.
-Usa knownex-handoff: proponi il checkpoint ai milestone e chiedi una sola conferma Si/No.
-Prima del curator serve un Si utente acquisito e legato alla richiesta; No, dubbio
-o silenzio rimandano senza perdere pending. Non ripetere la stessa domanda dopo No
-senza un nuovo milestone significativo o una richiesta manuale di checkpoint.
-Poi pending di progetto, direttiva semantica, una sola delega
-al curator economico configurato, prepare → validate → apply con sigillo.
-Non materializzare per turno; niente retry LLM automatici o test stateless.
-Su indisponibilita/fallimento preserva pending e continua il task; non inventare conferme.
-Un batch attivo per workspace. Non leggere interi archivi o rileggere STATE gia disponibile.
-${end}
+La conversazione viene acquisita automaticamente dagli hook. Non chiedere all'utente cosa salvare e non produrre riepiloghi artificiali per alimentare la memoria.
+
+### Contesto e recupero
+
+- **STATE** viene iniettato da \`SessionStart\`: riusalo direttamente, senza rileggerlo se già disponibile e completo.
+- STATE rappresenta lo stato del progetto fino all'ultimo checkpoint confermato. Eventi successivi possono averlo modificato.
+- Se STATE è sufficiente, rispondi senza ulteriori letture. Per dettagli, evidenze, storico o informazioni successive al cutoff usa \`knownex-recall\` selettivamente.
+- STATE contiene il presente, Knowledge i dettagli tematici, HISTORY le transizioni. Non esplorare interi archivi senza necessità.
+- Riutilizza informazioni e documenti già recuperati durante il turno. Non ripetere letture per semplice conferma.
+- Se il contesto è incompleto, il pending è parziale o un'informazione manca, dichiarane i limiti senza inventare fatti.
+
+### Continuità e checkpoint
+
+Mantieni naturale la conversazione. Esplicita decisioni, risultati, evidenze e problemi aperti quando pertinenti al task, senza template o sezioni obbligatorie.
+
+Riconosci milestone significative (decisioni sostituite, risultati verificati, cambi di focus, handoff o compattazioni rilevanti). Puoi suggerire \`$knownex-checkpoint\`, continuando il lavoro, ma **solo l'invocazione esplicita dell'utente** autorizza il checkpoint. Un assenso generico non equivale all'invocazione.
+
+Su \`$knownex-checkpoint\` esplicito:
+
+1. Esegui \`curate native --stage prepare\`.
+2. Delega una sola volta a \`knownex_curator\`, passando \`requestFile\` e contesto indipendente.
+3. Attendi le ricevute e completa con \`curate native --stage complete\`.
+
+Terra esegue la curatela in modalità \`materialize-only\`. Il principale coordina, ma non legge feed, packet, STATE, HISTORY, Knowledge, proposta o review per supervisionarla e non ripete la valutazione semantica.
+
+Non utilizzare il launcher esterno, \`codex exec\`, npm/npx o altre modalità come fallback per il checkpoint. Nessun retry LLM automatico, materializzazione per turno o test stateless.
+
+Un solo batch attivo per workspace. L'autorizzazione è monouso. Anomalie o incertezze dichiarate impediscono la pubblicazione automatica; l'autoverifica del Curator e i controlli strutturali non garantiscono da soli la completezza semantica.
+
+In caso di indisponibilità o fallimento, preserva il pending, riferisci il limite e prosegui il task senza inventare conferme.
+<!-- knownex:end -->
 `;
 
 function instructions(current: string) {
@@ -90,10 +100,19 @@ const s3Hashes: Record<string, string> = {
   '.knownex/START.md':
     '8dd841614602447afce35bf029e7be3a77eb0f2c18faa621b58a2f31ee28768b',
 };
-const skillNames = ['knownex-handoff', 'knownex-curator', 'knownex-recall'];
+const skillNames = [
+  'knownex-checkpoint',
+  'knownex-curator',
+  'knownex-recall',
+  'knownex-taxonomy',
+];
 const docNames = [
   'CURATOR.md',
+  'CURATION-WORKFLOW.md',
+  'MEMORY-LAYOUT.md',
   'MEMORY-CONTRACT.md',
+  'KNOWLEDGE-REVISIONS.md',
+  'TAXONOMY.md',
   'STORAGE-DURABILITY.md',
   'NAVIGATOR.md',
   'RUNTIME.md',
@@ -135,6 +154,17 @@ export async function initWorkspace(directory: string) {
     throw error;
   }
   const files = new Map<string, string>();
+  files.set(
+    '.codex/config.toml',
+    await readFile(join(packageRoot, '.codex/config.toml'), 'utf8'),
+  );
+  files.set(
+    '.codex/agents/knownex_curator.toml',
+    await readFile(
+      join(packageRoot, '.codex/agents/knownex_curator.toml'),
+      'utf8',
+    ),
+  );
   for (const name of skillNames) {
     files.set(
       `.agents/skills/${name}/SKILL.md`,
@@ -162,6 +192,13 @@ export async function initWorkspace(directory: string) {
         ),
     );
   }
+  files.set(
+    '.agents/skills/knownex-taxonomy/agents/openai.yaml',
+    await readFile(
+      join(packageRoot, '.agents/skills/knownex-taxonomy/agents/openai.yaml'),
+      'utf8',
+    ),
+  );
   for (const name of ['stop', 'feed', 'session']) {
     files.set(
       `.codex/hooks/knownex-${name}.cjs`,
@@ -182,7 +219,9 @@ export async function initWorkspace(directory: string) {
     JSON.stringify(
       {
         hooks: {
-          SessionStart: [{ hooks: [hook('session', 10)] }],
+          SessionStart: [
+            { hooks: [{ ...hook('session', 10), additionalContextLimit: 0 }] },
+          ],
           UserPromptSubmit: [{ hooks: [hook('feed', 10)] }],
           Stop: [{ hooks: [hook('stop', 10), hook('feed', 10)] }],
           SessionEnd: [{ hooks: [hook('stop', 3)] }],
@@ -197,29 +236,58 @@ export async function initWorkspace(directory: string) {
     '# KnowNex runtime\n\n' +
       'Avvia Codex dalla radice del progetto e approva gli hook quando richiesto.\n' +
       'SessionStart (anche dopo compact) rende disponibili STATE e pending di progetto.\n' +
-      'Il principale propone checkpoint ai milestone e attende il consenso Si/No prima del curator.\n' +
+      'Il principale suggerisce $knownex-checkpoint ai milestone; solo una invocazione utente esplicita avvia il curator.\n' +
       'CLI locale: npm exec --offline -- knownex runtime\n' +
-      'Feed unico: .knownex/feed/project.jsonl. Seed: memory/. Confermata: .knownex/curator/memory.\n' +
+      'Feed unico: .knownex/feed/project.jsonl. Seed: .knownex/seed/. Confermata: .knownex/curator/memory.\n' +
       'Nessun LLM dagli hook. Nessuna materializzazione garantita dopo SessionEnd.\n',
   );
   const editable = new Set([
-    'memory/STATE.md',
-    'memory/HISTORY.md',
+    '.knownex/seed/STATE.md',
+    '.knownex/seed/HISTORY.md',
     '.knownex/feed/project.jsonl',
     '.gitignore',
   ]);
-  files.set('memory/STATE.md', emptyMemory['STATE.md']!);
-  files.set('memory/HISTORY.md', emptyMemory['HISTORY.md']!);
+  files.set('.knownex/seed/STATE.md', emptyMemory['STATE.md']!);
+  files.set('.knownex/seed/HISTORY.md', emptyMemory['HISTORY.md']!);
   files.set('.knownex/feed/project.jsonl', '');
   files.set('AGENTS.md', policy);
   files.set(
     '.gitignore',
     'node_modules/\n.knownex/\n.codex/hooks/events.jsonl\n.codex/hooks/feed-events.jsonl\n',
   );
+  const layout = workspaceLayout(root);
+  if (!layout.legacy) {
+    const remap = (name: string) =>
+      name
+        .replace('.knownex/seed/', '.knownex/memory/')
+        .replace('.knownex/feed/', '.knownex/internal/feed/')
+        .replace('.knownex/docs/', '.knownex/internal/docs/')
+        .replace('.knownex/START.md', '.knownex/README.md');
+    for (const [name, text] of [...files]) {
+      files.delete(name);
+      files.set(
+        remap(name),
+        name === '.knownex/START.md'
+          ? '# Memoria KnowNex\n\nApri [STATE](memory/STATE.md) per riprendere il lavoro e [HISTORY](memory/HISTORY.md) per gli stati precedenti.\n\nLe [Knowledge](memory/knowledge/) sono revisioni immutabili organizzate per checkpoint, con categorie facoltative. Segui i link dallo STATE: le note invariate restano nei checkpoint precedenti.\n\nTaxonomy, associazioni e topics sono viste organizzative accessorie in memory/. internal/ contiene feed, capture, run, journal e ricevute: non modificarli manualmente.\n\nSessionStart fornisce STATE; soltanto $knownex-checkpoint autorizza una nuova materializzazione.\n'
+          : text
+              .replaceAll('../../.agents/skills/', '../../../.agents/skills/')
+              .replaceAll(
+                '../../../.knownex/docs/',
+                '../../../.knownex/internal/docs/',
+              ),
+      );
+    }
+    for (const name of [...editable]) {
+      editable.delete(name);
+      editable.add(remap(name));
+    }
+  }
   const missing: string[] = [],
     preserved: string[] = [];
   const updates = new Map<string, { before: string; after: string }>();
-  const manifestName = '.knownex/install.json';
+  const manifestName = layout.legacy
+    ? '.knownex/install.json'
+    : '.knownex/internal/install.json';
   await safePath(root, manifestName);
   let manifestBefore: string | undefined;
   let previous = s3Hashes;
@@ -242,9 +310,9 @@ export async function initWorkspace(directory: string) {
       fail('BOOTSTRAP_MANIFEST_INVALID', manifestName);
   }
   const directories = [
-    '.knownex/feed',
-    '.knownex/captures',
-    'memory/knowledge',
+    relative(root, layout.feed).split('\\').join('/'),
+    relative(root, layout.captures).split('\\').join('/'),
+    relative(root, join(layout.memory, 'knowledge')).split('\\').join('/'),
   ];
   for (const name of directories) await safePath(root, name);
   for (const [name, content] of files) {
@@ -283,6 +351,18 @@ export async function initWorkspace(directory: string) {
       missing.push(name);
     }
   }
+  // Retire only the exact owned old entrypoint; preserve any other user resources.
+  const retired = new Map<string, string>();
+  const oldSkill = '.agents/skills/knownex-handoff/SKILL.md';
+  await safePath(root, oldSkill);
+  try {
+    const current = await readFile(join(root, oldSkill), 'utf8');
+    if (previous[oldSkill] !== hash(current))
+      fail('BOOTSTRAP_CONFLICT', oldSkill);
+    retired.set(oldSkill, current);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   async function replace(name: string, before: string, after: string) {
     await safePath(root, name);
     if ((await readFile(join(root, name), 'utf8')) !== before)
@@ -304,6 +384,22 @@ export async function initWorkspace(directory: string) {
   for (const name of directories) {
     await safePath(root, name);
     await mkdir(join(root, name), { recursive: true });
+  }
+  for (const [name, before] of retired) {
+    await safePath(root, name);
+    if ((await readFile(join(root, name), 'utf8')) !== before)
+      fail('BOOTSTRAP_CONFLICT', name);
+    await unlink(join(root, name));
+    try {
+      await rmdir(dirname(join(root, name)));
+    } catch (error) {
+      if (
+        !['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      )
+        throw error;
+    }
   }
   const version = (
     JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
@@ -340,11 +436,17 @@ export async function initWorkspace(directory: string) {
     workspace: root,
     created: missing,
     updated: [...updates.keys()],
+    removed: [...retired.keys()],
     preserved,
-    warnings: (await readdir(join(root, '.knownex/feed'))).some((name) =>
+    warnings: (await readdir(layout.feed)).some((name) =>
       /^[a-f0-9]{64}\.jsonl$/.test(name),
     )
       ? ['LEGACY_SESSION_FEEDS']
       : [],
+    nextSteps: [
+      `Apri ${root} come workspace Codex e autorizza esplicitamente questo percorso se richiesto.`,
+      'Apri /hooks o Review hooks e approva esplicitamente gli hook KnowNex SessionStart, UserPromptSubmit, Stop e SessionEnd. Il trust del workspace non sostituisce questa approvazione.',
+      'Avvia una nuova sessione Codex per caricare skill e contesto iniziale. Init non modifica trust o approvazioni.',
+    ],
   };
 }

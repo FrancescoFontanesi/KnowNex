@@ -27,6 +27,22 @@ async function fixture(t: TestContext) {
   return { root, script };
 }
 
+test('an existing legacy feed stays in place without creating a canonical feed', async (t) => {
+  const { root, script } = await fixture(t);
+  await mkdir(join(root, '.knownex/feed'), { recursive: true });
+  const result = await invoke(script, {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'legacy',
+    turn_id: 'one',
+    prompt: 'Preserve legacy placement',
+  });
+  assert.equal(result.code, 0);
+  assert.equal((await readdir(join(root, '.knownex/feed'))).length, 1);
+  await assert.rejects(readdir(join(root, '.knownex/internal')), {
+    code: 'ENOENT',
+  });
+});
+
 function invoke(script: string, payload: unknown) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>(
     (resolve, reject) => {
@@ -71,7 +87,7 @@ test('payload stdin originale, quattro eventi, replay e log privi di contenuto',
     assert.deepEqual(JSON.parse(result.stdout), {});
   }
   const name = createHash('sha256').update(session).digest('hex') + '.jsonl';
-  const bytes = await readFile(join(root, '.knownex/feed', name));
+  const bytes = await readFile(join(root, '.knownex/internal/feed', name));
   const frames = bytes
     .toString('utf8')
     .trimEnd()
@@ -128,7 +144,7 @@ test('campo finale o turno mancanti: nessun evento inventato, errore non bloccan
     assert.ok(response.systemMessage.includes(code));
     assert.ok(!result.stdout.includes('PRIVATE_SYNTHETIC_CONTENT'));
   }
-  await assert.rejects(readdir(join(root, '.knownex/feed')), {
+  await assert.rejects(readdir(join(root, '.knownex/internal/feed')), {
     code: 'ENOENT',
   });
   const logs = await readFile(
@@ -183,7 +199,7 @@ test('Stop captures two commentary messages before native final; replay is byte-
   assert.deepEqual(JSON.parse((await invoke(script, stop)).stdout), {});
   const destination = join(
     root,
-    '.knownex/feed',
+    '.knownex/internal/feed',
     createHash('sha256').update(session_id).digest('hex') + '.jsonl',
   );
   const bytes = await readFile(destination);

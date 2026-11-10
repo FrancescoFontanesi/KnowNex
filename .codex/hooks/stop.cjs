@@ -97,7 +97,17 @@ function runSync(source, destination, timeout) {
       throw Object.assign(new Error(), { code: 'INVALID_HOOK_PAYLOAD' });
     }
     event = payload;
-    const folder = join(root, '.knownex/captures');
+    if (
+      existsSync(join(root, '.knownex/feed')) &&
+      existsSync(join(root, '.knownex/internal/feed'))
+    )
+      throw Object.assign(new Error(), { code: 'WORKSPACE_LAYOUT_AMBIGUOUS' });
+    const folder = join(
+      root,
+      existsSync(join(root, '.knownex/internal/feed'))
+        ? '.knownex/internal/captures'
+        : '.knownex/captures',
+    );
     mkdirSync(folder, { recursive: true });
     const name =
       createHash('sha256').update(event.session_id).digest('hex') + '.jsonl';

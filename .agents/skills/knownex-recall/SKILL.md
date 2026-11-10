@@ -1,64 +1,98 @@
 ---
 name: knownex-recall
-description: Recupera selettivamente stato, decisioni storiche e dettagli KnowNex con il navigatore deterministico, quando il task richiede contesto dalla memoria procedurale.
+description: Recupera selettivamente Knowledge, HISTORY e pending quando lo STATE già disponibile non basta, servono evidenze specifiche o occorre ricostruire decisioni storiche. Non esegue checkpoint o curatela.
 ---
 
-# Recall KnowNex
+# KnowNex Recall
 
-Usa la directory di memoria autorizzata con `--memory PERCORSO` in ogni comando;
-senza opzione il navigatore usa `memory/` nella directory corrente.
-Il binario è `knownex`; dalla repository puoi usare `npm start -- memory ...`
-dopo la build, con gli stessi argomenti.
+**Obiettivo:** recuperare il minimo contesto sufficiente per rispondere correttamente, preservando provenienza, distinzione tra presente e storico e assenza di invenzioni.
 
-## Cold start
+Riutilizza STATE, istruzioni, risultati e documenti già presenti nel contesto. Non ricaricare la skill o gli stessi contenuti senza una necessità concreta.
 
-- STATE e autorevole fino al cutoff confermato, non necessariamente fino a ora.
-  Se il task richiede continuita, controlla il cutoff di SessionStart e della lettura pending e gli
-  eventi successivi: usa `knownex pending` senza prepare, consenso o delega.
-  L'output dichiara cutoff, finestra, provenienza, copertura e nextCursor. Per un
-  intervallo usa `--from N --through M`; per continuare `--cursor TOKEN`, eventualmente
-  `--limit N`. `--workspace PERCORSO` permette letture su copie locali.
-  Leggi solo le finestre pertinenti. Un evento grande puo arrivare in frammenti:
-  ricomponi text in ordine usando sequence/textOffset, senza perderne il grado di certezza.
-  complete riguarda la finestra; pendingComplete non prova comprensione o che le
-  pagine precedenti siano nel contesto. Controlla anche newerEvents e incompleteTailBytes.
-  Se il checkpoint cambia, il cursore diventa obsoleto: riparti dal nuovo cutoff.
-  Con CURATOR_RECOVERY_REQUIRED ferma la riconciliazione: la recovery esistente e
-  un'operazione separata; questa lettura non la esegue.
-  Ricostruisci solo nel contesto corrente decisioni, risultati, blocker e attivita
-  aperte; eventi piu recenti possono superare STATE se autorevoli e supportati.
-  Distingui decisioni, ipotesi e risultati dichiarati/verificati. Se STATE e omesso
-  o il pending non e esaminato abbastanza, dichiara la ricostruzione parziale.
-  Non creare WORKING.md o snapshot. La riconciliazione non e un checkpoint:
-  non scrive memoria o cutoff. Una materializzazione futura richiede sempre S4.2.
+## 1. Prima di accedere alla memoria
 
-- Leggi `knownex memory state --memory PERCORSO` una sola volta.
-  Se STATE aggiornato è già nel contesto, riusalo. Rileggilo dopo un aggiornamento noto.
-- Non precaricare HISTORY o tutte le Knowledge. Approfondisci solo ciò che manca
-  per il task; se STATE basta, fermati.
+1. **STATE sufficiente:** rispondi direttamente. Non rileggerlo e non avviare Recall soltanto per confermare informazioni già disponibili.
+2. **Dettaglio o evidenza mancante:** segui i riferimenti pertinenti da STATE verso Knowledge.
+3. **Informazione storica:** consulta HISTORY o la revisione specifica necessaria.
+4. **Informazione successiva al cutoff:** consulta `pending` soltanto se rilevante per la richiesta.
+5. **Informazione assente:** non inventarla e non estendere indefinitamente la ricerca.
 
-## Ricerca mirata
+STATE è autorevole fino al checkpoint confermato, non necessariamente fino al momento corrente.
 
-- Se conosci già l'ID pertinente, passa direttamente a `read`.
-- Altrimenti usa `knownex memory find "query specifica" --memory PERCORSO`.
-  Scegli pochi termini tecnici o concetti noti: la ricerca richiede tutte le parole.
-  Restringi con `--type history` o `--type knowledge` quando sai dove cercare.
-- `find` restituisce al massimo cinque candidati. Se l'estratto basta, non aprire altro.
-  Usa `knownex memory read ID --memory PERCORSO` solo per gli ID pertinenti.
-- Riusa documenti e risultati già disponibili per la stessa versione della memoria.
-  Non aprire tutti i candidati né ripetere query equivalenti senza una nuova esigenza.
-- Un output compresso o troncato non giustifica riletture identiche: recupera
-  l'output originale se il trasporto lo consente; altrimenti segnala il limite.
+`SessionStart` tenta l'iniezione integrale anche dopo compact, ma questo non prova da solo la consegna al modello. Se STATE manca, è troncato o non più disponibile nel contesto, recuperalo una volta mediante la CLI.
 
-## Storia e informazioni mancanti
+## 2. Accesso canonico
 
-- Leggi singoli ID `H000003` o `kn-...`; non seguire automaticamente i link.
-- Distingui data/intervallo della transizione dallo STATE precedente archiviato
-  nel segmento. Una decisione storica non sostituisce lo STATE corrente più recente.
-- Dopo una ricerca vuota, riformula solo con termini alternativi motivati dalle
-  evidenze disponibili. Fermati quando mancano nuovi indizi utili; niente esplorazione esaustiva.
-- `not_found` non prova un'assenza semantica universale: dichiara ciò che non è
-  documentato nelle evidenze recuperate, senza inventare dettagli.
-- Usa memoria confermata e stabile. Su workspace V2.1 il navigatore può completare
-  un apply già autorizzato; per letture senza recovery usa una copia stabile standalone.
-  Se emerge un errore d'integrità, riportalo senza tentare riparazioni o invocare il curator.
+Dalla radice del workspace usa:
+
+`npm exec --offline -- knownex ...`
+
+Il comando utilizza il pacchetto locale, senza installazione globale. Non effettuare discovery generica se il comando e l'operazione sono già noti.
+
+La memoria installata si trova normalmente in `.knownex/memory`; i workspace legacy possono utilizzare `.knownex/curator/memory` o `.knownex/seed`, senza migrazione automatica. Per copie esterne usa `--memory PERCORSO`; il default standalone è `memory/`.
+
+Comandi principali:
+
+- **STATE:** `npm exec --offline -- knownex memory state`
+- **Riferimento noto:** `npm exec --offline -- knownex memory read "RIFERIMENTO"`
+- **Sezione nota:** `npm exec --offline -- knownex memory read "RIFERIMENTO#anchor"`
+- **Riferimento ignoto:** `npm exec --offline -- knownex memory find "termini specifici"`
+- **Pending:** `npm exec --offline -- knownex pending`
+
+Usa direttamente `read` per ID logici `kn-...`, percorsi Knowledge e revisioni note. Non utilizzare `find` quando possiedi già il riferimento.
+
+Risolvi i collegamenti relativi dal documento di origine rispetto alla radice della memoria. `memory read` non apre artefatti esterni.
+
+## 3. Navigazione efficiente
+
+- **Ricerca:** usa pochi termini distintivi; `find` richiede tutti i termini. Puoi restringere con `--type knowledge` o `--type history`.
+- **Risultati:** `find` restituisce fino a cinque candidati. Se l'estratto contiene già la risposta e la provenienza necessaria, fermati. Altrimenti apri soltanto il riferimento pertinente.
+- **Sezioni:** preferisci `#anchor` quando basta una sezione. Amplia la lettura soltanto per recuperare qualificazioni o contesto mancanti.
+- **Riuso:** non rileggere un documento già acquisito durante il turno, salvo modifiche note, troncamenti o informazioni effettivamente mancanti.
+- **Arresto:** termina la navigazione quando risposta, qualificazioni e provenienza sono sufficienti. Non cercare conferme ridondanti.
+
+Per audit o richieste esplicitamente esaustive, estendi invece la copertura in modo verificabile e dichiara eventuali limiti.
+
+## 4. Storico e revisioni
+
+Usa gli strumenti specifici quando necessari:
+
+- `memory read "H000003"` oppure `"HISTORY.md#h000003"` per un segmento storico.
+- `memory read "kn-...@REV"` per una revisione precisa.
+- `memory read "kn-..." --at N` per il checkpoint confermato N, anche noop.
+- `memory read "kn-..." --at H000003` per il cutoff associato allo STATE archiviato.
+- `memory category CHIAVE` per revisioni classificate, con `--limit` e `--cursor` quando necessari.
+
+Checkpoint, revisioni e identificativi HISTORY sono distinti. I cursori delle categorie scadono dopo modifiche. `thematicCategories` descrive l'organizzazione attuale; `category` la collocazione fisica originaria.
+
+Non sostituire una revisione storica con quella corrente. Distingui decisioni superate, stato attuale, motivazioni, fonti e data delle transizioni. Lo STATE archiviato precede la transizione descritta dal relativo segmento HISTORY.
+
+Se lo storico non esiste prima della baseline, dichiaralo.
+
+## 5. Provenienza e informazioni mancanti
+
+Quando la risposta dipende dalla memoria, identifica l'evidenza pertinente senza effettuare letture aggiuntive solo per produrre citazioni decorative.
+
+- Riporta riferimenti documentali e identificativi degli eventi quando disponibili e rilevanti.
+- Distingui fatti confermati, risultati sperimentali, decisioni superate e informazioni ancora incerte.
+- Se una ricerca non trova un'informazione, indica l'ambito effettivamente consultato.
+- `not_found` non dimostra assenza universale. Ripeti o amplia la ricerca solo quando emergono nuovi indizi.
+- Non dedurre un evento o una provenienza specifica se non sono presenti nei risultati.
+
+Per pending parziali, frammenti e paginazione consulta [RUNTIME.md](../../../docs/RUNTIME.md), sezione S4.3. Su `CURATOR_RECOVERY_REQUIRED` interrompi il recupero. Pending è una consultazione di sola lettura e non autorizza checkpoint.
+
+## 6. Integrità e arresto
+
+Usa esclusivamente la CLI KnowNex per le letture ordinarie, senza `Get-Content`, ricodifiche o conversioni PowerShell intermedie.
+
+La CLI restituisce JSON ASCII-safe: gli escape Unicode preservano i valori dopo parsing. Problemi di visualizzazione del terminale non autorizzano modifiche ai byte dei documenti.
+
+Per gli input congelati di un run utilizza l'I/O canonico nel Node REPL.
+
+Non ripetere identicamente un output troncato: acquisisci una sezione appropriata o dichiara la copertura incompleta.
+
+Su workspace V2.1 una lettura può completare un apply già autorizzato; quando serve garanzia read-only usa una copia standalone stabile. Su errori di integrità o recovery necessaria, fermati senza riparazioni o invocazioni del Curator.
+
+Se il percorso canonico non è disponibile, segnala il limite senza fallback non supportati.
+
+**Conclusione:** rispondi utilizzando il minimo contesto sufficiente. Recall recupera conoscenza, non produce nuova curatela.

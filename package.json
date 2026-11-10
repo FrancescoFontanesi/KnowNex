@@ -1,6 +1,6 @@
 {
   "name": "knownex",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.11",
   "private": true,
   "description": "Memoria procedurale locale per workspace Codex.",
   "type": "module",
@@ -9,19 +9,17 @@
   },
   "files": [
     "dist/",
+    ".codex/config.toml",
+    ".codex/agents/knownex_curator.toml",
     ".codex/hooks/stop.cjs",
     ".codex/hooks/feed.cjs",
     ".codex/hooks/session.cjs",
-    ".agents/skills/knownex-handoff/SKILL.md",
+    ".agents/skills/knownex-checkpoint/SKILL.md",
     ".agents/skills/knownex-curator/SKILL.md",
     ".agents/skills/knownex-recall/SKILL.md",
-    "docs/CURATOR.md",
-    "docs/MEMORY-CONTRACT.md",
-    "docs/STORAGE-DURABILITY.md",
-    "docs/NAVIGATOR.md",
-    "docs/INSTALL.md",
-    "docs/RUNTIME.md",
-    "docs/CHECKPOINT-CONSENT.md"
+    ".agents/skills/knownex-taxonomy/SKILL.md",
+    ".agents/skills/knownex-taxonomy/agents/openai.yaml",
+    "docs/"
   ],
   "engines": {
     "node": "^24.11.0 || ^26.0.0"

@@ -1,0 +1,12 @@
+{
+  "name": "knownex-evaluation",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "demo": "node demo.mjs"
+  }
+}

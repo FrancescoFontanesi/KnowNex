@@ -1,5 +1,10 @@
 # V2.3 / V2.3b — Durabilità delle promozioni
 
+Il [versionamento Knowledge](KNOWLEDGE-REVISIONS.md) estende il journal ai soli nuovi
+archivi/ricevute: i loro file e il namespace `revisions/` vengono sincronizzati
+prima del checkpoint v3. La recovery v1 rimane supportata. Questa estensione è
+verificata con crash/EIO simulati e non aggiunge evidenze di durabilità fisica.
+
 **V2.3b: protocollo implementato e verificato sotto modello B condizionale.**
 La durabilità fisica C rimane non dimostrata; non viene avviata la qualificazione.
 Le sezioni V2.3 conservano diagnosi e misure precedenti, non descrivono il codice
@@ -188,3 +193,13 @@ Esito finale V2.3b: nove scenari della matrice e il fallimento della barriera jo
 passano; il checkpoint `null` viene rifiutato. `npm run check` passa con 118 test,
 typecheck, controllo formato e build. Verdetto **READY per A e B sotto le assunzioni
 indicate; C non dimostrata**.
+
+## Layout canonico della memoria
+
+Le nuove installazioni pubblicano le revisioni direttamente in .knownex/memory/knowledge
+e STATE/HISTORY in .knownex/memory. Journal e ricevute rimangono in internal/curator.
+Le barriere di pubblicazione e dei parent seguono i percorsi effettivi; prima del
+checkpoint vengono sincronizzati anche i HEAD correnti, senza proiezioni piatte
+persistenti. La recovery ricostruisce la stessa generazione logica dai HEAD.
+I workspace legacy non sono spostati. Nessuna nuova garanzia di durabilita fisica.
+Dettagli e limiti dei lettori Markdown esterni: [MEMORY-LAYOUT.md](MEMORY-LAYOUT.md).

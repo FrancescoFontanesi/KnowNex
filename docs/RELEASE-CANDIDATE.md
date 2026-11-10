@@ -1,42 +1,48 @@
-# KnowNex 0.1.0-rc.1 — evidenza offline S5
+# KnowNex 0.1.0-rc.11 ? verifiche e limiti
 
-Verdetto: **READY per i criteri offline**. Nessuna qualificazione semantica reale
-e dichiarata sulla base di queste prove.
+## Contratto corrente
 
-- Archivio locale: `.local/s5-rc/package/knownex-0.1.0-rc.1.tgz`.
-- SHA-256: `8dc883a35258ca3aa225d01f9f20679c6b6226b4d09ce246bd8e919f9e8f9531`.
-- Package: 32 file, 70.701 byte compressi, nessuna dipendenza runtime.
-- `npm run check`: 138 test superati, zero fallimenti; typecheck, formatter e
-  compilazione della CLI e del helper single-pass superati.
-- Una prova integrata dell'archivio realmente installato offline in un workspace
-  temporaneo esterno supera bootstrap, hook sintetici, Capture/feed, due sessioni,
-  STATE/pending, lettura bounded, consensi Si/No, validate/apply e recovery,
-  batch fallito/ritiro/nuovo consenso e helper single-pass compilato.
-- I processi runtime hanno accesso filesystem limitato al workspace; una lettura
-  esplicita del checkout sorgente viene rifiutata. Nessun accesso al sorgente e
-  necessario per i comandi installati.
-- Reinstallazione della stessa RC e secondo init: file confermati, conoscenza,
-  consenso, journal e feed conservano byte e mtime; nessuna riscrittura gestita.
-- Una precedente risorsa riconosciuta dal manifest viene aggiornata; una modifica
-  dell'utente agli hook viene rifiutata con conflitto esplicito e senza sovrascrittura.
-- L'upgrade dall'archivio S3 originale aggiorna solo risorse con hash esatti noti;
-  STATE/HISTORY/Knowledge, checkpoint, journal e Capture/feed esistenti rimangono
-  byte-identici. I feed legacy per-sessione sono preservati e segnalati come
-  bloccati: **non viene eseguita una migrazione** nel feed di progetto.
-- AGENTS personale e ignore preesistenti rimangono preservati. Git ignora i feed,
-  journal privati e node_modules nel workspace di prova.
+Il feed acquisito dagli hook e la fonte conversazionale del checkpoint.
+Sol esegue prepare, Terra materializza, Sol esegue complete. Il percorso non
+richiede history Codex, App Server annidati o review semantica di Sol.
+Autorizzazione monouso, cutoff, hash, ricevute, revisioni e recovery rimangono
+obbligatori. La compatibilita dei dati legacy fa parte della versione corrente.
 
-Log e risultati locali: `.local/s5-check.txt`, `.local/s5-rc/pack.json`,
-`.local/s5-rc/smoke.txt`, `.local/s5-rc/result.json`. Non sono versionati.
-L'archivio S3 storico rimane intatto; nessun nuovo archivio contiene log, sorgenti
-TypeScript, test, feed privati, `.local/` o preferenze modello locali.
+## Verifiche riproducibili
 
-Restano UNMEASURED nella sessione reale: approvazione/esecuzione effettiva degli
-hook da Codex, attivazione spontanea delle skill, riconoscimento dei milestone,
-interpretazione semantica del pending e della continuita critica, dialogo Si/No
-e disponibilita/delega del curator economico. Non sono stati avviati modelli,
-subagenti o benchmark LLM. Le garanzie di storage restano condizionate al modello
-documentato, senza nuova dimostrazione di durabilita fisica.
+Dalla repository:
 
-Installazione e rimozione: [INSTALL](INSTALL.md). Il commit che include questo
-documento consolida la RC; nessun tag, push o pubblicazione npm e richiesto.
+```powershell
+npm ci
+npm run check
+npm --prefix evaluation test
+npm pack --pack-destination "C:\pacchetti"
+```
+
+Per verificare l'archivio reale con installazione e reinstallazione offline:
+
+```powershell
+$env:KNOWNEX_INSTALL_ARCHIVE = "C:\pacchetti\knownex-0.1.0-rc.11.tgz"
+node --test tests/bootstrap.test.ts
+```
+
+La suite verifica CLI locale, skill e ruolo nativo, hook, emissione di STATE,
+preservazione dei dati, autorizzazioni, cutoff, apply e recovery sintetici.
+La prova dell'originale fixture S3 e opzionale: un caso saltato non dimostra
+compatibilita con quella specifica installazione storica.
+
+## Limiti aperti
+
+- Trust del workspace e approvazione degli hook richiedono intervento esplicito.
+- Emissione integra di STATE e consegna effettiva al modello sono confini diversi.
+- La review del Curator e i controlli strutturali non provano completezza semantica.
+- Il feed conserva gli eventi acquisiti; edit retroattivi non acquisiti non sono
+  rilevati automaticamente. Gli hash non certificano una conversazione esterna.
+- `DESTINATION_BUSY` e stato osservato in una suite completa; la causa resta
+  non accertata. I lock conservativi non vengono aggirati con retry arbitrari.
+- Le prove offline non qualificano comportamento LLM, prestazioni generali o
+  durabilita fisica del dispositivo.
+
+Le evidenze storiche e i vecchi pacchetti sono conservati fuori dalla repository.
+Per l'uso consultare [INSTALL](INSTALL.md), [workflow](CURATION-WORKFLOW.md) e
+[durabilita](STORAGE-DURABILITY.md).

@@ -1,5 +1,12 @@
 # Feed conversazionale
 
+Il feed e la fonte autorevole della materializzazione: solo gli eventi
+registrati vengono elaborati. nativeThreadId e source sono metadati disponibili,
+non attestazioni esterne. Il checkpoint non interroga la history Codex; modifiche
+retroattive non acquisite dagli hook restano non rilevate. Gli hash assicurano
+coerenza interna, non completezza o autenticita indipendente contro un processo
+che controlla il workspace. Le esclusioni storiche restano conservate.
+
 ## Feed e backup S1
 
 Il feed conserva `user_message`, `assistant_commentary` e `assistant_final`,
@@ -10,7 +17,10 @@ input)` in `src/feed.ts` non importa formati Codex: riceve `type`, `sessionId`,
 `turnId`, `text` e `hook`, e aggiunge `sequence` (da 1) e `capturedAt` (UTC ISO).
 `hook` è la provenienza fornita dal chiamante, non un identificativo dell’evento.
 
-Ogni sessione usa `.knownex/feed/<sha256 UTF-8 di sessionId>.jsonl`, escluso da Git.
+Il workspace installato usa `.knownex/internal/feed/project.jsonl`, escluso da Git, condiviso
+fra sessioni. Il formato per-sessione `.knownex/feed/<sha256 UTF-8 di sessionId>.jsonl`
+rimane il formato legacy: init lo conserva e il runtime ne segnala la presenza,
+senza una migrazione implicita. Le identita mantengono sempre la sessione originale.
 Ogni riga LF completa è un frame `{ block, checksum }`, con blocco
 `{ version: 1, previous, event }`. `checksum` è SHA-256 di `JSON.stringify(block)`;
 `previous` è il checksum del frame precedente, oppure `null`. La sequenza
@@ -43,10 +53,12 @@ persistente o un file di stato separato.
 La prova reale dei payload verifica `session_id` e `turn_id` coincidenti tra
 `UserPromptSubmit` e `Stop`, con `prompt` e `last_assistant_message` di tipo stringa.
 La configurazione `.codex/hooks.json` aggiunge `UserPromptSubmit` e un secondo
-handler a `Stop`, entrambi con comando `node "F:/KnowNex/.codex/hooks/feed.cjs"`.
+handler a `Stop`, entrambi con comando relativo al workspace
+`node ".codex/hooks/knownex-feed.cjs"`, generato da init.
 Gli handler S1 di Stop e SessionEnd restano invariati.
 
-Lo script passa il payload via stdin a `src/feed-hook.ts`, mai negli argomenti
+Lo script passa il payload via stdin a `dist/feed-hook.js` nel package installato
+(`src/feed-hook.ts` nel fallback di sviluppo), mai negli argomenti
 del processo. L’adattatore estrae il campo originale e invoca il writer comune.
 Durante Stop tenta prima l'acquisizione selettiva dei commentary del medesimo
 turno. I problemi del transcript non impediscono di conservare il finale nativo;

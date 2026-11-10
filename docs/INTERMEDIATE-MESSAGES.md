@@ -84,7 +84,8 @@ eventi dell'assistente successivi: il messaggio utente è già rappresentato nel
 seed. Le fixture verificano separatamente tutti e quattro i messaggi nella
 finestra pending, il riordino di un finale acquisito prima degli intermedi e il
 successivo avanzamento del checkpoint senza replay degli eventi confermati.
-Evidenze locali, senza copia integrale dei transcript: `.local/r2-validation/`.
+Le evidenze storiche `r2-validation` sono archiviate fuori dal repository;
+la posizione locale e indicata in `.local/ARCHIVE.md`.
 
 Dopo Reload Window e ripresa della stessa chat, Codex sostituisce realmente il
 transcript da legacy a paginated. I due ID messaggio e i turni retained restano

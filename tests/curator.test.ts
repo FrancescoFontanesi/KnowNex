@@ -22,7 +22,6 @@ import {
   validateCurator,
   applyCurator,
   abandonCurator,
-  requestCurator,
   readPendingEvents,
 } from '../src/curator.ts';
 import { historySegments, historyAppendix } from '../src/history.ts';
@@ -141,7 +140,141 @@ async function fixture(t: TestContext, twoNotes = false) {
   };
 }
 
-test('two materializations freeze the window, preserve active context and append exact previous STATE', async (t) => {
+async function pinnedBaselineState(work: string, state: string) {
+  const { record } = JSON.parse(
+    await readFile(join(work, 'apply.json'), 'utf8'),
+  );
+  const file = record.revisionFiles.find((p: { file: string }) =>
+    p.file
+      .split('/')
+      .at(-1)!
+      .startsWith('kn-00000000-0000-4000-8000-000000000001--b-'),
+  ).file;
+  assert.match(
+    await readFile(join(work, 'revisions', file), 'utf8'),
+    /id: kn-00000000-0000-4000-8000-000000000001/,
+  );
+  return state.replace('knowledge/topic.md', '../revisions/' + file);
+}
+
+test('STATE sizes across the old threshold validate, confirm and noop without losing linked knowledge', async (t) => {
+  const f = await fixture(t),
+    p = await f.propose();
+  assert.equal(p.packet.stateBudget, undefined);
+  const first = await validateCurator(f.work);
+  const feed = await readFile(f.feed);
+  const knowledge = await readFile(join(f.memory, 'knowledge/topic.md'));
+  let latest = first;
+  for (const size of [6143, 6144, 6145, 24576]) {
+    const padding = size - first.stateBytes;
+    const state =
+      p.proposal.state +
+      '🧠'.repeat(Math.floor(padding / 4)) +
+      'x'.repeat(padding % 4);
+    await writeFile(p.proposalFile!, JSON.stringify({ ...p.proposal, state }));
+    latest = await validateCurator(f.work);
+    assert.equal(latest.stateBytes, size); // Final pinned text, not the raw proposal.
+    assert.equal('stateBudgetBytes' in latest, false);
+  }
+  // Prepared packets and validations from the former policy remain usable:
+  // their obsolete diagnostic metadata imposes no limit and does not change the seal.
+  await writeFile(
+    join(p.run!, 'packet.json'),
+    JSON.stringify({ ...p.packet, stateBudget: { maxBytes: 6144 } }),
+  );
+  const approvalFile = join(p.run!, 'validated.json');
+  const approval = JSON.parse(await readFile(approvalFile, 'utf8'));
+  await writeFile(
+    approvalFile,
+    JSON.stringify({ ...approval, stateBudgetBytes: 6144 }),
+  );
+  await assert.rejects(applyCurator(f.work, first.seal), {
+    code: 'CURATOR_CONFIRMATION_REQUIRED',
+  });
+  await applyCurator(f.work, latest.seal);
+  const confirmed = await memoryState(f.memory);
+  assert.equal(Buffer.byteLength(confirmed), 24576);
+  const target = /\[Topic\]\(([^)]+)\)/.exec(confirmed)![1]!;
+  assert.ok(
+    (await memoryRead(f.memory, target)).content.includes('Technical detail.'),
+  );
+  assert.deepEqual(
+    await readFile(join(f.memory, 'knowledge/topic.md')),
+    knowledge,
+  );
+  assert.deepEqual(await readFile(f.feed), feed);
+  const next = await f.propose(3);
+  await writeFile(next.proposalFile!, JSON.stringify({ action: 'noop' }));
+  const noop = await validateCurator(f.work);
+  assert.equal(noop.stateBytes, 24576);
+  await applyCurator(f.work, noop.seal);
+  assert.equal(await memoryState(f.memory), confirmed);
+});
+
+test('legacy extended STATE remains readable and authorized noop recovery and replay remain intact', async (t) => {
+  const f = await fixture(t);
+  const legacyState =
+    '# Legacy extended\n\n' +
+    'é'.repeat(10000) +
+    '\n[E001](../feed/' +
+    basename(f.feed) +
+    ')\n';
+  await writeFile(join(f.initialMemory, 'STATE.md'), legacyState);
+  const work = join(f.root, 'legacy');
+  await initCurator(work, f.initialMemory, f.feed, 1);
+  const memory = join(work, 'memory');
+  const confirmed = await memoryState(memory);
+  assert.ok(Buffer.byteLength(confirmed) > 6144);
+  const prepared = await prepareCurator(work, undefined, { through: 2 });
+  await writeFile(prepared.proposal!, JSON.stringify({ action: 'noop' }));
+  const validated = await validateCurator(work);
+  const crashedPid = crashApply(work, validated.seal, 'apply.json');
+  const crashEndedAt = Date.now();
+  assert.equal(await memoryState(memory), confirmed);
+  assert.equal(
+    JSON.parse(await readFile(join(work, 'checkpoint.json'), 'utf8')).sequence,
+    2,
+  );
+  assert.deepEqual(await applyCurator(work, validated.seal), {
+    status: 'applied',
+    action: 'noop',
+    through: 2,
+  });
+  const next = await prepareCurator(work, undefined, { through: 3 });
+  await writeFile(next.proposal!, JSON.stringify({ action: 'noop' }));
+  const noop = await validateCurator(work);
+  try {
+    await applyCurator(work, noop.seal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'DESTINATION_BUSY') {
+      const owner = JSON.parse(await readFile(f.feed + '.lock', 'utf8'));
+      const processInfo =
+        process.platform === 'win32'
+          ? spawnSync(
+              'powershell.exe',
+              [
+                '-NoProfile',
+                '-Command',
+                `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(owner.pid)}" | Select-Object ProcessId,ParentProcessId,Name,CreationDate | ConvertTo-Json -Compress`,
+              ],
+              { encoding: 'utf8', windowsHide: true },
+            ).stdout.trim()
+          : '';
+      t.diagnostic(
+        JSON.stringify({
+          crashedPid,
+          crashEndedAt,
+          owner,
+          currentPid: process.pid,
+          processInfo,
+        }),
+      );
+    }
+    throw error;
+  }
+  assert.equal(await memoryState(memory), confirmed);
+});
+test('two materializations freeze the window, preserve active context and append previous STATE with pinned documentary links', async (t) => {
   const f = await fixture(t),
     source = await readFile(f.feed);
   const state0 = await readFile(join(f.memory, 'STATE.md'), 'utf8');
@@ -164,9 +297,10 @@ test('two materializations freeze the window, preserve active context and append
   const v1 = await validateCurator(f.work);
   await applyCurator(f.work, v1.seal);
   const history1 = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
+  const pinnedState0 = await pinnedBaselineState(f.work, state0);
   assert.ok(
     history1.includes(
-      state0
+      pinnedState0
         .split('\n')
         .map((l) => '> ' + l)
         .join('\n'),
@@ -180,14 +314,14 @@ test('two materializations freeze the window, preserve active context and append
     [3, 4],
   );
   const v2 = await validateCurator(f.work);
-  // CLI promotion requires acquired consent, even for legacy feed runs.
+  // CLI promotion requires a user invocation, even for legacy feed runs.
   const child = spawnSync(
     process.execPath,
     ['src/curator-cli.ts', 'apply', '--work', f.work, '--confirm', v2.seal],
     { encoding: 'utf8' },
   );
   assert.equal(child.status, 1, child.stderr);
-  assert.equal(JSON.parse(child.stderr).code, 'CURATOR_CONSENT_REQUIRED');
+  assert.equal(JSON.parse(child.stderr).code, 'CURATOR_HANDOFF_REQUIRED');
   // Retain the trusted legacy API's independent-process promotion check.
   const trusted = spawnSync(
     process.execPath,
@@ -380,6 +514,156 @@ test('dedicated HISTORY event ranges remain structural, canonical and bounded', 
   }
 });
 
+test('selective packet and two authored updates preserve linked details and unselected notes', async (t) => {
+  // Authored expectations exercise transport/integrity, not LLM semantic selection.
+  const f = await fixture(t, true);
+  const untouched = await readFile(join(f.memory, 'knowledge/second.md'));
+  const checkpointBefore = await readFile(join(f.work, 'checkpoint.json'));
+  const texts = [
+    'Riscrivi il riepilogo in parole semplici, senza nuovi fatti.',
+    'Comando digitato male, corretto senza conseguenze.',
+    'Il percorso dipendeva dal cwd; applicata la correzione. Build dichiarata verde, collaudo funzionale non eseguito.',
+    'Il formato conserva R-31 e e\u0301 senza normalizzazione. Dettagli secondari ma durevoli.',
+    'Nessun errore osservato sui file locali; rete non provata. Usare B anziche A solo per export locale.',
+  ];
+  for (const [index, text] of texts.entries())
+    await appendFeedEvent(dirname(f.feed), {
+      type: 'user_message',
+      sessionId: 's',
+      turnId: 'source-' + index,
+      text,
+      hook: 'UserPromptSubmit',
+    });
+  const feedBefore = await readFile(f.feed);
+  const prepared = await prepareCurator(f.work, undefined, {
+    through: 8,
+    context: ['knowledge/topic.md', 'knowledge/topic.md'],
+  });
+  const packet = JSON.parse(
+    await readFile(join(prepared.run!, 'packet.json'), 'utf8'),
+  );
+  assert.deepEqual(Object.keys(packet.context), [
+    'STATE.md',
+    'knowledge/topic.md',
+  ]);
+  const run = JSON.parse(
+    await readFile(join(prepared.run!, 'run.json'), 'utf8'),
+  );
+  assert.deepEqual(run.context, ['knowledge/topic.md']);
+  for (const name of Object.keys(packet.context))
+    assert.equal(
+      packet.context[name],
+      await readFile(join(prepared.run!, 'base', name), 'utf8'),
+    );
+  assert.deepEqual(
+    packet.events.slice(-5).map((e: { text: string }) => e.text),
+    texts,
+  );
+  assert.deepEqual(await readFile(f.feed), feedBefore);
+  assert.deepEqual(
+    await readFile(join(f.work, 'checkpoint.json')),
+    checkpointBefore,
+  );
+
+  const details =
+    '\n## Diagnosi e limiti\n\nPercorso risolto dal cwd errato, correzione applicata. Build dichiarata verde; collaudo funzionale non eseguito.\n\n' +
+    '## Formato\n\nR-31 e e\u0301 senza normalizzazione.\n\n' +
+    '## Decisione e qualificazioni\n\nB sostituisce A solo per export locale, su direttiva utente. Nessun errore osservato sui file locali; rete non provata.\n\n' +
+    `[E006-E008](../${packet.feed})\n\n[Altro dettaglio](second.md)\n`;
+  const proposal = {
+    action: 'update',
+    state:
+      '# Export\n\nObiettivo: completare export. Decisione attiva: B per export locale. Vincolo: preservare il formato.\n\n' +
+      'Open: preserve task. Blocker: rete non provata; collaudo funzionale ancora aperto. Prossima azione: verificare export su rete.\n\n' +
+      `[Dettagli tecnici](knowledge/topic.md) [E008](${packet.feed})\n`,
+    history: {
+      summary: 'Export locale',
+      topics: ['Export'],
+      transition:
+        'Correzione del percorso; resta aperta la verifica funzionale.',
+    },
+    knowledge: {
+      'knowledge/topic.md': packet.context['knowledge/topic.md'] + details,
+    },
+  };
+  await writeFile(prepared.proposal!, JSON.stringify(proposal));
+  const validated = await validateCurator(f.work);
+  await applyCurator(f.work, validated.seal);
+  const state = await memoryState(f.memory);
+  assert.ok(!state.includes('R-31')); // Detail is reachable without being duplicated in STATE.
+  const destination = /\[Dettagli tecnici\]\(([^)]+)\)/.exec(state)![1]!;
+  const archived = await readFile(resolve(f.memory, destination), 'utf8');
+  const current = await memoryRead(
+    f.memory,
+    'kn-00000000-0000-4000-8000-000000000001',
+  );
+  const exact = await memoryRead(f.memory, current.id + '@' + current.revision);
+  for (const text of [
+    'Technical detail.',
+    'R-31',
+    'e\u0301',
+    'solo per export locale',
+    'rete non provata',
+  ]) {
+    assert.ok(archived.includes(text), text);
+    assert.ok(current.content.includes(text), text);
+  }
+  const related = /\[Altro dettaglio\]\(([^)]+)\)/.exec(current.content)![1]!;
+  assert.ok(
+    (await readFile(resolve(f.memory, 'knowledge', related), 'utf8')).includes(
+      '# Second',
+    ),
+  );
+  assert.deepEqual(
+    await readFile(join(f.memory, 'knowledge/second.md')),
+    untouched,
+  );
+  assert.equal((await readdir(join(f.memory, 'knowledge'))).length, 2);
+  assert.deepEqual(await readFile(f.feed), feedBefore);
+
+  await appendFeedEvent(dirname(f.feed), {
+    type: 'user_message',
+    sessionId: 's',
+    turnId: 'subsequent-update',
+    text: 'Dichiaro verificato solo export locale; rete ancora non provata.',
+    hook: 'UserPromptSubmit',
+  });
+  const next = await prepareCurator(f.work, undefined, {
+    through: 9,
+    context: ['knowledge/topic.md'],
+  });
+  const nextPacket = JSON.parse(
+    await readFile(join(next.run!, 'packet.json'), 'utf8'),
+  );
+  await writeFile(
+    next.proposal!,
+    JSON.stringify({
+      ...proposal,
+      state:
+        nextPacket.context['STATE.md'] +
+        `\nProgresso locale: [E009](${nextPacket.feed}).\n`,
+      knowledge: {
+        'knowledge/topic.md':
+          nextPacket.context['knowledge/topic.md'] +
+          `\n## Verifica aggiuntiva\n\nL'utente dichiara: solo export locale verificato; rete ancora non provata. [E009](../${nextPacket.feed})\n`,
+      },
+    }),
+  );
+  const nextValidated = await validateCurator(f.work);
+  await applyCurator(f.work, nextValidated.seal);
+  const updated = await memoryRead(f.memory, current.id);
+  assert.ok(updated.content.startsWith(current.content));
+  assert.ok(updated.content.includes('solo export locale verificato'));
+  assert.equal(
+    (await memoryRead(f.memory, current.id, { at: 8 })).content,
+    exact.content,
+  );
+  assert.deepEqual(
+    await readFile(join(f.memory, 'knowledge/second.md')),
+    untouched,
+  );
+});
+
 test('proposal cannot supply HISTORY, escape memory, edit unprovided Knowledge or change note IDs', async (t) => {
   const f = await fixture(t),
     p = await f.propose();
@@ -541,6 +825,7 @@ function crashApply(
     fault === 'crash' ? 73 : 74,
     child.stderr || child.stdout,
   );
+  return child.pid;
 }
 
 async function snapshot(work: string) {
@@ -686,7 +971,8 @@ function tracedApply(work: string, seal: string): StorageEvent[] {
       const handle = await originalOpen(...args), path = rel(args[0]), sync = handle.sync.bind(handle), write = handle.writeFile.bind(handle);
       handle.writeFile = async text => {
         await write(text);
-        if (watched(path)) events.push({kind:'write', path, text});
+        // Canonical I/O writes UTF-8 bytes; model the persisted text, not the Buffer object.
+        if (watched(path)) events.push({kind:'write', path, text:Buffer.isBuffer(text) ? text.toString('utf8') : text});
       };
       handle.sync = async () => {
         await sync();
@@ -917,9 +1203,14 @@ test('process crashes across promotion boundaries recover the authorized generat
   assert.ok(
     expected.tree['HISTORY.md']!.startsWith(before.tree['HISTORY.md']!),
   );
+  const pinnedState = await pinnedBaselineState(
+    f.work,
+    before.tree['STATE.md']!,
+  );
   assert.ok(
     expected.tree['HISTORY.md']!.includes(
-      before.tree['STATE.md']!.split('\n')
+      pinnedState
+        .split('\n')
         .map((l) => '> ' + l)
         .join('\n'),
     ),
@@ -1081,7 +1372,7 @@ test('prepare and validate recover first; incomplete recovery evidence blocks al
         () => prepareCurator(f.work, f.directive),
         () => applyCurator(f.work, v.seal),
         () => abandonCurator(f.work, basename(_p.run!)),
-        () => requestCurator(f.work, 'cannot-bypass-recovery'),
+        () => prepareCurator(f.work, f.directive),
         () => readPendingEvents(f.work, f.feed),
       ])
         await assert.rejects(read());

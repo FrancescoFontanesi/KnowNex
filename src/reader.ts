@@ -1,3 +1,4 @@
+import { decodeUtf8 } from './artifact-io.ts';
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
 import type { BigIntStats } from 'node:fs';
@@ -105,12 +106,11 @@ export async function readJsonl(
 
     const tail = await readBytes(file, offset, size - offset);
     const records: JsonlRecord[] = [];
-    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     let consumed = 0;
     let end: number;
     while ((end = tail.indexOf(10, consumed)) !== -1) {
       try {
-        const raw = decoder.decode(tail.subarray(consumed, end));
+        const raw = decodeUtf8(tail.subarray(consumed, end));
         const value: unknown = JSON.parse(raw);
         records.push({ raw, value });
       } catch {

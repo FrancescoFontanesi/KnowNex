@@ -1,3 +1,23 @@
+﻿import {
+  decodeUtf8,
+  readUtf8,
+  jsonText,
+  transportJson,
+  sha256,
+  writeFile,
+  writeAtomicText,
+  syncPath,
+  syncDirectory,
+} from './artifact-io.ts';
+import {
+  canonicalWork,
+  memoryDirectory,
+  workFromMemory,
+  revisionDirectory,
+  organizationFile,
+  workspaceFromFeed,
+} from './layout.ts';
+import { activeKnowledge } from './knowledge-revisions.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -9,7 +29,6 @@ import {
   rename,
   stat,
   unlink,
-  writeFile,
 } from 'node:fs/promises';
 import {
   basename,
@@ -25,6 +44,31 @@ import type { FeedEvent } from './feed.ts';
 import { isFeedInput, feedIdentity } from './feed.ts';
 import { projectFeedEvents } from './commentary.ts';
 import {
+  checkOrganization,
+  organizationText,
+  thematicCatalog,
+  thematicData,
+  thematicHash,
+  taxonomyProposal,
+  thematicIndexes,
+  type OrganizationPlan,
+} from './taxonomy.ts';
+import {
+  archivePath,
+  checkPublications,
+  checkRevisionPublication,
+  checkVersionState,
+  finishVersions,
+  planVersions,
+  revisionLinks,
+  revisionFile,
+  verifyVersionState,
+  resolveVersionLink,
+  type KnowledgeVersions,
+  type RevisionPublication,
+} from './knowledge-revisions.ts';
+import {
+  parseNoteIdentity,
   validateKnowledge,
   validateKnowledgeEvolution,
 } from './memory-contract.ts';
@@ -46,41 +90,50 @@ interface Row {
   end: number;
 }
 interface Checkpoint {
-  version: 2;
+  version: 2 | 3;
   feed: string;
   sessionId: string;
   sequence: number;
   checksum: string;
   memoryHash: string;
+  excluded?: number[];
+  nativeHistory?: true;
+  knowledgeVersions?: KnowledgeVersions;
 }
 interface Run {
-  consent?: { request: string; sequence: number; checksum: string };
+  autonomous?: true;
+  inputManifestSha256?: string;
+  revisionLayout?: 1;
+  taxonomy?: Record<string, string>;
+  authorization?: { sequence: number; checksum: string };
   id: string;
   base: Checkpoint;
   last: Row;
   context: string[];
   external: string[];
   directive: string;
+  excluded?: number[];
+  nativeHistory?: true;
 }
-interface Consent {
-  version: 1;
-  id: string;
-  milestone: string;
-  base: Checkpoint;
-  through: number;
-  anchor: number;
-  anchorChecksum: string;
-  session: string;
-  turn: string;
-  consumedBy?: string;
-  response?: { sequence: number; checksum: string };
+interface FeedAuthority {
+  work: string;
+  spent?: {
+    runId: string;
+    sequence: number;
+    checksum: string;
+    through: number;
+  };
 }
-export const checkpointQuestion =
-  'Vuoi consolidare la memoria del progetto adesso? (Sì/No)';
 type Proposal =
   | { action: 'noop' }
-  | { action: 'update'; state: string; history: Transition; knowledge: Tree };
-const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+  | {
+      action: 'update';
+      state: string;
+      history: Transition;
+      knowledge: Tree;
+      categories?: Record<string, string>;
+    };
+const sha = sha256;
 function fail(code: string): never {
   throw Object.assign(new Error(code), { code });
 }
@@ -95,7 +148,7 @@ const inside = (root: string, target: string) => {
   );
 };
 const json = async <T>(p: string): Promise<T> =>
-  JSON.parse(await readFile(p, 'utf8')) as T;
+  JSON.parse(decodeUtf8(await readFile(p))) as T;
 const digest = (tree: Tree) =>
   sha(
     JSON.stringify(
@@ -119,7 +172,38 @@ const slug = (s: string) =>
     .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .replace(/ /g, '-');
 
-async function treeAt(root: string, complete = true): Promise<Tree> {
+async function treeAt(
+  root: string,
+  complete = true,
+  versions?: KnowledgeVersions,
+): Promise<Tree> {
+  const canonical = workFromMemory(root);
+  if (canonicalWork(canonical) && memoryDirectory(canonical) === root) {
+    if (
+      (await lstat(root)).isSymbolicLink() ||
+      (await realpath(root)) !== resolve(root)
+    )
+      fail('CURATOR_UNSAFE_PATH');
+    if (versions === undefined) {
+      try {
+        versions = (await json<Checkpoint>(join(canonical, 'checkpoint.json')))
+          .knowledgeVersions;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+    }
+    const result = await activeKnowledge(canonical, versions);
+    for (const name of ['STATE.md', 'HISTORY.md']) {
+      try {
+        const file = join(root, name);
+        if ((await lstat(file)).isSymbolicLink()) fail('CURATOR_UNSAFE_PATH');
+        result[name] = await readUtf8(file);
+      } catch (e) {
+        if (complete || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+    }
+    return result;
+  }
   const tree: Tree = {};
   async function walk(folder: string) {
     if ((await lstat(folder)).isSymbolicLink()) fail('CURATOR_UNSAFE_PATH');
@@ -132,7 +216,7 @@ async function treeAt(root: string, complete = true): Promise<Tree> {
         await walk(p);
       } else {
         if (!entry.isFile() || !allowed(name)) fail('CURATOR_UNSAFE_PATH');
-        tree[name] = await readFile(p, 'utf8');
+        tree[name] = await readUtf8(p);
       }
     }
   }
@@ -165,7 +249,11 @@ function rebase(tree: Tree, from: string, to: string): Tree {
             dirname(join(from, name)),
             decodeURIComponent(url),
           );
-          if (inside(from, target)) return whole;
+          if (
+            inside(from, target) &&
+            allowed(relative(from, target).split(sep).join('/'))
+          )
+            return whole;
           return `[${label}](${relative(dirname(join(to, name)), target)
             .split(sep)
             .map(encodeURIComponent)
@@ -198,10 +286,9 @@ async function feedRows(file: string): Promise<Row[]> {
     previous: string | null = null,
     session: string | undefined;
   const identities = new Set<string>();
-  const decoder = new TextDecoder('utf-8', { fatal: true });
   for (let end; (end = bytes.indexOf(10, from)) !== -1; from = end + 1) {
     try {
-      const f = JSON.parse(decoder.decode(bytes.subarray(from, end)));
+      const f = JSON.parse(decodeUtf8(bytes.subarray(from, end), true));
       const e: FeedEvent = f.block.event;
       if (
         f.block.version !== 1 ||
@@ -227,6 +314,25 @@ async function feedRows(file: string): Promise<Row[]> {
     }
   }
   return result;
+}
+
+function validExclusions(value: unknown, through: number) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every(
+        (n, i) =>
+          Number.isSafeInteger(n) &&
+          n > 0 &&
+          n <= through &&
+          (i === 0 || n > value[i - 1]),
+      ))
+  );
+}
+
+/** Preserve historical decisions without consulting or reconstructing native history. */
+function recordedExclusions(cp?: Checkpoint) {
+  return new Set(cp?.excluded ?? []);
 }
 
 /** Event syntax is interpreted only inside an explicit provenance declaration. */
@@ -257,7 +363,15 @@ async function validateTree(
   rows: Row[],
   cutoff: number,
   feed: string,
+  excluded: number[] = [],
+  publications: RevisionPublication[] = [],
+  versionState?: KnowledgeVersions,
 ) {
+  const planned = new Map(
+    publications
+      .filter((p) => p.file.endsWith('.md'))
+      .map((p) => [archivePath(workFromMemory(root), p.file), p.content]),
+  );
   validateKnowledge(tree);
   if (
     !/^#\s+\S/m.test(tree['STATE.md']!) ||
@@ -269,6 +383,7 @@ async function validateTree(
     validateEventLabel(field[1]!, rows, cutoff);
   for (const [name, text] of Object.entries(tree)) {
     let provenance = false;
+    const linked = new Set<string>();
     const hrefs = links(text);
     const labels = [...text.matchAll(/\[([^\]]*)\]\(([^)\n]*)\)/g)];
     for (const [i, href] of hrefs.entries()) {
@@ -279,11 +394,32 @@ async function validateTree(
         dirname(join(root, name)),
         decodeURIComponent(url || name.split('/').at(-1)!),
       );
-      const internal = inside(root, target),
-        key = relative(root, target).split(sep).join('/');
-      if (internal ? !Object.hasOwn(tree, key) : !external.includes(target))
+      linked.add(target);
+      const key = relative(root, target).split(sep).join('/'),
+        internal = inside(root, target) && Object.hasOwn(tree, key);
+      const versionContent =
+        !internal && !external.includes(target) && !planned.has(target)
+          ? await resolveVersionLink(
+              workFromMemory(root),
+              target,
+              versionState,
+              publications,
+            )
+          : undefined;
+      if (
+        internal
+          ? !Object.hasOwn(tree, key)
+          : !external.includes(target) &&
+            !planned.has(target) &&
+            versionContent === undefined
+      )
         fail('CURATOR_LINK_INVALID');
-      if (!internal && !(await stat(target)).isFile())
+      if (
+        !internal &&
+        !planned.has(target) &&
+        versionContent === undefined &&
+        !(await stat(target)).isFile()
+      )
         fail('CURATOR_LINK_INVALID');
       if (
         /^E\d{3,}(?:\s*(?:\.\.|[–-])\s*E\d{3,})?$/.test(label) &&
@@ -292,11 +428,23 @@ async function validateTree(
         fail('CURATOR_PROVENANCE_INVALID');
       if (target === feed) {
         validateEventLabel(label, rows, cutoff);
+        if (name !== 'HISTORY.md') {
+          const range = label.match(/^E(\d+)(?:\s*(?:\.\.|[–-])\s*E(\d+))?$/);
+          if (
+            range &&
+            excluded.some(
+              (n) => n >= Number(range[1]) && n <= Number(range[2] ?? range[1]),
+            )
+          )
+            fail('CURATOR_PROVENANCE_INVALID');
+        }
         if (anchor) fail('CURATOR_PROVENANCE_INVALID');
         provenance = true;
       }
       if (anchor) {
-        const body = internal ? tree[key]! : await readFile(target, 'utf8');
+        const body = internal
+          ? tree[key]!
+          : (versionContent ?? planned.get(target) ?? (await readUtf8(target)));
         const anchors = [...body.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) =>
           slug(m[1]!),
         );
@@ -304,55 +452,51 @@ async function validateTree(
           fail('CURATOR_LINK_INVALID');
       }
     }
+    if (name !== 'HISTORY.md')
+      for (const artifact of external) {
+        if (artifact === feed || linked.has(artifact)) continue;
+        const forms = [
+          artifact,
+          relative(dirname(join(root, name)), artifact),
+          relative(workspaceFromFeed(feed), artifact),
+        ].map((p) => p.split(sep).join('/'));
+        if (forms.some((p) => p && text.includes(p)))
+          fail('CURATOR_ARTIFACT_LINK_REQUIRED');
+      }
     if (name !== 'HISTORY.md' && !provenance && text !== emptyMemory[name])
       fail('CURATOR_PROVENANCE_INVALID');
   }
 }
 
 async function atomicJson(file: string, value: unknown) {
-  await atomicText(file, JSON.stringify(value, null, 2) + '\n');
+  await atomicText(file, jsonText(value, 2) + '\n');
 }
 
-async function atomicText(
-  file: string,
-  text: string,
-  temporary = dirname(file),
-) {
-  const temp = join(temporary, randomUUID() + '.tmp');
-  const fileHandle = await open(temp, 'wx', 0o600);
-  try {
-    await fileHandle.writeFile(text);
-    await fileHandle.sync();
-  } finally {
-    await fileHandle.close();
-  }
-  await rename(temp, file);
-  // Contents precede publication; namespace barriers precede the caller's next write.
-  await syncPath(file);
-  await syncDirectory(dirname(file));
-  if (temporary !== dirname(file)) await syncDirectory(temporary);
-}
-
-async function syncPath(path: string) {
-  const handle = await open(path, 'r+');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string) {
-  const handle = await open(path, process.platform === 'win32' ? 'r+' : 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
+const atomicText = writeAtomicText;
 
 /** Flush child entries before their parent and before publishing a checkpoint. */
-async function syncTree(root: string, tree: Tree) {
+async function syncTree(
+  root: string,
+  tree: Tree,
+  versions?: KnowledgeVersions,
+) {
+  const work = workFromMemory(root);
+  if (canonicalWork(work) && memoryDirectory(work) === root) {
+    for (const name of ['STATE.md', 'HISTORY.md'])
+      await syncPath(join(root, name));
+    for (const ref of Object.values(versions?.heads ?? {})) {
+      const file = archivePath(work, revisionFile(ref));
+      await syncPath(file);
+      let directory = dirname(file);
+      while (inside(root, directory) && directory !== root) {
+        await syncDirectory(directory);
+        directory = dirname(directory);
+      }
+    }
+    await syncDirectory(root);
+    await syncDirectory(dirname(root));
+    return;
+  }
   for (const name of Object.keys(tree)) await syncPath(join(root, name));
   if (Object.keys(tree).some((name) => name.startsWith('knowledge/')))
     await syncDirectory(join(root, 'knowledge'));
@@ -361,7 +505,7 @@ async function syncTree(root: string, tree: Tree) {
 }
 
 interface ApplyRecord {
-  version: 1;
+  version: 1 | 2 | 3;
   runId: string;
   seal: string;
   action: string;
@@ -369,6 +513,8 @@ interface ApplyRecord {
   after: Checkpoint;
   previous: Tree;
   next: Tree;
+  revisionFiles?: RevisionPublication[];
+  organization?: OrganizationPlan;
 }
 
 async function applyRecord(work: string): Promise<ApplyRecord | undefined> {
@@ -393,8 +539,45 @@ async function applyRecord(work: string): Promise<ApplyRecord | undefined> {
   )
     fail('CURATOR_RECOVERY_INVALID');
   const r = raw.record as unknown as ApplyRecord;
+  if (r.version === 3) {
+    try {
+      checkOrganization(r.organization);
+      if (
+        r.action !== r.organization.mode ||
+        !/^t-[a-f0-9]{64}$/.test(r.runId) ||
+        !/^[a-f0-9]{64}$/.test(r.seal) ||
+        !object(r.before) ||
+        ![2, 3].includes(r.before.version) ||
+        JSON.stringify(r.before) !== JSON.stringify(r.after) ||
+        !object(r.previous) ||
+        Object.keys(r.previous).length ||
+        !object(r.next) ||
+        Object.keys(r.next).length ||
+        r.revisionFiles !== undefined
+      )
+        fail('CURATOR_RECOVERY_INVALID');
+      if (r.organization.mode === 'taxonomy') {
+        const data = JSON.parse(
+          r.organization.next['taxonomy-associations.json']!,
+        );
+        const receipt = JSON.parse(
+          r.organization.next['taxonomy-changes/' + r.runId + '.json']!,
+        );
+        if (
+          data.receipt.id !== r.runId ||
+          receipt.id !== r.runId ||
+          receipt.seal !== r.seal
+        )
+          fail('CURATOR_RECOVERY_INVALID');
+      }
+    } catch {
+      fail('CURATOR_RECOVERY_INVALID');
+    }
+    return r;
+  }
   if (
-    r.version !== 1 ||
+    r.organization !== undefined ||
+    ![1, 2].includes(r.version) ||
     typeof r.runId !== 'string' ||
     !/^[a-z0-9-]+$/.test(r.runId) ||
     typeof r.seal !== 'string' ||
@@ -402,9 +585,15 @@ async function applyRecord(work: string): Promise<ApplyRecord | undefined> {
     !['noop', 'update'].includes(r.action) ||
     !object(r.before) ||
     !object(r.after) ||
-    r.before.version !== 2 ||
+    ![2, 3].includes(r.before.version) ||
     !Number.isSafeInteger(r.before.sequence) ||
     r.before.sequence < 0 ||
+    !validExclusions(r.before.excluded, r.before.sequence) ||
+    !validExclusions(r.after.excluded, r.after.sequence) ||
+    (r.before.excluded ?? []).some((n) => !r.after.excluded?.includes(n)) ||
+    (r.before.nativeHistory !== undefined && r.before.nativeHistory !== true) ||
+    (r.after.nativeHistory !== undefined && r.after.nativeHistory !== true) ||
+    (r.before.nativeHistory === true && r.after.nativeHistory !== true) ||
     !Number.isSafeInteger(r.after.sequence) ||
     r.after.sequence <= r.before.sequence ||
     typeof r.before.feed !== 'string' ||
@@ -423,22 +612,103 @@ async function applyRecord(work: string): Promise<ApplyRecord | undefined> {
     JSON.stringify(r.after) !==
       JSON.stringify({
         ...r.before,
+        version: r.after.version,
         sessionId: r.after.sessionId,
         sequence: r.after.sequence,
         checksum: r.after.checksum,
         memoryHash: digest(r.next),
+        ...(r.after.knowledgeVersions
+          ? { knowledgeVersions: r.after.knowledgeVersions }
+          : {}),
+        ...(r.after.excluded ? { excluded: r.after.excluded } : {}),
+        ...(r.after.nativeHistory ? { nativeHistory: true } : {}),
       }) ||
     Object.keys(r.previous).some((name) => !Object.hasOwn(r.next, name)) ||
     !r.next['HISTORY.md']!.startsWith(r.previous['HISTORY.md']!)
   )
     fail('CURATOR_RECOVERY_INVALID');
+  if (r.version === 1) {
+    if (
+      r.before.version !== 2 ||
+      r.after.version !== 2 ||
+      r.revisionFiles !== undefined ||
+      r.after.knowledgeVersions !== undefined
+    )
+      fail('CURATOR_RECOVERY_INVALID');
+  } else {
+    if (r.after.version !== 3) fail('CURATOR_RECOVERY_INVALID');
+    checkVersionState(r.after.knowledgeVersions, r.after.sequence);
+    checkPublications(r.revisionFiles);
+    if (r.before.version === 3)
+      checkVersionState(r.before.knowledgeVersions, r.before.sequence);
+  }
   return r;
+}
+async function organizationComplete(work: string, plan: OrganizationPlan) {
+  for (const [name, text] of Object.entries(plan.next))
+    if ((await organizationText(work, name)) !== text) return false;
+  return true;
 }
 
 /** The checkpoint commits the generation. Keep the last intent as a replay receipt. */
 async function recoverApply(work: string) {
   const r = await applyRecord(work);
   if (!r) return;
+  if (r.organization) {
+    const cp = await json<Checkpoint>(join(work, 'checkpoint.json'));
+    if (
+      JSON.stringify(cp) !== JSON.stringify(r.before) ||
+      digest(await treeAt(memoryDirectory(work))) !== cp.memoryHash
+    )
+      fail('CURATOR_RECOVERY_INVALID');
+    for (const [name, next] of Object.entries(r.organization.next)) {
+      const current = await organizationText(work, name);
+      if (
+        current !== r.organization.previous[name] &&
+        current !== next &&
+        !name.startsWith('topics/')
+      )
+        fail('TAXONOMY_COLLISION');
+    }
+    await syncPath(join(work, 'apply.json'));
+    await syncDirectory(work);
+    const names = Object.keys(r.organization.next).sort((a, b) => {
+      const priority = (s: string) =>
+        s.startsWith('taxonomy-changes/')
+          ? 0
+          : s === 'taxonomy.json'
+            ? 1
+            : s === 'taxonomy-associations.json'
+              ? 3
+              : 2;
+      return priority(a) - priority(b) || a.localeCompare(b, 'en');
+    });
+    for (const name of names) {
+      if (name.includes('/')) {
+        const folder = dirname(organizationFile(work, name));
+        try {
+          await mkdir(folder);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+        }
+        if (
+          (await lstat(folder)).isSymbolicLink() ||
+          !(await lstat(folder)).isDirectory() ||
+          (await realpath(folder)) !== resolve(folder)
+        )
+          fail('TAXONOMY_PATH_INVALID');
+        await syncDirectory(folder);
+        await syncDirectory(work);
+      }
+      const next = r.organization.next[name]!;
+      if ((await organizationText(work, name)) !== next)
+        await atomicText(organizationFile(work, name), next, work);
+      else await syncPath(organizationFile(work, name));
+      await syncDirectory(dirname(organizationFile(work, name)));
+    }
+    await thematicData(work);
+    return r;
+  }
   // A visible intent may have survived before its publication barrier completed.
   await syncPath(join(work, 'apply.json'));
   await syncDirectory(work);
@@ -456,11 +726,25 @@ async function recoverApply(work: string) {
     JSON.stringify(cp) !== JSON.stringify(r.before)
   )
     fail('CURATOR_RECOVERY_INVALID');
-  const target = join(work, 'memory'),
-    current = await treeAt(target, false);
+  const target = memoryDirectory(work),
+    current = await treeAt(
+      target,
+      false,
+      (committed ? r.after : r.before).knowledgeVersions,
+    );
   if (committed) {
     if (digest(current) !== r.after.memoryHash) fail('CURATOR_MEMORY_CHANGED');
-    await syncTree(target, r.next);
+    for (const p of r.revisionFiles ?? [])
+      await checkRevisionPublication(work, p, true);
+    if (r.after.knowledgeVersions)
+      await verifyVersionState(
+        work,
+        current,
+        r.after.knowledgeVersions,
+        r.after.sequence,
+        r.after.memoryHash,
+      );
+    await syncTree(target, r.next, r.after.knowledgeVersions);
   } else {
     // Every visible file is a complete old or new version: promotion uses rename.
     if (
@@ -474,6 +758,14 @@ async function recoverApply(work: string) {
     if (run.id !== r.runId) fail('CURATOR_RECOVERY_INVALID');
     const rows = await feedRows(r.before.feed);
     checkRun(r.before, rows, run);
+    const expectedExcluded = [
+      ...new Set([...(r.before.excluded ?? []), ...(run.excluded ?? [])]),
+    ].sort((a, b) => a - b);
+    if (
+      JSON.stringify(r.after.excluded ?? []) !==
+      JSON.stringify(expectedExcluded)
+    )
+      fail('CURATOR_RECOVERY_INVALID');
     if (
       JSON.stringify(run.base) !== JSON.stringify(r.before) ||
       (r.before.sequence > 0 &&
@@ -490,17 +782,65 @@ async function recoverApply(work: string) {
       rows,
       r.after.sequence,
       r.after.feed,
+      [...(run.base.excluded ?? []), ...(run.excluded ?? [])],
+      r.revisionFiles,
+      r.after.knowledgeVersions,
     );
+    if (r.revisionFiles?.length) {
+      for (const p of r.revisionFiles) {
+        const path = archivePath(work, p.file);
+        // Persist each new namespace component before the checkpoint can advance.
+        const archiveRoot = revisionDirectory(work, p.file);
+        let directory = dirname(archiveRoot);
+        for (const component of [
+          basename(archiveRoot),
+          ...p.file.split('/').slice(0, -1),
+        ]) {
+          directory = join(directory, component);
+          try {
+            await mkdir(directory);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          }
+          if (
+            (await lstat(directory)).isSymbolicLink() ||
+            !(await lstat(directory)).isDirectory() ||
+            (await realpath(directory)) !== resolve(directory)
+          )
+            fail('KNOWLEDGE_ARCHIVE_UNSAFE');
+          await syncDirectory(directory);
+          await syncDirectory(dirname(directory));
+        }
+        if (!(await checkRevisionPublication(work, p)))
+          await atomicText(path, p.content, work);
+        else await syncPath(path);
+        await syncDirectory(dirname(path));
+      }
+      await syncDirectory(join(work, 'revisions'));
+      await syncDirectory(work);
+    }
     for (const [name, text] of Object.entries(r.next)) {
+      if (canonicalWork(work) && name.startsWith('knowledge/')) continue;
       if (current[name] === text) continue;
       await mkdir(dirname(join(target, name)), { recursive: true });
       await atomicText(join(target, name), text, work);
     }
-    if (digest(await treeAt(target)) !== r.after.memoryHash)
+    if (
+      digest(await treeAt(target, true, r.after.knowledgeVersions)) !==
+      r.after.memoryHash
+    )
       fail('CURATOR_RECOVERY_INVALID');
+    if (r.after.knowledgeVersions)
+      await verifyVersionState(
+        work,
+        r.next,
+        r.after.knowledgeVersions,
+        r.after.sequence,
+        r.after.memoryHash,
+      );
     // Files already equal to `next` may have survived an unflushed rename.
     // Re-flush every entry, including the knowledge directory's own name.
-    await syncTree(target, r.next);
+    await syncTree(target, r.next, r.after.knowledgeVersions);
     await atomicJson(join(work, 'checkpoint.json'), r.after);
   }
   // Even a visible `after` checkpoint may precede its interrupted namespace flush.
@@ -517,10 +857,14 @@ async function recoverApply(work: string) {
 /** Serialize workspace reads with apply; standalone memory directories stay read-only. */
 export async function withConfirmedMemory<T>(
   root: string,
-  read: () => Promise<T>,
+  read: (view?: {
+    work: string;
+    versions?: KnowledgeVersions;
+    through: number;
+  }) => Promise<T>,
 ): Promise<T> {
   if (basename(root) !== 'memory') return read();
-  const work = dirname(root);
+  const work = workFromMemory(root);
   try {
     await lstat(join(work, 'checkpoint.json'));
   } catch (error) {
@@ -531,8 +875,12 @@ export async function withConfirmedMemory<T>(
   }
   const release = await acquireJournalLock(join(work, 'curator.lock'));
   try {
-    await stateAt(work);
-    return await read();
+    const state = await stateAt(work);
+    return await read({
+      work,
+      versions: state.cp.knowledgeVersions,
+      through: state.cp.sequence,
+    });
   } finally {
     await release();
   }
@@ -546,11 +894,22 @@ async function stateAt(work: string, recover = true) {
     if (
       receipt &&
       (JSON.stringify(cp) !== JSON.stringify(receipt.after) ||
-        (await pendingRun(work))?.id === receipt.runId)
+        (await pendingRun(work))?.id === receipt.runId ||
+        (receipt.organization &&
+          !(await organizationComplete(work, receipt.organization))))
     )
       fail('CURATOR_RECOVERY_REQUIRED');
   }
-  if (cp.version !== 2 || !Number.isSafeInteger(cp.sequence) || cp.sequence < 0)
+  if (
+    ![2, 3].includes(cp.version) ||
+    !Number.isSafeInteger(cp.sequence) ||
+    cp.sequence < 0
+  )
+    fail('CURATOR_CHECKPOINT_INVALID');
+  if (
+    !validExclusions(cp.excluded, cp.sequence) ||
+    (cp.nativeHistory !== undefined && cp.nativeHistory !== true)
+  )
     fail('CURATOR_CHECKPOINT_INVALID');
   const rows = await feedRows(cp.feed),
     last = rows[cp.sequence - 1];
@@ -562,10 +921,20 @@ async function stateAt(work: string, recover = true) {
         last.event.sessionId !== cp.sessionId
   )
     fail('CURATOR_FEED_CHANGED');
-  const memory = await treeAt(join(work, 'memory'));
+  const memory = await treeAt(memoryDirectory(work));
   if (cp.sequence === 0 && digest(memory) !== digest(emptyMemory))
     fail('CURATOR_CHECKPOINT_INVALID');
   if (digest(memory) !== cp.memoryHash) fail('CURATOR_MEMORY_CHANGED');
+  if (cp.version === 3)
+    await verifyVersionState(
+      work,
+      memory,
+      cp.knowledgeVersions!,
+      cp.sequence,
+      cp.memoryHash,
+    );
+  else if (cp.knowledgeVersions !== undefined)
+    fail('CURATOR_CHECKPOINT_INVALID');
   return { cp, rows, memory };
 }
 
@@ -609,34 +978,46 @@ export async function curatorStatus(work: string, feed: string) {
       fail('CURATOR_FEED_CHANGED');
     const rows = state?.rows ?? (await feedRows(feed));
     const through = state?.cp.sequence ?? 0;
+    const excluded = recordedExclusions(state?.cp);
     const run = initialized ? await pendingRun(work) : undefined;
-    const consent = initialized ? await consentAt(work) : undefined;
+    const owner = state ? await authorityAt(work, state.cp.feed) : undefined;
+    const invocation = currentInvocation(
+      rows.filter((r) => !excluded.has(r.event.sequence)),
+      feed,
+    );
+    const administrative = administrativeTurns(rows, feed);
     if (run && state) checkRun(state.cp, rows, run);
     return {
       initialized,
       through,
-      pending: rows.length - through,
+      ...pendingCounts(rows, through, administrative, excluded),
       latest: rows.length,
       readyThrough:
-        [...rows].reverse().find((r) => r.event.type === 'assistant_final')
-          ?.event.sequence ?? through,
+        [...rows]
+          .reverse()
+          .find(
+            (r) =>
+              r.event.type === 'assistant_final' &&
+              !excluded.has(r.event.sequence) &&
+              !inAdministrativeTurn(r, administrative),
+          )?.event.sequence ?? through,
       activeRun: run ? join(work, 'runs', run.id) : null,
+      staleRun: false,
       unconfirmedRun:
-        consent?.consumedBy &&
-        state &&
-        state.cp.sequence === consent.base.sequence
-          ? join(work, 'runs', consent.consumedBy)
+        owner?.spent && owner.spent.through > through
+          ? join(work, 'runs', owner.spent.runId)
           : null,
-      consent:
-        consent && state
-          ? {
-              request: consent.id,
-              milestone: consent.milestone,
-              through: consent.through,
-              status: consentReply(consent, state.cp, rows).status,
-            }
-          : null,
-      memory: initialized ? join(work, 'memory') : null,
+      handoff: invocation
+        ? {
+            status:
+              owner?.spent && invocation.event.sequence <= owner.spent.sequence
+                ? ('consumed' as const)
+                : ('available' as const),
+            sequence: invocation.event.sequence,
+            checksum: invocation.checksum,
+          }
+        : { status: 'none' as const },
+      memory: initialized ? memoryDirectory(work) : null,
       state: state?.memory['STATE.md'] ?? emptyMemory['STATE.md']!,
     };
   } finally {
@@ -651,10 +1032,17 @@ function checkRun(cp: Checkpoint, rows: Row[], run: Run) {
     rows[run.last.event.sequence - 1]?.checksum !== run.last.checksum
   )
     fail('CURATOR_STALE_BATCH');
+  if (
+    !validExclusions(run.excluded, run.last.event.sequence) ||
+    (run.excluded ?? []).some((n) => n <= cp.sequence)
+  )
+    fail('CURATOR_STAGE_CHANGED');
 }
 
 interface PendingCursor {
-  version: 1;
+  version: 3;
+  selection: string;
+  includeAdministrative: boolean;
   feed: string;
   checkpoint: string;
   from: number;
@@ -664,13 +1052,14 @@ interface PendingCursor {
   offset: number;
 }
 export interface PendingOptions {
+  includeAdministrative?: boolean;
   from?: number;
   through?: number;
   limit?: number;
   cursor?: string;
 }
 
-/** Read a bounded, stable feed window without staging, consuming consent or recovery writes. */
+/** Read a bounded, stable feed window without staging, consuming an invocation or recovery writes. */
 export async function readPendingEvents(
   work: string,
   feed: string,
@@ -695,6 +1084,13 @@ export async function readPendingEvents(
       if (state && state.cp.feed !== feed) fail('CURATOR_FEED_CHANGED');
       const rows = state?.rows ?? (await feedRows(feed));
       const cutoff = state?.cp.sequence ?? 0;
+      const excludedRows = recordedExclusions(state?.cp);
+      const selection = (through: number) =>
+        sha(
+          JSON.stringify(
+            [...excludedRows].filter((n) => n <= through).sort((a, b) => a - b),
+          ),
+        );
       const checkpoint = sha(JSON.stringify(state?.cp ?? null));
       const feedId = sha(feed);
       const incompleteTailBytes =
@@ -717,7 +1113,11 @@ export async function readPendingEvents(
         }
         if (
           !cursor ||
-          cursor.version !== 1 ||
+          cursor.version !== 3 ||
+          cursor.selection !== selection(cursor.through) ||
+          typeof cursor.includeAdministrative !== 'boolean' ||
+          (options.includeAdministrative !== undefined &&
+            cursor.includeAdministrative !== options.includeAdministrative) ||
           cursor.feed !== feedId ||
           cursor.checkpoint !== checkpoint ||
           ![cursor.from, cursor.through, cursor.next, cursor.offset].every(
@@ -745,7 +1145,9 @@ export async function readPendingEvents(
         )
           fail('CURATOR_ARGUMENT_INVALID');
         cursor = {
-          version: 1,
+          version: 3,
+          selection: selection(through),
+          includeAdministrative: options.includeAdministrative ?? false,
           feed: feedId,
           checkpoint,
           from,
@@ -755,6 +1157,22 @@ export async function readPendingEvents(
           offset: 0,
         };
       }
+      if (
+        options.includeAdministrative !== undefined &&
+        typeof options.includeAdministrative !== 'boolean'
+      )
+        fail('CURATOR_ARGUMENT_INVALID');
+      const administrative = administrativeTurns(
+        rows.slice(0, cursor.through),
+        feed,
+      );
+      const filtered = (r: Row) =>
+        excludedRows.has(r.event.sequence) ||
+        (!cursor.includeAdministrative &&
+          inAdministrativeTurn(r, administrative));
+      const excluded = rows
+        .slice(cursor.from - 1, cursor.through)
+        .filter(filtered).length;
       const limit = options.limit ?? 5;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20)
         fail('CURATOR_ARGUMENT_INVALID');
@@ -786,6 +1204,15 @@ export async function readPendingEvents(
           cursor.through === rows.length &&
           incompleteTailBytes === 0,
         events,
+        includeAdministrative: cursor.includeAdministrative,
+        administrativeExcluded:
+          excluded -
+          rows
+            .slice(cursor.from - 1, cursor.through)
+            .filter((r) => excludedRows.has(r.event.sequence)).length,
+        discardedExcluded: rows
+          .slice(cursor.from - 1, cursor.through)
+          .filter((r) => excludedRows.has(r.event.sequence)).length,
         nextCursor:
           sequence <= cursor.through
             ? Buffer.from(
@@ -797,8 +1224,14 @@ export async function readPendingEvents(
               ).toString('base64url')
             : null,
       });
-      while (next <= cursor.through && items.length < limit) {
+      while (next <= cursor.through) {
         const row = rows[next - 1]!;
+        if (filtered(row)) {
+          next++;
+          offset = 0;
+          continue;
+        }
+        if (items.length >= limit) break;
         const event = row.event;
         const text = event.text;
         const splitsPair = (at: number) =>
@@ -839,7 +1272,8 @@ export async function readPendingEvents(
             ...items,
             fragment(end),
           ]);
-          if (Buffer.byteLength(JSON.stringify(candidate)) + 1 <= 16384)
+          // Budget the ASCII-safe bytes actually emitted by the CLI.
+          if (Buffer.byteLength(transportJson(candidate)) + 1 <= 16384)
             low = middle;
           else high = middle - 1;
         }
@@ -848,7 +1282,7 @@ export async function readPendingEvents(
         if (
           (end === offset && offset < text.length) ||
           Buffer.byteLength(
-            JSON.stringify(
+            transportJson(
               output(
                 end === text.length ? next + 1 : next,
                 end === text.length ? 0 : end,
@@ -889,18 +1323,22 @@ export async function abandonCurator(work: string, runId: string) {
   try {
     const { cp, rows } = await stateAt(work);
     const run = await pendingRun(work);
+    const counts = pendingCounts(
+      rows,
+      cp.sequence,
+      administrativeTurns(rows, cp.feed),
+    );
     const receipt = await applyRecord(work);
     if (!run)
       return {
         status: receipt?.runId === runId ? 'already_applied' : 'not_pending',
         through: cp.sequence,
-        pending: rows.length - cp.sequence,
+        ...counts,
       };
     if (run.id !== runId) fail('CURATOR_STALE_BATCH');
     checkRun(cp, rows, run);
-    if (run.consent || basename(cp.feed) === 'project.jsonl')
-      await checkConsent(work, rows, run);
-    // Keep run files and the consumed consent. Flush withdrawal before a new request.
+    if (run.authorization) await checkAuthorization(work, rows, run);
+    // Preserve staging and the spent invocation; withdrawal never renews authorization.
     await unlink(join(work, 'pending.json'));
     await syncDirectory(work);
     return {
@@ -910,175 +1348,172 @@ export async function abandonCurator(work: string, runId: string) {
       eventsPreserved: true,
       workMayContinue: true,
       through: cp.sequence,
-      pending: rows.length - cp.sequence,
+      ...counts,
     };
   } finally {
     await release();
   }
 }
 
-async function consentAt(work: string): Promise<Consent | undefined> {
-  try {
-    const c = await json<Consent>(join(work, 'consent.json'));
-    if (
-      c.version !== 1 ||
-      !/^[a-f0-9-]{36}$/.test(c.id) ||
-      typeof c.milestone !== 'string' ||
-      !c.milestone.trim() ||
-      !Number.isSafeInteger(c.anchor) ||
-      !Number.isSafeInteger(c.through) ||
-      !object(c.base) ||
-      typeof c.session !== 'string' ||
-      typeof c.turn !== 'string'
-    )
-      fail('CURATOR_CONSENT_INVALID');
-    return c;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    fail('CURATOR_CONSENT_INVALID');
+/** Recognize only an explicit skill invocation, including the native IDE skill link. */
+function isCheckpointInvocation(
+  text: string,
+  feed: string,
+  pure = false,
+  historical = false,
+  taxonomy = false,
+) {
+  let body = text.trim();
+  if (body.startsWith('# Context from my IDE setup:')) {
+    const lines = body.split(/\r?\n/);
+    let i = 1;
+    while (lines[i] === '') i++;
+    if (/^## Active file: \S.*$/.test(lines[i] ?? '')) {
+      i++;
+      while (lines[i] === '') i++;
+    }
+    if (lines[i++] !== '## Open tabs:') return false;
+    let tabs = 0;
+    while (/^- .+: \S.*$/.test(lines[i] ?? '')) {
+      tabs++;
+      i++;
+    }
+    if (!tabs) return false;
+    while (lines[i] === '') i++;
+    if (lines[i++] !== '## My request:') return false;
+    body = lines.slice(i).join('\n').trim();
   }
-}
-
-function consentReply(c: Consent, cp: Checkpoint, rows: Row[]) {
-  if (
-    JSON.stringify(c.base) !== JSON.stringify(cp) ||
-    rows[c.anchor - 1]?.checksum !== c.anchorChecksum
-  )
-    return { status: 'obsolete' as const };
-  if (c.consumedBy) return { status: 'consumed' as const };
-  const after = rows.slice(c.anchor);
-  const question = after.find((r) =>
-    ['assistant_final', 'user_message'].includes(r.event.type),
+  if (taxonomy) {
+    if (/^\$knownex-taxonomy(?:\s|$)/u.test(body))
+      return !pure || body === '$knownex-taxonomy';
+    const link = /^\[\$knownex-taxonomy\]\(([^)\r\n]+)\)(?:\s|$)/u.exec(body);
+    return (
+      !!link &&
+      (!pure || !body.slice(link[0].length).trim()) &&
+      resolve(
+        workspaceFromFeed(feed),
+        '.agents/skills/knownex-taxonomy/SKILL.md',
+      ) === resolve(workspaceFromFeed(feed), link[1]!)
+    );
+  }
+  const command = /^\$(knownex-checkpoint|knownex-handoff)(?:\s|$)/u.exec(body);
+  if (command)
+    return (
+      (historical || command[1] === 'knownex-checkpoint') &&
+      (!pure || body === `$${command[1]}`)
+    );
+  const link =
+    /^\[\$(knownex-checkpoint|knownex-handoff)\]\(([^)\r\n]+)\)(?:\s|$)/u.exec(
+      body,
+    );
+  if (!link || (pure && body.slice(link[0].length).trim())) return false;
+  if (!historical && link[1] !== 'knownex-checkpoint') return false;
+  const root = workspaceFromFeed(feed);
+  return (
+    resolve(root, link[2]!) ===
+    resolve(root, `.agents/skills/${link[1]}/SKILL.md`)
   );
-  if (!question) return { status: 'waiting' as const };
-  if (
-    question.event.type !== 'assistant_final' ||
-    question.event.hook !== 'Stop' ||
-    question.event.sessionId !== c.session ||
-    question.event.turnId !== c.turn ||
-    ![checkpointQuestion, '[AXIOM] ' + checkpointQuestion].includes(
-      question.event.text.trim(),
-    )
-  )
-    return { status: 'obsolete' as const };
-  const reply = rows
-    .slice(question.event.sequence)
-    .find((r) => r.event.type === 'user_message');
-  if (!reply) return { status: 'waiting' as const };
-  if (
-    reply.event.sessionId !== c.session ||
-    reply.event.turnId === c.turn ||
-    reply.event.hook !== 'UserPromptSubmit'
-  )
-    return { status: 'obsolete' as const };
-  if (/^no$/iu.test(reply.event.text.trim()))
-    return { status: 'declined' as const };
-  if (!/^(sì|si)$/iu.test(reply.event.text.trim()))
-    return { status: 'ambiguous' as const };
-  if (
+}
+
+/** A bare skill invocation defines one administrative turn; argument-bearing messages stay visible. */
+function pendingCounts(
+  rows: Row[],
+  through: number,
+  turns: Set<string>,
+  excluded = new Set<number>(),
+) {
+  const pendingRaw = rows.length - through;
+  const administrativePending = rows
+    .slice(through)
+    .filter(
+      (r) => !excluded.has(r.event.sequence) && inAdministrativeTurn(r, turns),
+    ).length;
+  const discardedPending = rows
+    .slice(through)
+    .filter((r) => excluded.has(r.event.sequence)).length;
+  return {
+    pending: pendingRaw - administrativePending - discardedPending,
+    pendingRaw,
+    administrativePending,
+    discardedPending,
+  };
+}
+function administrativeTurns(rows: Row[], feed: string) {
+  return new Set(
     rows
-      .slice(reply.event.sequence)
-      .some((r) => r.event.type === 'user_message')
-  )
-    return { status: 'obsolete' as const };
-  return { status: 'approved' as const, reply };
+      .filter(
+        (r) =>
+          r.event.type === 'user_message' &&
+          r.event.hook === 'UserPromptSubmit' &&
+          isCheckpointInvocation(r.event.text, feed, true, true),
+      )
+      .map((r) => JSON.stringify([r.event.sessionId, r.event.turnId])),
+  );
+}
+const inAdministrativeTurn = (row: Row, turns: Set<string>) =>
+  turns.has(JSON.stringify([row.event.sessionId, row.event.turnId]));
+
+function currentInvocation(rows: Row[], feed: string) {
+  const row = [...rows]
+    .reverse()
+    .find((r) => ['user_message', 'assistant_final'].includes(r.event.type));
+  return row?.event.type === 'user_message' &&
+    row.event.hook === 'UserPromptSubmit' &&
+    isCheckpointInvocation(row.event.text, feed)
+    ? row
+    : undefined;
 }
 
-/** Create one identifiable question in the current open user turn. No LLM or feed fabrication. */
-export async function requestCurator(work: string, milestone: string) {
-  work = await realpath(work);
-  if (!milestone.trim() || milestone.length > 256)
-    fail('CURATOR_ARGUMENT_INVALID');
-  const release = await acquireJournalLock(join(work, 'curator.lock'));
+async function authorityAt(
+  work: string,
+  feed: string,
+): Promise<FeedAuthority | undefined> {
+  let owner: FeedAuthority;
   try {
-    const { cp, rows } = await stateAt(work);
-    if (await pendingRun(work)) fail('CURATOR_PENDING_EXISTS');
-    const current = await consentAt(work);
-    if (current && current.milestone === milestone) {
-      const { status } = consentReply(current, cp, rows);
-      return { status, request: current.id, through: current.through };
-    }
-    const anchor = rows.at(-1);
-    // A consumed approval alone is not a new project milestone, even with a new key.
-    // Keep the event pending; require new conversational input before another request.
-    if (
-      current?.consumedBy &&
-      anchor &&
-      current.response?.sequence === anchor.event.sequence &&
-      current.response.checksum === anchor.checksum
-    )
-      return { status: 'noop', through: cp.sequence };
-    if (
-      !anchor ||
-      anchor.event.type !== 'user_message' ||
-      anchor.event.hook !== 'UserPromptSubmit'
-    )
-      fail('CURATOR_CONSENT_OPEN_TURN_REQUIRED');
-    const through =
-      [...rows].reverse().find((r) => r.event.type === 'assistant_final')?.event
-        .sequence ?? cp.sequence;
-    if (through <= cp.sequence) return { status: 'noop', through: cp.sequence };
-    // One consent authority per source feed: another --work cannot reuse its reply.
-    const releaseFeed = await acquireJournalLock(cp.feed + '.lock');
-    try {
-      let owner: { work: string };
-      try {
-        owner = await json(cp.feed + '.curator.json');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        owner = { work };
-        await atomicJson(cp.feed + '.curator.json', owner);
-      }
-      if (owner.work !== work) fail('CURATOR_WORKSPACE_CONFLICT');
-    } finally {
-      await releaseFeed();
-    }
-    const c: Consent = {
-      version: 1,
-      id: randomUUID(),
-      milestone,
-      base: cp,
-      through,
-      anchor: anchor.event.sequence,
-      anchorChecksum: anchor.checksum,
-      session: anchor.event.sessionId,
-      turn: anchor.event.turnId,
-    };
-    await atomicJson(join(work, 'consent.json'), c);
-    return {
-      status: 'requested',
-      request: c.id,
-      through,
-      question: checkpointQuestion,
-    };
-  } finally {
-    await release();
+    owner = await json(feed + '.curator.json');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
   }
+  if (
+    !object(owner) ||
+    typeof owner.work !== 'string' ||
+    (owner.spent !== undefined &&
+      (!object(owner.spent) ||
+        typeof owner.spent.runId !== 'string' ||
+        !/^[a-z0-9-]+$/.test(owner.spent.runId) ||
+        !Number.isSafeInteger(owner.spent.sequence) ||
+        owner.spent.sequence < 1 ||
+        !Number.isSafeInteger(owner.spent.through) ||
+        owner.spent.through < 0 ||
+        owner.spent.through >= owner.spent.sequence ||
+        typeof owner.spent.checksum !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(owner.spent.checksum)))
+  )
+    fail('CURATOR_HANDOFF_INVALID');
+  if (owner.work !== work) fail('CURATOR_WORKSPACE_CONFLICT');
+  return owner;
 }
 
-async function checkConsent(work: string, rows: Row[], run: Run) {
-  const c = await consentAt(work);
-  const approval = run.consent;
-  if (!c || !approval) fail('CURATOR_CONSENT_REQUIRED');
-  const owner = await json<{ work: string }>(run.base.feed + '.curator.json');
-  if (owner.work !== work) fail('CURATOR_WORKSPACE_CONFLICT');
+async function checkAuthorization(work: string, rows: Row[], run: Run) {
+  const owner = await authorityAt(work, run.base.feed),
+    source = run.authorization;
+  const row = source && rows[source.sequence - 1];
   if (
-    !c ||
-    !approval ||
-    c.id !== approval.request ||
-    c.consumedBy !== run.id ||
-    JSON.stringify(c.base) !== JSON.stringify(run.base) ||
-    c.through !== run.last.event.sequence ||
-    c.response?.sequence !== approval.sequence ||
-    c.response?.checksum !== approval.checksum ||
-    rows[approval.sequence - 1]?.checksum !== approval.checksum ||
-    consentReply(
-      { ...c, consumedBy: undefined },
-      run.base,
-      rows.slice(0, approval.sequence),
-    ).status !== 'approved'
+    !owner?.spent ||
+    !source ||
+    !row ||
+    owner.spent.runId !== run.id ||
+    owner.spent.sequence !== source.sequence ||
+    owner.spent.checksum !== source.checksum ||
+    owner.spent.through !== run.last.event.sequence ||
+    row.checksum !== source.checksum ||
+    row.event.type !== 'user_message' ||
+    row.event.hook !== 'UserPromptSubmit' ||
+    !isCheckpointInvocation(row.event.text, run.base.feed, false, true) ||
+    run.last.event.sequence >= source.sequence
   )
-    fail('CURATOR_CONSENT_REQUIRED');
+    fail('CURATOR_HANDOFF_REQUIRED');
 }
 
 /** Start a new workspace from an explicitly reviewed canonical memory and cutoff. */
@@ -1096,7 +1531,10 @@ export async function initCurator(
     row = rows[through - 1];
   if (!Number.isSafeInteger(through) || through < 0 || (through > 0 && !row))
     fail('CURATOR_CHECKPOINT_INVALID');
-  const original = await withConfirmedMemory(memory, () => treeAt(memory));
+  const original =
+    canonicalWork(work) && memory === memoryDirectory(work)
+      ? await treeAt(memory)
+      : await withConfirmedMemory(memory, () => treeAt(memory));
   // S3's untouched empty seed carries the same zero-event meaning. Preserve the
   // seed on disk; only the new curator workspace receives the current empty form.
   const baseline =
@@ -1109,6 +1547,10 @@ export async function initCurator(
       : original;
   if (through === 0 && digest(baseline) !== digest(emptyMemory))
     fail('CURATOR_CHECKPOINT_INVALID');
+  // Importing a confirmed legacy archive requires relocation of authenticated
+  // links. Never reinterpret it as a new canonical generation during init.
+  if (canonicalWork(work) && through !== 0)
+    fail('CURATOR_CANONICAL_IMPORT_UNSUPPORTED');
   await validateTree(
     baseline,
     memory,
@@ -1119,9 +1561,9 @@ export async function initCurator(
   );
   await mkdir(work);
   work = await realpath(work);
-  const target = join(work, 'memory'),
+  const target = memoryDirectory(work),
     rebased = rebase(baseline, memory, target);
-  await putTree(target, rebased);
+  if (target !== memory) await putTree(target, rebased);
   await syncTree(target, rebased);
   await syncPath(feed);
   await syncDirectory(dirname(feed));
@@ -1140,28 +1582,55 @@ export async function initCurator(
 /** Freeze the pending feed window; later arrivals belong to the next materialization. */
 export async function prepareCurator(
   work: string,
-  directiveFile: string,
+  directiveFile?: string,
   options: {
     through?: number;
     context?: string[];
     artifacts?: string[];
-    request?: string;
-    requireConsent?: boolean;
+    requireInvocation?: boolean;
+    autonomous?: boolean;
   } = {},
-) {
+): Promise<{
+  status: string;
+  run?: string;
+  proposal?: string;
+  manifest?: string;
+  from?: number;
+  through?: number;
+}> {
+  if (options.autonomous && options.context?.length)
+    fail('CURATOR_ARGUMENT_INVALID');
   work = await realpath(work);
   const release = await acquireJournalLock(join(work, 'curator.lock'));
   try {
     const { cp, rows, memory } = await stateAt(work);
+    const excluded = recordedExclusions(cp);
     const pending = await pendingRun(work);
+    const administrative = administrativeTurns(rows, cp.feed);
     const required =
-      options.requireConsent || basename(cp.feed) === 'project.jsonl';
-    const consent = required ? await consentAt(work) : undefined;
-    if (required && (!consent || consent.id !== options.request))
-      fail('CURATOR_CONSENT_REQUIRED');
-    if (required && !pending && consent?.consumedBy)
-      fail('CURATOR_CONSENT_REQUIRED');
-    const through = options.through ?? consent?.through ?? rows.length;
+      options.requireInvocation || basename(cp.feed) === 'project.jsonl';
+    const invocation =
+      required && !pending
+        ? currentInvocation(
+            rows.filter((r) => !excluded.has(r.event.sequence)),
+            cp.feed,
+          )
+        : undefined;
+    if (required && !pending && !invocation) fail('CURATOR_HANDOFF_REQUIRED');
+    const cutoff =
+      pending?.last.event.sequence ??
+      (invocation
+        ? ([...rows.slice(0, invocation.event.sequence - 1)]
+            .reverse()
+            .find(
+              (r) =>
+                r.event.type === 'assistant_final' &&
+                !excluded.has(r.event.sequence) &&
+                !inAdministrativeTurn(r, administrative),
+            )?.event.sequence ?? cp.sequence)
+        : rows.length);
+    const through = options.through ?? cutoff;
+    if (required && through !== cutoff) fail('CURATOR_HANDOFF_CUTOFF_INVALID');
     if (
       !Number.isSafeInteger(through) ||
       through < cp.sequence ||
@@ -1171,9 +1640,49 @@ export async function prepareCurator(
     const selected = rows.slice(cp.sequence, through);
     if (!pending && !selected.length)
       return { status: 'noop', through: cp.sequence };
-    const directive = await readFile(directiveFile, 'utf8');
-    if (!directive.trim()) fail('CURATOR_DIRECTIVE_REQUIRED');
-    const context = [...new Set(options.context ?? [])];
+    const last = selected.at(-1) ?? pending?.last;
+    if (!last) fail('CURATOR_STALE_BATCH');
+    const id = `${cp.sequence + 1}-${last.event.sequence}-${randomUUID()}`;
+    let authorization: Run['authorization'];
+    if (required && !pending) {
+      const source = invocation!;
+      const releaseFeed = await acquireJournalLock(cp.feed + '.lock');
+      try {
+        const owner = (await authorityAt(work, cp.feed)) ?? { work };
+        if (owner.spent && source.event.sequence <= owner.spent.sequence)
+          fail('CURATOR_HANDOFF_CONSUMED');
+        authorization = {
+          sequence: source.event.sequence,
+          checksum: source.checksum,
+        };
+        // Spend before staging/delegation. A partial or failed batch cannot renew the invocation.
+        await atomicJson(cp.feed + '.curator.json', {
+          ...owner,
+          spent: { runId: id, ...authorization, through },
+        });
+      } finally {
+        await releaseFeed();
+      }
+    }
+    const directive =
+      directiveFile === undefined
+        ? (pending?.directive ?? '')
+        : await readUtf8(directiveFile);
+    const autonomous = pending?.autonomous ?? options.autonomous ?? false;
+    if (
+      options.autonomous !== undefined &&
+      pending &&
+      options.autonomous !== !!pending.autonomous
+    )
+      fail('CURATOR_PENDING_EXISTS');
+    const context = autonomous
+      ? Object.keys(memory)
+          .filter((n) => n.startsWith('knowledge/'))
+          .sort()
+      : [...new Set(options.context ?? [])];
+    const taxonomy = pending
+      ? (pending.taxonomy ?? {})
+      : (await thematicData(work)).taxonomy;
     if (
       context.some(
         (n) => !n.startsWith('knowledge/') || !allowed(n) || !memory[n],
@@ -1183,7 +1692,7 @@ export async function prepareCurator(
     const external = [
       ...new Set([
         cp.feed,
-        ...externalLinks(memory, join(work, 'memory')),
+        ...externalLinks(memory, memoryDirectory(work)),
         ...(await Promise.all(
           (options.artifacts ?? []).map((p) => realpath(p)),
         )),
@@ -1192,7 +1701,7 @@ export async function prepareCurator(
     for (const p of external)
       if (!(await stat(p)).isFile()) fail('CURATOR_LINK_INVALID');
     if (pending) {
-      if (required) await checkConsent(work, rows, pending);
+      if (required) await checkAuthorization(work, rows, pending);
       checkRun(cp, rows, pending);
       if (
         directive !== pending.directive ||
@@ -1205,33 +1714,35 @@ export async function prepareCurator(
       const run = join(work, 'runs', pending.id);
       return { status: 'prepared', run, proposal: join(run, 'proposal.json') };
     }
-    const last = selected.at(-1)!;
-    const id = `${cp.sequence + 1}-${last.event.sequence}-${randomUUID()}`;
     const dir = join(work, 'runs', id),
       base = join(dir, 'base');
-    const run: Run = { id, base: cp, last, context, external, directive };
-    if (required) {
-      const decision = consentReply(consent!, cp, rows);
-      if (decision.status !== 'approved' || consent!.through !== through)
-        fail('CURATOR_CONSENT_REQUIRED');
-      run.consent = {
-        request: consent!.id,
-        sequence: decision.reply.event.sequence,
-        checksum: decision.reply.checksum,
-      };
-      // Burn the grant before staging/delegation. Failure never re-enables it.
-      await atomicJson(join(work, 'consent.json'), {
-        ...consent!,
-        consumedBy: id,
-        response: {
-          sequence: decision.reply.event.sequence,
-          checksum: decision.reply.checksum,
-        },
-      });
-    }
-    await putTree(base, rebase(memory, join(work, 'memory'), base));
+    const run: Run = {
+      ...(autonomous ? { autonomous: true as const } : {}),
+      revisionLayout: 1,
+      taxonomy,
+      id,
+      base: cp,
+      last,
+      context,
+      external,
+      directive,
+      ...(authorization ? { authorization } : {}),
+      ...(excluded.size
+        ? {
+            excluded: [...excluded]
+              .filter((n) => n > cp.sequence && n <= last.event.sequence)
+              .sort((a, b) => a - b),
+          }
+        : {}),
+    };
+    await putTree(base, rebase(memory, memoryDirectory(work), base));
     const baseTree = await treeAt(base);
-    const projected = projectFeedEvents(selected.map((r) => r.event));
+    const material = selected.filter(
+      (r) =>
+        !excluded.has(r.event.sequence) &&
+        !inAdministrativeTurn(r, administrative),
+    );
+    const projected = projectFeedEvents(material.map((r) => r.event));
     const rowBySequence = new Map(selected.map((r) => [r.event.sequence, r]));
     const ordered = projected.events.map((e) => rowBySequence.get(e.sequence)!);
     const priorTurns = new Set(
@@ -1248,14 +1759,26 @@ export async function prepareCurator(
         : []),
     ];
     const packet = {
+      ...(autonomous ? { autonomous: true } : {}),
+      taxonomy,
       sessionId: cp.sessionId,
       from: cp.sequence + 1,
       through: last.event.sequence,
       directive,
       context: Object.fromEntries(
-        ['STATE.md', ...context].map((n) => [n, baseTree[n]!]),
+        ['STATE.md', ...(autonomous ? [] : context)].map((n) => [
+          n,
+          baseTree[n]!,
+        ]),
       ),
       orderingIssues,
+      administrativeExcluded: selected.filter(
+        (r) =>
+          !excluded.has(r.event.sequence) &&
+          inAdministrativeTurn(r, administrative),
+      ).length,
+      discardedExcluded: selected.filter((r) => excluded.has(r.event.sequence))
+        .length,
       events: ordered.map((r) => ({
         ...r.event,
         checksum: r.checksum,
@@ -1307,6 +1830,46 @@ export async function prepareCurator(
       join(dir, 'MEMORY-CONTRACT.md'),
       await readFile(new URL('../docs/MEMORY-CONTRACT.md', import.meta.url)),
     );
+    if (autonomous) {
+      const names = [
+        'packet.json',
+        'SKILL.md',
+        'MEMORY-CONTRACT.md',
+        ...Object.keys(baseTree).map((n) => 'base/' + n),
+      ];
+      const files = Object.fromEntries(
+        await Promise.all(
+          names.map(async (name) => {
+            const bytes = await readFile(join(dir, name));
+            return [name, { bytes: bytes.length, sha256: sha(bytes) }];
+          }),
+        ),
+      );
+      const catalog = context.map((name) => ({
+        name,
+        path: 'base/' + name,
+        id: parseNoteIdentity(baseTree[name]!).id,
+        title: baseTree[name]!.match(/^# +([^\r\n]+)$/m)?.[1] ?? name,
+        headings: [...baseTree[name]!.matchAll(/^#{1,6} +([^\r\n]+)$/gm)].map(
+          (m) => m[1],
+        ),
+      }));
+      const inputs = {
+        version: 1,
+        from: packet.from,
+        through: packet.through,
+        files,
+        knowledge: catalog,
+        history: 'base/HISTORY.md',
+        state: 'base/STATE.md',
+      };
+      const text = JSON.stringify(inputs, null, 2) + '\n';
+      await writeFile(join(dir, 'inputs.json'), text, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+      run.inputManifestSha256 = sha(text);
+    }
     await atomicJson(join(dir, 'run.json'), run);
     await syncDirectory(join(work, 'runs'));
     await syncDirectory(work);
@@ -1315,6 +1878,13 @@ export async function prepareCurator(
       status: 'prepared',
       run: dir,
       proposal: join(dir, 'proposal.json'),
+      ...(autonomous
+        ? {
+            manifest: join(dir, 'inputs.json'),
+            from: cp.sequence + 1,
+            through: last.event.sequence,
+          }
+        : {}),
     };
   } finally {
     await release();
@@ -1348,16 +1918,38 @@ function materialize(
       next[name] = rebase({ [name]: text }, join(dir, 'base'), target)[name]!;
     }
     if (digest(next) === digest(memory)) fail('CURATOR_EMPTY_UPDATE');
-    const transition = rebase(
-      { 'HISTORY.md': proposal.history.transition },
-      join(dir, 'base'),
+  }
+  const plan = planVersions(
+    workFromMemory(target),
+    memory,
+    next,
+    cp.knowledgeVersions,
+    cp,
+    run.id,
+    run.last.event.sequence,
+    run.last.checksum,
+    proposal.action === 'update' ? (proposal.categories ?? {}) : {},
+    run.taxonomy ?? {},
+    run.revisionLayout === 1,
+  );
+  if (proposal.action === 'update') {
+    const transition = revisionLinks(
+      rebase(
+        { 'HISTORY.md': proposal.history.transition },
+        join(dir, 'base'),
+        target,
+      )['HISTORY.md']!,
+      join(target, 'HISTORY.md'),
+      join(target, 'HISTORY.md'),
       target,
-    )['HISTORY.md']!;
-    next['HISTORY.md'] =
+      workFromMemory(target),
+      plan.versions.heads,
+    );
+    plan.tree['HISTORY.md'] =
       memory['HISTORY.md']! +
       historyAppendix(
         memory['HISTORY.md']!,
-        memory['STATE.md']!,
+        plan.previousState,
         cp.sequence + 1,
         run.last.event.sequence,
         run.last.event.capturedAt,
@@ -1365,7 +1957,208 @@ function materialize(
         { ...proposal.history, transition },
       );
   }
-  return next;
+  return finishVersions(
+    plan,
+    run.last.event.sequence,
+    digest(plan.tree),
+    run.id,
+  );
+}
+
+interface CurationReview {
+  version: 1 | 2;
+  proposalSha256: string;
+  summary: string;
+  sources: number[];
+  changes: { path: string; summary: string; sources: number[] }[];
+  critical: {
+    before: string;
+    after: string;
+    reason: string;
+    sources: number[];
+  }[];
+  uncertainties: string[];
+  anomalies: string[];
+}
+// References select exact LF-delimited lines; neither branch normalizes text.
+// Their source is implicit: frozen base STATE for before, proposal STATE for after.
+function criticalEvidence(
+  value: unknown,
+  state: string,
+  version: 1 | 2,
+): string {
+  if (typeof value === 'string') {
+    // Preserve v1, including already sealed legacy reviews, exactly.
+    if (version === 1) {
+      if (!state.includes(value)) fail('CURATOR_REVIEW_INVALID');
+      return value;
+    }
+    if (value === '') return value;
+    const first = state.indexOf(value);
+    if (!value.trim() || first < 0 || state.indexOf(value, first + 1) !== -1)
+      fail('CURATOR_REVIEW_INVALID');
+    return value;
+  }
+  if (
+    version !== 2 ||
+    !object(value) ||
+    Object.keys(value).sort().join(',') !== 'endLine,sha256,startLine' ||
+    value.sha256 !== sha(state) ||
+    !Number.isSafeInteger(value.startLine) ||
+    !Number.isSafeInteger(value.endLine)
+  )
+    fail('CURATOR_REVIEW_INVALID');
+  const start = value.startLine as number,
+    end = value.endLine as number,
+    lines = state.split('\n');
+  if (start < 1 || end < start || end > lines.length)
+    fail('CURATOR_REVIEW_INVALID');
+  const text = lines.slice(start - 1, end).join('\n');
+  if (!text.trim()) fail('CURATOR_REVIEW_INVALID');
+  return text;
+}
+
+async function reviewAt(
+  dir: string,
+  run: Run,
+  proposal: Proposal,
+  bytes: Buffer,
+) {
+  if (!run.autonomous) return;
+  const manifestBytes = await readFile(join(dir, 'inputs.json'));
+  if (sha(manifestBytes) !== run.inputManifestSha256)
+    fail('CURATOR_INPUTS_CHANGED');
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
+  if (!object(manifest.files)) fail('CURATOR_INPUTS_CHANGED');
+  for (const [name, expected] of Object.entries(manifest.files)) {
+    if (
+      !/^(packet\.json|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/[a-z0-9-]+\.md))$/.test(
+        name,
+      ) ||
+      !object(expected)
+    )
+      fail('CURATOR_INPUTS_CHANGED');
+    const file = join(dir, name);
+    if (
+      (await realpath(file)) !== resolve(file) ||
+      (await lstat(file)).isSymbolicLink() ||
+      sha(await readFile(file)) !== expected.sha256
+    )
+      fail('CURATOR_INPUTS_CHANGED');
+  }
+  let reviewBytes: Buffer;
+  try {
+    reviewBytes = await readFile(join(dir, 'review.json'));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT')
+      fail('CURATOR_REVIEW_REQUIRED');
+    throw e;
+  }
+  if (
+    (await lstat(join(dir, 'review.json'))).isSymbolicLink() ||
+    (await realpath(join(dir, 'review.json'))) !== resolve(dir, 'review.json')
+  )
+    fail('CURATOR_REVIEW_INVALID');
+  let r: unknown;
+  try {
+    r = JSON.parse(decodeUtf8(reviewBytes, true));
+  } catch {
+    fail('CURATOR_REVIEW_INVALID');
+  }
+  const nonempty = (v: unknown): v is string =>
+    typeof v === 'string' && !!v.trim();
+  const sources = (v: unknown) =>
+    Array.isArray(v) &&
+    v.length > 0 &&
+    v.every(
+      (n) =>
+        Number.isSafeInteger(n) &&
+        n > 0 &&
+        n <= run.last.event.sequence &&
+        !(run.excluded ?? []).includes(n) &&
+        !(run.base.excluded ?? []).includes(n),
+    );
+  if (
+    !object(r) ||
+    Object.keys(r).sort().join(',') !==
+      'anomalies,changes,critical,proposalSha256,sources,summary,uncertainties,version' ||
+    (r.version !== 1 && r.version !== 2) ||
+    r.proposalSha256 !== sha(bytes) ||
+    !nonempty(r.summary) ||
+    !sources(r.sources) ||
+    !Array.isArray(r.changes) ||
+    !Array.isArray(r.critical) ||
+    !Array.isArray(r.uncertainties) ||
+    !r.uncertainties.every(nonempty) ||
+    !Array.isArray(r.anomalies) ||
+    !r.anomalies.every(nonempty)
+  )
+    fail('CURATOR_REVIEW_INVALID');
+  const expected =
+    proposal.action === 'noop'
+      ? []
+      : ['STATE.md', ...Object.keys(proposal.knowledge)];
+  const paths: string[] = [];
+  for (const c of r.changes) {
+    if (
+      !object(c) ||
+      typeof c.path !== 'string' ||
+      !expected.includes(c.path) ||
+      !nonempty(c.summary) ||
+      !sources(c.sources)
+    )
+      fail('CURATOR_REVIEW_INVALID');
+    paths.push(c.path);
+  }
+  if (
+    paths.length !== new Set(paths).size ||
+    paths.slice().sort().join('|') !== expected.sort().join('|')
+  )
+    fail('CURATOR_REVIEW_INVALID');
+  const before = (
+    await json<{ context: Record<string, string> }>(join(dir, 'packet.json'))
+  ).context['STATE.md']!;
+  if (decodeUtf8(await readFile(join(dir, 'base', 'STATE.md'))) !== before)
+    fail('CURATOR_INPUTS_CHANGED');
+  const after = proposal.action === 'update' ? proposal.state : before;
+  const critical: CurationReview['critical'] = [];
+  for (const c of r.critical) {
+    if (!object(c) || !nonempty(c.reason) || !sources(c.sources))
+      fail('CURATOR_REVIEW_INVALID');
+    const old = criticalEvidence(c.before, before, r.version),
+      current = criticalEvidence(c.after, after, r.version);
+    if (!old.trim() && !current.trim()) fail('CURATOR_REVIEW_INVALID');
+    critical.push({
+      before: old,
+      after: current,
+      reason: c.reason,
+      sources: c.sources as number[],
+    });
+  }
+  return {
+    sha256: sha(reviewBytes),
+    report: { ...r, critical } as unknown as CurationReview,
+    path: join(dir, 'review.json'),
+  };
+}
+
+function versionSeal(
+  run: Run,
+  proposal: Proposal,
+  tree: string,
+  plan: ReturnType<typeof materialize>,
+  reviewSha256?: string,
+) {
+  return sha(
+    JSON.stringify({
+      run,
+      proposal,
+      ...(run.autonomous ? { reviewSha256 } : {}),
+      tree,
+      knowledgeVersions: plan.versions,
+      revisionHashes: plan.files.map((p) => [p.file, sha(p.content)]),
+    }),
+  );
 }
 
 export async function validateCurator(work: string) {
@@ -1376,14 +2169,24 @@ export async function validateCurator(work: string) {
       run = await pendingRun(work);
     if (!run) fail('CURATOR_NO_PENDING');
     checkRun(cp, rows, run);
-    const dir = join(work, 'runs', run.id),
-      raw: unknown = await json(join(dir, 'proposal.json'));
+    const dir = join(work, 'runs', run.id);
+    const proposalBytes = await readFile(join(dir, 'proposal.json'));
+    const raw: unknown = JSON.parse(decodeUtf8(proposalBytes));
+    const proposalSha256 = createHash('sha256')
+      .update(proposalBytes)
+      .digest('hex');
     if (!object(raw) || !['update', 'noop'].includes(raw.action as string))
       fail('CURATOR_PROPOSAL_INVALID');
     const keys =
       raw.action === 'noop'
         ? ['action']
-        : ['action', 'state', 'history', 'knowledge'];
+        : [
+            'action',
+            'state',
+            'history',
+            'knowledge',
+            ...(Object.hasOwn(raw, 'categories') ? ['categories'] : []),
+          ];
     if (
       Object.keys(raw).length !== keys.length ||
       Object.keys(raw).some((k) => !keys.includes(k))
@@ -1394,13 +2197,17 @@ export async function validateCurator(work: string) {
       (typeof raw.state !== 'string' ||
         !object(raw.knowledge) ||
         !object(raw.history) ||
+        (raw.categories !== undefined && !object(raw.categories)) ||
         typeof raw.history.transition !== 'string')
     )
       fail('CURATOR_PROPOSAL_INVALID');
     const proposal = raw as unknown as Proposal;
-    const target = join(work, 'memory'),
+    const review = await reviewAt(dir, run, proposal, proposalBytes);
+    const target = memoryDirectory(work),
       candidate = join(dir, 'candidate-' + randomUUID());
-    const next = materialize(memory, run, proposal, target, dir);
+    const plan = materialize(memory, run, proposal, target, dir);
+    const next = plan.tree;
+    const stateBytes = Buffer.byteLength(next['STATE.md']!, 'utf8');
     validateKnowledgeEvolution(memory, next);
     await validateTree(
       next,
@@ -1409,16 +2216,23 @@ export async function validateCurator(work: string) {
       rows,
       run.last.event.sequence,
       cp.feed,
+      [...(run.base.excluded ?? []), ...(run.excluded ?? [])],
+      plan.files,
+      plan.versions,
     );
+    for (const p of plan.files) await checkRevisionPublication(work, p);
     await putTree(candidate, rebase(next, target, candidate));
     const staged = await treeAt(candidate),
       treeHash = digest(staged);
-    const seal = sha(JSON.stringify({ run, proposal, tree: treeHash }));
+    const seal = versionSeal(run, proposal, treeHash, plan, review?.sha256);
     await atomicJson(join(dir, 'validated.json'), {
       seal,
       candidate,
       treeHash,
       action: proposal.action,
+      proposalSha256,
+      ...(review ? { reviewSha256: review.sha256 } : {}),
+      versioning: 1,
     });
     return {
       status: 'validated',
@@ -1426,6 +2240,25 @@ export async function validateCurator(work: string) {
       candidate,
       through: run.last.event.sequence,
       action: proposal.action,
+      proposalSha256,
+      ...(review
+        ? {
+            checks: {
+              frozenInputs: true,
+              cutoff: true,
+              provenance: true,
+              links: true,
+              knowledgeEvolution: true,
+              candidateIntegrity: true,
+            },
+            review: {
+              ...review,
+              semanticVerification:
+                'not certified by CLI; principal reviews report and escalates specific unresolved risks',
+            },
+          }
+        : {}),
+      stateBytes,
     };
   } finally {
     await release();
@@ -1436,13 +2269,14 @@ export async function validateCurator(work: string) {
 export async function applyCurator(
   work: string,
   seal: string,
-  requireConsent = false,
+  requireInvocation = false,
 ) {
   work = await realpath(work);
   const release = await acquireJournalLock(join(work, 'curator.lock'));
+  let releaseFeed: (() => Promise<void>) | undefined;
   try {
-    const { cp, rows, memory } = await stateAt(work),
-      run = await pendingRun(work);
+    const { cp, memory } = await stateAt(work);
+    const run = await pendingRun(work);
     const receipt = await applyRecord(work);
     if (
       receipt?.seal === seal &&
@@ -1455,27 +2289,44 @@ export async function applyCurator(
         action: receipt.action,
       };
     if (!run) fail('CURATOR_NO_PENDING');
-    if (requireConsent || basename(cp.feed) === 'project.jsonl')
-      await checkConsent(work, rows, run);
+    releaseFeed = await acquireJournalLock(cp.feed + '.lock');
+    const rows = await feedRows(cp.feed);
+    if (requireInvocation || basename(cp.feed) === 'project.jsonl')
+      await checkAuthorization(work, rows, run);
     const dir = join(work, 'runs', run.id);
     const approval = await json<{
       seal: string;
       candidate: string;
       treeHash: string;
       action: string;
+      proposalSha256?: string;
+      reviewSha256?: string;
+      versioning?: number;
     }>(join(dir, 'validated.json'));
     if (approval.seal !== seal || !inside(dir, approval.candidate))
       fail('CURATOR_CONFIRMATION_REQUIRED');
-    const staged = await treeAt(approval.candidate),
-      proposal = await json<Proposal>(join(dir, 'proposal.json'));
+    const staged = await treeAt(approval.candidate);
+    const proposalBytes = await readFile(join(dir, 'proposal.json'));
+    const proposal: Proposal = JSON.parse(decodeUtf8(proposalBytes));
     if (
-      digest(staged) !== approval.treeHash ||
-      sha(JSON.stringify({ run, proposal, tree: digest(staged) })) !== seal
+      approval.proposalSha256 &&
+      createHash('sha256').update(proposalBytes).digest('hex') !==
+        approval.proposalSha256
     )
       fail('CURATOR_STAGE_CHANGED');
+    const review = await reviewAt(dir, run, proposal, proposalBytes);
+    if (run.autonomous && approval.reviewSha256 !== review?.sha256)
+      fail('CURATOR_STAGE_CHANGED');
+    if (approval.versioning !== 1) fail('CURATOR_REVALIDATION_REQUIRED');
+    if (digest(staged) !== approval.treeHash) fail('CURATOR_STAGE_CHANGED');
     checkRun(cp, rows, run);
-    const target = join(work, 'memory'),
-      next = materialize(memory, run, proposal, target, dir);
+    const target = memoryDirectory(work),
+      plan = materialize(memory, run, proposal, target, dir),
+      next = plan.tree;
+    if (
+      versionSeal(run, proposal, digest(staged), plan, review?.sha256) !== seal
+    )
+      fail('CURATOR_STAGE_CHANGED');
     if (digest(rebase(next, target, approval.candidate)) !== approval.treeHash)
       fail('CURATOR_STAGE_CHANGED');
     if (!next['HISTORY.md']!.startsWith(memory['HISTORY.md']!))
@@ -1487,17 +2338,30 @@ export async function applyCurator(
       rows,
       run.last.event.sequence,
       cp.feed,
+      [...(run.base.excluded ?? []), ...(run.excluded ?? [])],
+      plan.files,
+      plan.versions,
     );
     const checkpoint: Checkpoint = {
       ...cp,
+      version: 3,
+      knowledgeVersions: plan.versions,
       sessionId: run.last.event.sessionId,
       sequence: run.last.event.sequence,
       checksum: run.last.checksum,
       memoryHash: digest(next),
+      ...(run.excluded?.length || cp.excluded?.length
+        ? {
+            excluded: [
+              ...new Set([...(cp.excluded ?? []), ...(run.excluded ?? [])]),
+            ].sort((a, b) => a - b),
+          }
+        : {}),
+      ...(run.nativeHistory ? { nativeHistory: true } : {}),
     };
     // Establish the stable baseline and the inputs that recovery will need.
     // Staging/base trees are not recovery inputs: the record contains both trees.
-    await syncTree(target, memory);
+    await syncTree(target, memory, cp.knowledgeVersions);
     await syncPath(join(work, 'checkpoint.json'));
     await syncPath(join(dir, 'run.json'));
     await syncDirectory(dir);
@@ -1506,8 +2370,13 @@ export async function applyCurator(
     await syncDirectory(dirname(cp.feed));
     await syncDirectory(work);
     await syncDirectory(dirname(work));
+    // Re-read the acquired feed at the durable authorization boundary; no native oracle.
+    const finalRows = await feedRows(cp.feed);
+    checkRun(cp, finalRows, run);
+    if (requireInvocation || basename(cp.feed) === 'project.jsonl')
+      await checkAuthorization(work, finalRows, run);
     const record: ApplyRecord = {
-      version: 1,
+      version: 2,
       runId: run.id,
       seal,
       action: approval.action,
@@ -1515,6 +2384,7 @@ export async function applyCurator(
       after: checkpoint,
       previous: memory,
       next,
+      revisionFiles: plan.files,
     };
     await atomicJson(join(work, 'apply.json'), {
       record,
@@ -1526,6 +2396,383 @@ export async function applyCurator(
       through: checkpoint.sequence,
       action: approval.action,
     };
+  } finally {
+    await releaseFeed?.();
+    await release();
+  }
+}
+
+interface TaxonomyRun {
+  id: string;
+  checkpoint: string;
+  thematic: string;
+  request: { sequence: number; checksum: string; sessionId: string };
+}
+const taxonomyId = (id: string) => {
+  if (!/^t-[a-f0-9]{64}$/.test(id)) fail('TAXONOMY_RUN_INVALID');
+  return id;
+};
+async function taxonomyDirectory(work: string, id: string, create = false) {
+  taxonomyId(id);
+  let directory = work;
+  for (const part of ['taxonomy-runs', id]) {
+    directory = join(directory, part);
+    if (create) {
+      try {
+        await mkdir(directory);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      }
+    }
+    if (
+      (await lstat(directory)).isSymbolicLink() ||
+      !(await lstat(directory)).isDirectory() ||
+      (await realpath(directory)) !== resolve(directory)
+    )
+      fail('TAXONOMY_PATH_INVALID');
+  }
+  return directory;
+}
+async function taxonomyRunAt(work: string, id: string) {
+  const path = join(await taxonomyDirectory(work, id), 'run.json');
+  if (
+    (await lstat(path)).isSymbolicLink() ||
+    !(await lstat(path)).isFile() ||
+    (await realpath(path)) !== resolve(path)
+  )
+    fail('TAXONOMY_PATH_INVALID');
+  const run = await json<TaxonomyRun>(path);
+  if (run.id !== id) fail('TAXONOMY_RUN_INVALID');
+  return run;
+}
+async function taxonomyCandidate(
+  work: string,
+  run: TaxonomyRun,
+  cp: Checkpoint,
+) {
+  const base = await thematicCatalog(work, cp.knowledgeVersions);
+  if (
+    run.checkpoint !== sha(JSON.stringify(cp)) ||
+    run.thematic !== base.fingerprint
+  )
+    fail('TAXONOMY_STALE_PROPOSAL');
+  const proposalPath = join(
+    await taxonomyDirectory(work, run.id),
+    'proposal.json',
+  );
+  if (
+    (await lstat(proposalPath)).isSymbolicLink() ||
+    !(await lstat(proposalPath)).isFile() ||
+    (await realpath(proposalPath)) !== resolve(proposalPath)
+  )
+    fail('TAXONOMY_PATH_INVALID');
+  const raw = await json<unknown>(proposalPath);
+  const proposal = taxonomyProposal(raw, base);
+  const seal = thematicHash({ operation: 'taxonomy', run, raw });
+  return { base, proposal, seal, raw };
+}
+export async function prepareTaxonomy(work: string) {
+  work = await realpath(work);
+  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  try {
+    const { cp, rows } = await stateAt(work, false);
+    const excluded = recordedExclusions(cp);
+    const request = [...rows]
+      .reverse()
+      .find((r) => r.event.type === 'user_message');
+    if (
+      !request ||
+      excluded.has(request.event.sequence) ||
+      !isCheckpointInvocation(request.event.text, cp.feed, false, false, true)
+    )
+      fail('TAXONOMY_INVOCATION_REQUIRED');
+    const id = 't-' + request.checksum;
+    const base = await thematicCatalog(work, cp.knowledgeVersions);
+    const run: TaxonomyRun = {
+      id,
+      checkpoint: sha(JSON.stringify(cp)),
+      thematic: base.fingerprint,
+      request: {
+        sequence: request.event.sequence,
+        checksum: request.checksum,
+        sessionId: request.event.sessionId,
+      },
+    };
+    const dir = join(work, 'taxonomy-runs', id);
+    try {
+      const existing = await taxonomyRunAt(work, id);
+      if (JSON.stringify(existing) !== JSON.stringify(run))
+        fail('TAXONOMY_STALE_PROPOSAL');
+      return {
+        status: 'prepared',
+        id,
+        run: dir,
+        proposal: join(dir, 'proposal.json'),
+      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    await taxonomyDirectory(work, id, true);
+    await atomicJson(join(dir, 'packet.json'), {
+      operation: 'taxonomy',
+      id,
+      checkpoint: cp.sequence,
+      taxonomy: base.taxonomy,
+      assignments: base.data.assignments,
+      revisions: base.revisions.map((r) => ({
+        ...r,
+        reference: relative(memoryDirectory(work), archivePath(work, r.file))
+          .split(sep)
+          .join('/'),
+      })),
+      proposal: join(dir, 'proposal.json'),
+    });
+    await atomicJson(join(dir, 'run.json'), run);
+    return {
+      status: 'prepared',
+      id,
+      run: dir,
+      proposal: join(dir, 'proposal.json'),
+    };
+  } finally {
+    await release();
+  }
+}
+export async function validateTaxonomy(work: string, id: string) {
+  work = await realpath(work);
+  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  try {
+    const { cp } = await stateAt(work, false),
+      run = await taxonomyRunAt(work, id);
+    const candidate = await taxonomyCandidate(work, run, cp);
+    const preview = thematicIndexes(
+      work,
+      candidate.proposal.taxonomy,
+      { version: 1, assignments: candidate.proposal.assignments },
+      candidate.base.revisions,
+    );
+    return {
+      status: candidate.proposal.changed ? 'validated' : 'noop',
+      id,
+      ...(candidate.proposal.changed ? { seal: candidate.seal } : {}),
+      categories: candidate.proposal.taxonomy,
+      assignments: candidate.proposal.assignments,
+      explanations: candidate.proposal.explanations,
+      indexes: Object.keys(preview),
+      checkpointUnchanged: cp.sequence,
+    };
+  } finally {
+    await release();
+  }
+}
+async function organizationPlan(
+  work: string,
+  mode: OrganizationPlan['mode'],
+  next: Record<string, string>,
+): Promise<OrganizationPlan> {
+  const previous: Record<string, string | null> = {};
+  for (const name of Object.keys(next))
+    previous[name] = await organizationText(work, name);
+  return { mode, previous, next };
+}
+async function commitOrganization(
+  work: string,
+  cp: Checkpoint,
+  id: string,
+  seal: string,
+  plan: OrganizationPlan,
+) {
+  checkOrganization(plan);
+  const record: ApplyRecord = {
+    version: 3,
+    runId: id,
+    seal,
+    action: plan.mode,
+    before: cp,
+    after: cp,
+    previous: {},
+    next: {},
+    organization: plan,
+  };
+  await syncPath(join(work, 'checkpoint.json'));
+  await syncDirectory(work);
+  await atomicJson(join(work, 'apply.json'), {
+    record,
+    checksum: sha(JSON.stringify(record)),
+  });
+  await recoverApply(work);
+}
+export async function applyTaxonomy(
+  work: string,
+  id: string,
+  seal: string,
+  approvalEvent: number,
+) {
+  work = await realpath(work);
+  taxonomyId(id);
+  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  let releaseFeed: (() => Promise<void>) | undefined;
+  try {
+    const { cp } = await stateAt(work);
+    const priorReceipt = await organizationText(
+      work,
+      'taxonomy-changes/' + id + '.json',
+    );
+    if (priorReceipt !== null) {
+      if (JSON.parse(priorReceipt).seal !== seal)
+        fail('TAXONOMY_CONFIRMATION_REQUIRED');
+      let head = (await thematicData(work)).data.receipt;
+      const seen = new Set<string>();
+      let confirmed = false;
+      while (head) {
+        if (seen.has(head.id)) fail('TAXONOMY_INTEGRITY_CHANGED');
+        seen.add(head.id);
+        const text = await organizationText(
+          work,
+          'taxonomy-changes/' + head.id + '.json',
+        );
+        if (
+          text === null ||
+          createHash('sha256').update(text).digest('hex') !== head.hash
+        )
+          fail('TAXONOMY_INTEGRITY_CHANGED');
+        if (head.id === id) {
+          confirmed = true;
+          break;
+        }
+        head = JSON.parse(text).previous ?? undefined;
+      }
+      if (!confirmed) fail('TAXONOMY_COLLISION');
+      return {
+        status: 'already_applied',
+        id,
+        checkpointUnchanged: cp.sequence,
+      };
+    }
+    if (await pendingRun(work)) fail('CURATOR_PENDING_EXISTS');
+    const run = await taxonomyRunAt(work, id),
+      candidate = await taxonomyCandidate(work, run, cp);
+    if (!candidate.proposal.changed || candidate.seal !== seal)
+      fail('TAXONOMY_CONFIRMATION_REQUIRED');
+    releaseFeed = await acquireJournalLock(cp.feed + '.lock');
+    const rows = await feedRows(cp.feed),
+      excluded = recordedExclusions(cp);
+    const request = rows[run.request.sequence - 1];
+    if (
+      !request ||
+      request.checksum !== run.request.checksum ||
+      excluded.has(run.request.sequence)
+    )
+      fail('TAXONOMY_APPROVAL_REQUIRED');
+    const shown = [...rows]
+      .reverse()
+      .find(
+        (r) =>
+          r.event.type === 'assistant_final' &&
+          r.event.sessionId === run.request.sessionId &&
+          r.event.sequence > run.request.sequence &&
+          !excluded.has(r.event.sequence) &&
+          r.event.text.includes(id) &&
+          r.event.text.includes(seal),
+      );
+    const first = shown
+      ? rows.find(
+          (r) =>
+            r.event.type === 'user_message' &&
+            r.event.sessionId === run.request.sessionId &&
+            r.event.sequence > shown.event.sequence &&
+            !excluded.has(r.event.sequence),
+        )
+      : undefined;
+    if (
+      !Number.isSafeInteger(approvalEvent) ||
+      !first ||
+      first.event.sequence !== approvalEvent ||
+      rows.some(
+        (r) =>
+          r.event.type === 'user_message' &&
+          r.event.sessionId === run.request.sessionId &&
+          r.event.sequence > approvalEvent &&
+          !excluded.has(r.event.sequence),
+      )
+    )
+      fail('TAXONOMY_APPROVAL_REQUIRED');
+    const after = thematicHash({
+      taxonomy: candidate.proposal.taxonomy,
+      assignments: candidate.proposal.assignments,
+    });
+    const receipt =
+      JSON.stringify(
+        {
+          version: 1,
+          id,
+          seal,
+          previous: candidate.base.data.receipt ?? null,
+          before: thematicHash({
+            taxonomy: candidate.base.taxonomy,
+            assignments: candidate.base.data.assignments,
+          }),
+          after,
+          approval: {
+            feed: cp.feed,
+            sequence: first.event.sequence,
+            checksum: first.checksum,
+            sessionId: first.event.sessionId,
+          },
+          proposal: candidate.raw,
+        },
+        null,
+        2,
+      ) + '\n';
+    const data = {
+      version: 1 as const,
+      assignments: candidate.proposal.assignments,
+      receipt: { id, hash: createHash('sha256').update(receipt).digest('hex') },
+    };
+    const next = { ['taxonomy-changes/' + id + '.json']: receipt };
+    const files: Record<string, string> = {
+      ...next,
+      'taxonomy.json':
+        JSON.stringify(candidate.proposal.taxonomy, null, 2) + '\n',
+      ...thematicIndexes(
+        work,
+        candidate.proposal.taxonomy,
+        data,
+        candidate.base.revisions,
+      ),
+      'taxonomy-associations.json': JSON.stringify(data, null, 2) + '\n',
+    };
+    const plan = await organizationPlan(work, 'taxonomy', files);
+    if (plan.previous['taxonomy-changes/' + id + '.json'] !== null)
+      fail('TAXONOMY_COLLISION');
+    await commitOrganization(work, cp, id, seal, plan);
+    return { status: 'applied', id, checkpointUnchanged: cp.sequence };
+  } finally {
+    await releaseFeed?.();
+    await release();
+  }
+}
+export async function rebuildTaxonomy(work: string) {
+  work = await realpath(work);
+  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  try {
+    const { cp } = await stateAt(work),
+      base = await thematicCatalog(work, cp.knowledgeVersions);
+    const plan = await organizationPlan(
+      work,
+      'taxonomy-rebuild',
+      thematicIndexes(work, base.taxonomy, base.data, base.revisions),
+    );
+    if (
+      Object.keys(plan.next).every(
+        (name) => plan.previous[name] === plan.next[name],
+      )
+    )
+      return { status: 'noop', checkpointUnchanged: cp.sequence };
+    const seal = thematicHash({ checkpoint: cp, plan }),
+      id = 't-' + seal;
+    await commitOrganization(work, cp, id, seal, plan);
+    return { status: 'rebuilt', checkpointUnchanged: cp.sequence };
   } finally {
     await release();
   }

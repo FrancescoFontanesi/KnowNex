@@ -18,15 +18,14 @@ import { appendFeedEvent } from '../src/feed.ts';
 import {
   initCurator,
   readPendingEvents,
-  requestCurator,
-  checkpointQuestion,
   prepareCurator,
   validateCurator,
   applyCurator,
 } from '../src/curator.ts';
 import { sessionContext, runtimeStatus } from '../src/runtime.ts';
+import { transportJson } from '../src/artifact-io.ts';
 
-async function fixture(t: TestContext, largeState = false) {
+async function fixture(t: TestContext, largeState: boolean | number = false) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'knownex-pending-')),
   );
@@ -54,12 +53,18 @@ async function fixture(t: TestContext, largeState = false) {
       true,
     );
   await event('user_message', 'initial', 'Decisione A; collaudo P aperto.');
-  await writeFile(
-    join(seed, 'STATE.md'),
+  let initialState =
     '# Stato\n\nDecisione A; collaudo P aperto. ' +
-      (largeState ? 'x'.repeat(7000) : '') +
-      '\n[E001](../.knownex/feed/project.jsonl)\n',
-  );
+    (largeState === true ? 'x'.repeat(7000) : '') +
+    '\n[E001](../.knownex/feed/project.jsonl)\n';
+  if (typeof largeState === 'number')
+    initialState += 'x'.repeat(
+      largeState -
+        Buffer.byteLength(
+          initialState.replace('../.knownex/feed/', '../../feed/'),
+        ),
+    );
+  await writeFile(join(seed, 'STATE.md'), initialState);
   await writeFile(join(seed, 'HISTORY.md'), '# History\n');
   const feed = join(directory, 'project.jsonl');
   // Reviewed synthetic initial state, not a product bootstrap bypass.
@@ -70,7 +75,7 @@ async function fixture(t: TestContext, largeState = false) {
     join(work, 'checkpoint.json'),
     join(work, 'memory/STATE.md'),
     join(work, 'memory/HISTORY.md'),
-    join(work, 'consent.json'),
+    feed + '.curator.json',
     join(work, 'pending.json'),
   ];
   const snapshot = () =>
@@ -92,6 +97,40 @@ async function fixture(t: TestContext, largeState = false) {
   return { root, work, feed, event, read, snapshot };
 }
 
+test('SessionStart ordinary and compact emit complete confirmed STATE regardless of the former threshold', async (t) => {
+  for (const size of [
+    6143,
+    6144,
+    6145,
+    32768,
+    65535,
+    65536,
+    65537,
+    2 * 1024 * 1024,
+  ]) {
+    const f = await fixture(t, size);
+    const state = await readFile(join(f.work, 'memory/STATE.md'), 'utf8');
+    assert.equal(Buffer.byteLength(state), size);
+    const before = await f.snapshot();
+    for (const source of ['startup', 'compact']) {
+      for (const entry of ['src/session-hook.ts', '.codex/hooks/session.cjs']) {
+        const r = spawnSync(process.execPath, [entry], {
+          input: JSON.stringify({ hook_event_name: 'SessionStart', source }),
+          env: { ...process.env, KNOWNEX_WORKSPACE: f.root },
+          encoding: 'utf8',
+          maxBuffer: 8 * 1024 * 1024,
+        });
+        assert.equal(r.status, 0, r.stderr);
+        const context = JSON.parse(r.stdout).hookSpecificOutput
+          .additionalContext;
+        assert.ok(context.endsWith(state));
+        assert.ok(context.includes(size + ' byte UTF-8'));
+      }
+    }
+    assert.deepEqual(await f.snapshot(), before);
+  }
+});
+
 test('A/B: later sessions retrieve completion and supersession sources in bounded stable windows', async (t) => {
   const f = await fixture(t);
   const completion =
@@ -105,6 +144,9 @@ test('A/B: later sessions retrieve completion and supersession sources in bounde
   assert.match(context, /confermato fino al checkpoint E1/);
   assert.match(context, /Eventi successivi possono cambiare/);
   assert.ok(context.includes('Decisione A'));
+  assert.ok(
+    context.endsWith(await readFile(join(f.work, 'memory/STATE.md'), 'utf8')),
+  );
   assert.ok(!context.includes(completion)); // No automatic pending injection.
   const first = await f.read({ limit: 1 });
   assert.equal(first.events[0]!.text, completion);
@@ -136,17 +178,20 @@ test('A/B: later sessions retrieve completion and supersession sources in bounde
   assert.deepEqual(await f.snapshot(), afterAppend);
 });
 
-test('C: deferred checkpoint does not prevent read-only recall; no consent is consumed and stale cursors fail', async (t) => {
+test('C: deferred checkpoint does not prevent read-only recall; no invocation is consumed and stale cursors fail', async (t) => {
   const f = await fixture(t);
   await f.event('assistant_final', 'initial', 'Progresso dopo il checkpoint');
   await f.event('user_message', 'ask', 'Prosegui');
-  const request = await requestCurator(f.work, 'deferred');
-  await f.event('assistant_final', 'ask', checkpointQuestion);
+  await f.event(
+    'assistant_final',
+    'ask',
+    'Use $knownex-checkpoint when useful.',
+  );
   await f.event('user_message', 'no', 'No');
   const before = await f.snapshot();
   const runtime = await runtimeStatus(f.root);
   assert.ok(runtime.status === 'ok');
-  assert.equal(runtime.consent?.status, 'declined');
+  assert.equal(runtime.handoff.status, 'none');
   const page = await f.read({ limit: 1 });
   const child = spawnSync(
     process.execPath,
@@ -170,19 +215,13 @@ test('C: deferred checkpoint does not prevent read-only recall; no consent is co
   assert.ok(Buffer.byteLength(child.stdout) <= 16384);
   const directive = join(f.root, 'directive.md');
   await writeFile(directive, 'Synthetic protocol test only.');
-  await assert.rejects(
-    prepareCurator(f.work, directive, { request: request.request }),
-    { code: 'CURATOR_CONSENT_REQUIRED' },
-  );
+  await assert.rejects(prepareCurator(f.work, directive), {
+    code: 'CURATOR_HANDOFF_REQUIRED',
+  });
   assert.deepEqual(await f.snapshot(), before);
   // Only a separate, explicitly approved operation changes the checkpoint.
-  await f.event('user_message', 'manual', 'checkpoint', 'B');
-  const next = await requestCurator(f.work, 'fresh-manual');
-  await f.event('assistant_final', 'manual', next.question!, 'B');
-  await f.event('user_message', 'yes', 'Sì', 'B');
-  const prep = await prepareCurator(f.work, directive, {
-    request: next.request,
-  });
+  await f.event('user_message', 'manual', '$knownex-checkpoint', 'B');
+  const prep = await prepareCurator(f.work, directive);
   await writeFile(prep.proposal!, '{"action":"noop"}');
   await applyCurator(f.work, (await validateCurator(f.work)).seal);
   const committed = await f.snapshot();
@@ -192,15 +231,16 @@ test('C: deferred checkpoint does not prevent read-only recall; no consent is co
   assert.deepEqual(await f.snapshot(), committed);
 });
 
-test('D: omitted STATE, long Unicode events and incomplete feed tails have explicit coverage limits', async (t) => {
+test('D: full extended STATE, long Unicode events and incomplete feed tails preserve explicit pending coverage limits', async (t) => {
   const f = await fixture(t, true);
   const text = 'Caffè Ελληνικά 日本語 🧠 e\u0301 "\u0000\n'.repeat(2000);
   await f.event('assistant_final', 'initial', text);
   const before = await f.snapshot();
   const context = await sessionContext(f.root);
-  assert.match(context, /STATE oltre il limite di contesto/);
-  assert.ok(!context.includes('x'.repeat(7000)));
-  assert.ok(Buffer.byteLength(context) < 8192);
+  assert.ok(
+    context.endsWith(await readFile(join(f.work, 'memory/STATE.md'), 'utf8')),
+  );
+  assert.ok(context.includes('x'.repeat(7000)));
   let page = await f.read();
   assert.equal(page.events[0]!.textComplete, false);
   assert.equal(page.complete, false);
@@ -208,7 +248,11 @@ test('D: omitted STATE, long Unicode events and incomplete feed tails have expli
   let lastCursor: string | undefined;
   for (let pages = 0; ; pages++) {
     assert.ok(pages < 30);
-    assert.ok(Buffer.byteLength(JSON.stringify(page)) + 1 <= 16384);
+    const wireBytes = Buffer.byteLength(transportJson(page)) + 1;
+    assert.ok(
+      wireBytes <= 16384,
+      `ASCII-safe pending payload: ${wireBytes} bytes`,
+    );
     for (const event of page.events) fragments.push(event.text as string);
     if (!page.nextCursor) break;
     lastCursor = page.nextCursor;

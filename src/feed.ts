@@ -1,3 +1,4 @@
+import { decodeUtf8, utf8Bytes } from './artifact-io.ts';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, realpath, stat } from 'node:fs/promises';
@@ -10,6 +11,7 @@ export interface FeedInput {
   turnId: string;
   text: string;
   hook: string;
+  nativeThreadId?: string | null;
   messageId?: string;
   source?: {
     transcriptPath: string;
@@ -47,6 +49,13 @@ const identifier = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 256;
 
 export function isFeedInput(value: unknown): value is FeedInput {
+  if (
+    object(value) &&
+    value.nativeThreadId !== undefined &&
+    value.nativeThreadId !== null &&
+    !identifier(value.nativeThreadId)
+  )
+    return false;
   if (object(value) && value.type === 'assistant_commentary') {
     const s = value.source;
     if (
@@ -111,11 +120,10 @@ function recover(bytes: Buffer, sessionId?: string) {
     confirmed = 0,
     sequence = 0,
     end: number;
-  const decoder = new TextDecoder('utf-8', { fatal: true });
   while ((end = bytes.indexOf(10, confirmed)) !== -1) {
     try {
       const frame: unknown = JSON.parse(
-        decoder.decode(bytes.subarray(confirmed, end)),
+        decodeUtf8(bytes.subarray(confirmed, end), true),
       );
       if (
         !object(frame) ||
@@ -171,6 +179,9 @@ export async function appendFeedEvent(
     turnId: input.turnId,
     text: input.text,
     hook: input.hook,
+    ...(input.nativeThreadId !== undefined
+      ? { nativeThreadId: input.nativeThreadId }
+      : {}),
     ...(input.type === 'assistant_commentary'
       ? { messageId: input.messageId!, source: { ...input.source! } }
       : {}),
@@ -201,7 +212,7 @@ export async function appendFeedEvent(
     const block = { version: 1, previous: state.previous, event };
     const frame = existing
       ? undefined
-      : Buffer.from(
+      : utf8Bytes(
           JSON.stringify({ block, checksum: hash(JSON.stringify(block)) }) +
             '\n',
         );

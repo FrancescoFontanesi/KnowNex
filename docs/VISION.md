@@ -12,7 +12,7 @@ contesto esterno, distribuito, persistente e navigabile.
 - Distribuire il dettaglio tra documenti anziché comprimerlo distruttivamente.
 - Consentire continuità di contesto fra agenti e sessioni.
 
-## Decisioni ancora aperte
+## Questioni aperte all'avvio (S0, storico)
 
 - Formato degli eventi e modalità di cattura dagli harness.
 - Rappresentazione di State e History.
@@ -22,5 +22,6 @@ contesto esterno, distribuito, persistente e navigabile.
 - Garanzie di durabilità e politica di versionamento della memoria.
 - Interfacce utente e integrazioni.
 
-S0 prepara esclusivamente l’ambiente di sviluppo. Non definisce modelli dati,
-API, architetture di persistenza o contratti delle milestone funzionali.
+Elenco storico: S0 preparava solo l'ambiente di sviluppo. Le scelte prese da
+allora sono descritte nei contratti correnti: [memoria](MEMORY-CONTRACT.md),
+[curator](CURATOR.md), [navigazione](NAVIGATOR.md) e [runtime](RUNTIME.md).

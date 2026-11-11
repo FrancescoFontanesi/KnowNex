@@ -15,8 +15,8 @@ npm exec --offline -- knownex init
 
 Npm genera gli shim locali, incluso `knownex.cmd`; non serve installazione
 globale. Init preserva le istruzioni personali esterne al blocco KnowNex.
-Distribuisce checkpoint, curator, recall e taxonomy opzionale, il custom agent
-Terra medium e gli hook SessionStart, UserPromptSubmit, Stop e SessionEnd.
+Distribuisce checkpoint, curator, recall e taxonomy opzionale, i custom agent
+`knownex_curator` e `knownex_recaller` (Terra medium) e gli hook SessionStart, UserPromptSubmit, Stop e SessionEnd.
 
 Aprire esattamente quel workspace in Codex, autorizzarlo esplicitamente se
 richiesto e approvare gli hook tramite `/hooks` o **Review hooks**. Trust del

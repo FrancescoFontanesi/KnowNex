@@ -18,8 +18,8 @@ e non puo precedere il checkpoint confermato. Le invocazioni pure della skill
 e i relativi turni amministrativi restano nel feed, ma non sono conoscenza.
 Le richieste con contenuto aggiuntivo non vengono nascoste come amministrazione.
 
-Il run contiene packet.json, inputs.json, snapshot base/ della memoria,
-skill e contratto congelati. Il manifest registra byte e SHA-256 degli input;
+Il run contiene packet.json, WINDOW.md, inputs.json, snapshot base/ della
+memoria e skill congelati. Il manifest registra byte e SHA-256 degli input;
 il run conserva l'hash del manifest. Anche un batch senza review autonoma
 riceve il manifest e viene verificato prima della pubblicazione.
 
@@ -44,7 +44,7 @@ dal packet congelato, evitando di includere append successivi.
 
 ## Complete, apply e recovery
 
-Complete verifica consegna, manifest, input e review v1/v2; anomalie o incertezze
+Complete verifica consegna, manifest, input e review (v3; v1/v2 per run gia scritti); anomalie o incertezze
 bloccano la pubblicazione automatica. Apply richiede il sigillo di validazione,
 verifica il checkpoint di base e il checksum del prefisso al cutoff sotto lock,
 poi registra l'intent transazionale prima di promuovere i file.

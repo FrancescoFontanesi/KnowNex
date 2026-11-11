@@ -34,7 +34,7 @@ Obsidian:
   HISTORY.md                     indice dei checkpoint, una riga ciascuno
   history/H000012.md             finestra di un checkpoint: transizione, note scritte, STATE prodotto
   knowledge/checkpoint-0145/     note scritte in quel checkpoint, immutabili
-    storage--kn-UUID--r-REV.md
+    storage--kn-UUID--REV.md
 ```
 
 - **STATE** è la radice dell'albero: rimanda alle Knowledge invece di contenerle.

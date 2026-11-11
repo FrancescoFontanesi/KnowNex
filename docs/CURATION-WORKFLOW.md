@@ -46,8 +46,8 @@ Il risultato conclusivo di complete e un oggetto
 `SUCCESS`, `BLOCKED` o `ERROR`, con cutoff, conteggi disponibili, codice/fase,
 diagnostica essenziale e riferimenti agli artefatti interni. Non contiene documenti.
 Qualsiasi incertezza/anomalia dichiarata blocca l'applicazione automatica. I due
-percorsi condividono la stessa funzione di pubblicazione; review v1/v2 e garanzie
-transazionali restano invariate. Nessuna review semantica indipendente di Sol.
+percorsi condividono la stessa funzione di pubblicazione e le garanzie
+transazionali; la review e v3 (v1/v2 solo per run gia scritti). Nessuna review semantica indipendente di Sol.
 
 Il ruolo vieta ulteriori deleghe e il runtime nativo non possiede un launcher.
 Codex 0.164.0 documenta solo alcune disabilitazioni di capacita per custom agent;

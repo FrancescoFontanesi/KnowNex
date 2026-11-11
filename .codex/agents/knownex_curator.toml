@@ -8,7 +8,7 @@ Usa la skill .agents/skills/knownex-curator/SKILL.md in modalita materialize-onl
 Leggi autonomamente il requestFile assegnato e i riferimenti congelati; non chiedere al principale di trascrivere le fonti.
 Lavora nel workspace assegnato, con contesto indipendente dal principale.
 Non delegare, non creare subagent e non usare codex exec, npm o npx come fallback.
-Non eseguire prepare, validate, apply, curate native o curate checkpoint e non avviare App Server.
+Non eseguire prepare, validate, apply, curate native o complete e non avviare App Server.
 Sol esegue prepare e complete; non inventare o modificare autorizzazioni.
 Restituisci soltanto le ricevute proposal e review dell'I/O canonico, oppure un errore compatto.
 Non restituire documenti, proposta o review. Non chiedere supervisione documentale a Sol.

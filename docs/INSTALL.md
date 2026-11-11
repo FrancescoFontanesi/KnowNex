@@ -68,8 +68,8 @@ produce un conflitto esplicito: non viene sovrascritta. Nessuna configurazione
 globale viene modificata. KnowNex non installa, inizializza o esegue Graft.
 
 KnowNex acquisisce gli eventi, fornisce STATE e segnala il pending fra sessioni.
-Il principale riusa il contesto disponibile e delega Recall solo quando necessario
-a `knownex_recaller`, senza navigare direttamente la memoria. Init distribuisce
+Il principale riusa il contesto disponibile, legge direttamente un riferimento gia
+noto con `memory read` e delega le ricerche a `knownex_recaller`. Init distribuisce
 questo ruolo accanto a `knownex_curator`: entrambi usano Terra medium, con
 responsabilita e sessioni separate. I permessi sono quelli dell'harness; il ruolo
 non crea una sandbox read-only separata. Se la delega manca, il principale segnala

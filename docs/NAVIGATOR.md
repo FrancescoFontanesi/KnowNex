@@ -106,7 +106,7 @@ intestazioni ATX del contratto, non un parser Markdown generale.
 Nei workspace versionati, `find` e `read kn-...` restano correnti e restituiscono
 anche revisione e riferimento immutabile. `read kn-...@REV` legge una versione
 precisa; `read kn-... --at N` risolve un checkpoint confermato, inclusi i noop.
-`--at H000002` usa il cutoff dello STATE precedente archiviato nel segmento.
+`--at H000002` usa il cutoff precedente al segmento (`from - 1`).
 Nessun fallback per versioni mancanti o richieste anteriori alla baseline.
 Un riferimento immutabile non viene sostituito con l'ultima revisione. Per leggere
 il presente usare l'ID logico o il percorso corrente. Numero di checkpoint, ID

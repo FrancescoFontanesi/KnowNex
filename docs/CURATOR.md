@@ -62,14 +62,14 @@ npm exec --offline -- knownex curate prepare --work .knownex/internal/curator --
 Il principale non legge integralmente feed, packet o Knowledge per sintetizzarli
 prima della delega. Il codice congela il batch autorizzato e tutta la base corrente;
 inputs.json espone un catalogo di identita, titoli e intestazioni senza corpi.
-Il Curator sceglie le note pertinenti, legge direttamente il packet completo e
-le note da aggiornare; le altre restano intatte. Non carica tutta la Knowledge
+Il Curator sceglie le note pertinenti, legge WINDOW.md (tutti gli eventi del
+batch), base/STATE.md e le note da aggiornare; le altre restano intatte. Non carica tutta la Knowledge
 per precauzione. Le note necessarie non collegate da STATE sono disponibili nel
 catalogo, senza selezione preliminare del principale.
 
 Il principale genera request.txt con dist/curator-request.js e delega una sola
-volta i riferimenti con hash. Skill e contratto sono letti dal Curator una volta,
-non ricopiati nel messaggio. --artifacts autorizza sorgenti gia note; --directive
+volta i riferimenti con hash. La skill congelata nel run e letta dal Curator una
+volta, non ricopiata nel messaggio. --artifacts autorizza sorgenti gia note; --directive
 resta facoltativo per priorita brevi, non una sintesi del materiale. Nessun
 file directive.md viene creato automaticamente. La tassonomia approvata rimane
 congelata nel packet; categories assegna solo categorie esistenti alle note
@@ -201,7 +201,7 @@ interi. Rifiuta apply se resta una perdita critica ingiustificata: batch e pendi
 rimangono, nessuna seconda delega o retry LLM, nessun riuso della invocazione consumata.
 Validate verifica struttura e integrita, non la correttezza di questa revisione.
 
-HISTORY continua ad archiviare lo STATE precedente e la transizione, rendendo
+Ogni finestra di HISTORY conserva la transizione e lo STATE prodotto, rendendo
 recuperabili decisioni completate o superate. Spostare informazioni in HISTORY
 o Knowledge non permette di togliere da STATE un elemento ancora necessario alla
 ripresa del lavoro. Una soluzione tecnica non prova una verifica funzionale;

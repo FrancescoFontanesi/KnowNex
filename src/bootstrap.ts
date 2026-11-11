@@ -48,7 +48,7 @@ Su \`$knownex-checkpoint\` esplicito:
 
 Terra esegue la curatela in modalità \`materialize-only\`. Il principale coordina, ma non legge feed, packet, STATE, HISTORY, Knowledge, proposta o review per supervisionarla e non ripete la valutazione semantica.
 
-Non utilizzare il launcher esterno, \`codex exec\`, npm/npx o altre modalità come fallback per il checkpoint. Nessun retry LLM automatico, materializzazione per turno o test stateless.
+Non utilizzare \`codex exec\`, npm/npx o altre modalità come fallback per il checkpoint. Nessun retry LLM automatico, materializzazione per turno o test stateless.
 
 Un solo batch attivo per workspace. Il comando prepare esplicito congela il batch; il feed non deve contenere un'invocazione o un permesso. Un prepare ripetuto restituisce lo stesso batch attivo, senza autorizzare altre deleghe. Anomalie o incertezze dichiarate impediscono la pubblicazione automatica; l'autoverifica del Curator e i controlli strutturali non garantiscono da soli la completezza semantica.
 

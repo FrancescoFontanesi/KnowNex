@@ -162,8 +162,9 @@ semantica del modello; quella resta da validare nella simulazione reale.
 
 Il principale riconosce semanticamente decisioni/supersession, avanzamenti
 verificati, cambio di focus, handoff e compattazione imminente significativa.
-Segue `knownex-checkpoint`: suggerimento del comando, invocazione utente acquisita, STATE ed eventi, prepare, una delega economica
-configurata, review, validate e apply con sigillo. Il workflow editoriale e le
+Segue `knownex-checkpoint`: suggerimento del comando, invocazione utente acquisita,
+prepare, una delega a `knownex_curator`, `curate write` del Curator e complete;
+validate e apply con sigillo restano il percorso manuale. Il workflow editoriale e le
 verifiche restano invariati. Nessun checkpoint per turno o per tempo trascorso.
 
 Le salvaguardie deterministiche sono feed/checksum e identita sessione/turno,

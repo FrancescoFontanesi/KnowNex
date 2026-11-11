@@ -23,7 +23,7 @@ memory/
 ├── STATE.md
 ├── HISTORY.md
 ├── history/H000001.md
-└── knowledge/*.md
+└── knowledge/checkpoint-NNNN/[categoria/]<nome>--kn-UUID--REV.md
 ```
 
 `STATE.md` e la radice operativa navigabile, autorevole fino al checkpoint
@@ -78,7 +78,7 @@ indice e le sue finestre corrispondono uno a uno, senza orfane né mancanti.
 
 ## Note scritte
 
-- [knowledge/contratto.md](../knowledge/checkpoint-0016/contratto--kn-UUID--r-REV.md)
+- [knowledge/contratto.md](../knowledge/checkpoint-0016/contratto--kn-UUID--REV.md)
 
 ## STATE risultante
 
@@ -206,8 +206,9 @@ richiede questa selezione al principale.
 
 Il pacchetto, WINDOW.md, la skill e la base congelata sono gli input autorizzati;
 questo contratto non viene piu congelato nei run (i run preparati prima lo includono
-ancora e restano validi). La proposta
-è un JSON UTF-8 senza recinti Markdown:
+ancora e restano validi). La proposta pubblicata
+è un JSON UTF-8 senza recinti Markdown; `curate write` la assembla dalla bozza, in
+cui il Curator scrive STATE e note come file separati:
 
 ```json
 {
@@ -252,7 +253,8 @@ acquisita. La preparazione risolve tale riferimento sotto l'autorita del feed;
 sequenza/checksum sono congelati nel run e nella ricevuta controller nativa.
 Complete richiede solo il medesimo run, senza nuove autorizzazioni. Prima della consegna
 di proposta e review restituisce CURATOR_WORKER_OUTPUT_INCOMPLETE e lascia il run
-prepared; dopo, ogni errore e definitivo per il run.
+prepared; con write in corso restituisce DESTINATION_BUSY, anch'esso ripetibile.
+Dopo che complete ha preso in carico la consegna, ogni errore e definitivo per il run.
 Il risultato finale e una proiezione SUCCESS/BLOCKED/ERROR senza documenti.
 
 ### Confine I/O supportato
@@ -400,13 +402,12 @@ e sul contesto Knowledge. Il feed live e solo provenienza, non un input.
 Il Curator scrive file semplici con il proprio strumento di scrittura file: nessun
 JSON che contenga Markdown, nessun serializzatore o pipe. write legge la bozza come
 UTF-8 stretto (BOM iniziale ignorata), assembla proposal con state e knowledge dai
-file Markdown, ricava gli sha256 delle evidenze critiche prive di hash (before da
-base/STATE.md, after da draft/STATE.md o, su noop, dallo STATE congelato) e chiama
-writeCurationArtifacts. Righe LF numerate da 1, estremi inclusi. Un sha256 presente
-deve coincidere. Bozza assente, JSON invalido o UTF-8 invalido non danno ricevute.
+file Markdown, aggiunge l'identita alle note senza frontmatter, riduce a etichetta
+i link al feed e lega la review alla proposta con proposalSha256. Bozza assente,
+JSON invalido o UTF-8 invalido non danno ricevute.
 
 Prima di persistere, write applica ai byte canonici gli stessi controlli di validate
-(schema, review, evidenze, identita Knowledge, provenienza, link), senza candidato
+(schema, review, identita Knowledge, provenienza, link), senza candidato
 ne validated.json. Un errore non persiste nulla e torna al Curator, che corregge la
 bozza e riesegue write. Finche il controller del run e prepared (o assente) una
 scrittura riuscita sostituisce la precedente, rimuovendo prima la proposta; dopo

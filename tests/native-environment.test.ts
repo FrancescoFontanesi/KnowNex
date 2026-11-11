@@ -30,7 +30,7 @@ const probeRpc = (ids: string[], cwd: string) =>
     }
     return result;
   });
-import { nativeCheckpoint } from '../src/native-checkpoint.ts';
+import { preparedCheckpoint } from '../src/native-checkpoint.ts';
 import { appendFeedEvent } from '../src/feed.ts';
 
 async function fixture(t: TestContext) {
@@ -338,9 +338,9 @@ test('native checkpoint does not consult the unavailable native provider', async
   const bytes = await readFile(join(f.cwd, 'project.jsonl'));
   f.config.mode = 'rpc';
   await f.save();
-  const result = await nativeCheckpoint(
+  const result = await preparedCheckpoint(
     join(f.root, '.knownex/internal/curator'),
-    { stage: 'prepare', authorization: 'captured-user-invocation' },
+    { stage: 'prepare' },
   );
   assert.equal(result.status, 'READY', JSON.stringify(result));
   assert.deepEqual(await readFile(join(f.cwd, 'project.jsonl')), bytes);

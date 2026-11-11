@@ -32,7 +32,7 @@ import {
   memoryState,
   memoryCategory,
 } from '../src/navigator.ts';
-import { historyAppendix } from '../src/history.ts';
+import { historyAppendix } from './legacy-history.ts';
 
 const id = 'kn-00000000-0000-4000-8000-000000000001';
 const secondId = 'kn-00000000-0000-4000-8000-000000000002';
@@ -193,7 +193,13 @@ test('immutable full revisions, baseline, noop checkpoints and historical STATE 
   assert.deepEqual(await readFile(resolve(f.memory, exact2.path)), oldVersion);
   const history = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
   assert.ok(history.startsWith(oldHistory));
-  assert.ok(history.includes(exact2.path));
+  // The STATE that linked this exact revision is kept in its checkpoint window.
+  const windows = await Promise.all(
+    (await readdir(join(f.memory, 'history'))).map((w) =>
+      readFile(join(f.memory, 'history', w), 'utf8'),
+    ),
+  );
+  assert.ok(windows.some((w) => w.includes('../' + exact2.path)));
   const current = await memoryState(f.memory);
   assert.match(current, /\[Topic\]\(\.\.\/revisions\//);
   assert.match(
@@ -295,6 +301,10 @@ test('checkpoint folders publish only changed notes with optional approved categ
     '## Result\n\nIndependent experiment.',
   );
   assert.deepEqual(p.packet.taxonomy, taxonomy);
+  // The Curator reads approved categories from WINDOW.md, not from packet.json.
+  const window = await readFile(join(p.proposal!, '..', 'WINDOW.md'), 'utf8');
+  for (const [key, description] of Object.entries(taxonomy))
+    assert.ok(window.includes(`- \`${key}\`: ${description}`), key);
   const proposal = JSON.parse(await readFile(p.proposal!, 'utf8'));
   const cpBefore = await readFile(join(f.work, 'checkpoint.json'));
   await writeFile(
@@ -424,7 +434,23 @@ test('checkpoint folders publish only changed notes with optional approved categ
   const later = await f.commit(6, 'Uncategorized update.');
   assert.match(
     later.cp.knowledgeVersions.heads['knowledge/topic.md'].file,
-    /^checkpoint-0006\/kn-/,
+    /^checkpoint-0006\/topic--kn-/,
+  );
+  // The name prefix is for people browsing the vault; the reader still authenticates the path.
+  const physical =
+    'knowledge/' + later.cp.knowledgeVersions.heads['knowledge/topic.md'].file;
+  assert.ok(
+    (await memoryRead(f.memory, physical)).path.endsWith(
+      later.cp.knowledgeVersions.heads['knowledge/topic.md'].file,
+    ),
+  );
+  await assert.rejects(
+    memoryRead(f.memory, physical.replace('/topic--', '/other--')),
+    { code: 'MEMORY_NOT_FOUND' },
+  );
+  await assert.rejects(
+    memoryRead(f.memory, physical.replace('/topic--', '/')),
+    { code: 'MEMORY_NOT_FOUND' },
   );
   assert.deepEqual(
     later.cp.knowledgeVersions.heads['knowledge/second.md'],
@@ -912,7 +938,7 @@ test('archive collisions and symlink boundaries are rejected before confirmation
   const file = join(
     archive,
     'checkpoint-0001',
-    id + '--b-' + basename(p.run!) + '.md',
+    'topic--' + id + '--b-' + basename(p.run!) + '.md',
   );
   await writeFile(file, 'collision');
   await assert.rejects(validateCurator(f.work), {
@@ -1237,12 +1263,7 @@ test('legacy v1 apply recovery completes before v3 baseline adoption; confirmed 
     2,
     2,
     run.last.event.capturedAt,
-    '../unused.jsonl',
     { summary: 'Legacy', topics: ['Legacy'], transition: 'Legacy recovery' },
-  );
-  next['HISTORY.md'] = next['HISTORY.md']!.replace(
-    '../unused.jsonl',
-    '../../feed/' + basename(f.feed),
   );
   const after = {
     ...before,

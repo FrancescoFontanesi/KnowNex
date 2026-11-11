@@ -25,9 +25,11 @@ La conversazione viene acquisita automaticamente dagli hook. Non chiedere all'ut
 
 ### Contesto e recupero
 
-- **STATE** viene iniettato da \`SessionStart\`: riusalo direttamente, senza rileggerlo se già disponibile e completo.
+- **STATE** è l'handoff automatico all'avvio di una nuova sessione nello stesso workspace: riusalo con il contesto conversazionale, senza reiniezioni per turno o consultazioni periodiche. Gli hook attuali lo emettono anche dopo compact; questo intervento non ne cambia il comportamento.
 - STATE rappresenta lo stato del progetto fino all'ultimo checkpoint confermato. Eventi successivi possono averlo modificato.
-- Se STATE è sufficiente, rispondi senza ulteriori letture. Per dettagli, evidenze, storico o informazioni successive al cutoff usa \`knownex-recall\` selettivamente.
+- Se il contesto disponibile è sufficiente, prosegui senza Recall. Un riferimento già noto (una nota o una finestra linkata da STATE, un ID \`H…\`) leggilo direttamente con \`npm exec --offline -- knownex memory read\`: è una sola lettura. Per una ricerca (riferimento ignoto, storia, revisioni, pending) delega una richiesta precisa a \`knownex_recaller\`, con workspace, riferimenti già noti e minimo contesto necessario. Usa \`fork_turns="none"\` dove supportato, senza trasferire la conversazione completa.
+- Oltre alla lettura di un riferimento noto, il principale non naviga STATE, Knowledge, HISTORY o pending per Recall e non supervisiona i documenti: per le ricerche attende il risultato mirato e prosegue. Se la delega nativa non è disponibile, segnala il limite senza fallback automatico a ricerche dirette, altri ruoli o launcher esterni.
+- \`knownex_recaller\` usa la skill \`knownex-recall\` in sola consultazione, senza checkpoint, curatela o altre deleghe. Le sue restrizioni sono comportamentali; i permessi effettivi dipendono dall'harness. Queste istruzioni di delega riguardano il principale, non il Recaller.
 - STATE contiene il presente, Knowledge i dettagli tematici, HISTORY le transizioni. Non esplorare interi archivi senza necessità.
 - Riutilizza informazioni e documenti già recuperati durante il turno. Non ripetere letture per semplice conferma.
 - Se il contesto è incompleto, il pending è parziale o un'informazione manca, dichiarane i limiti senza inventare fatti.
@@ -48,7 +50,7 @@ Terra esegue la curatela in modalità \`materialize-only\`. Il principale coordi
 
 Non utilizzare il launcher esterno, \`codex exec\`, npm/npx o altre modalità come fallback per il checkpoint. Nessun retry LLM automatico, materializzazione per turno o test stateless.
 
-Un solo batch attivo per workspace. L'autorizzazione è monouso. Anomalie o incertezze dichiarate impediscono la pubblicazione automatica; l'autoverifica del Curator e i controlli strutturali non garantiscono da soli la completezza semantica.
+Un solo batch attivo per workspace. Il comando prepare esplicito congela il batch; il feed non deve contenere un'invocazione o un permesso. Un prepare ripetuto restituisce lo stesso batch attivo, senza autorizzare altre deleghe. Anomalie o incertezze dichiarate impediscono la pubblicazione automatica; l'autoverifica del Curator e i controlli strutturali non garantiscono da soli la completezza semantica.
 
 In caso di indisponibilità o fallimento, preserva il pending, riferisci il limite e prosegui il task senza inventare conferme.
 <!-- knownex:end -->
@@ -158,13 +160,10 @@ export async function initWorkspace(directory: string) {
     '.codex/config.toml',
     await readFile(join(packageRoot, '.codex/config.toml'), 'utf8'),
   );
-  files.set(
-    '.codex/agents/knownex_curator.toml',
-    await readFile(
-      join(packageRoot, '.codex/agents/knownex_curator.toml'),
-      'utf8',
-    ),
-  );
+  for (const role of ['knownex_curator', 'knownex_recaller']) {
+    const name = `.codex/agents/${role}.toml`;
+    files.set(name, await readFile(join(packageRoot, name), 'utf8'));
+  }
   for (const name of skillNames) {
     files.set(
       `.agents/skills/${name}/SKILL.md`,

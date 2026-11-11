@@ -7,8 +7,9 @@ completa è `kn-UUID@REV`; SHA-256 controlla l'integrità ed è distinto dall'ID
 ```text
 .knownex/memory/STATE.md
 .knownex/memory/HISTORY.md
-.knownex/memory/knowledge/checkpoint-0004/kn-UUID--REV.md
-.knownex/memory/knowledge/checkpoint-0004/experiments/kn-UUID--REV.md
+.knownex/memory/history/H000004.md
+.knownex/memory/knowledge/checkpoint-0004/nome--kn-UUID--REV.md
+.knownex/memory/knowledge/checkpoint-0004/experiments/nome--kn-UUID--REV.md
 .knownex/memory/taxonomy.json
 .knownex/internal/curator/checkpoint.json
 .knownex/internal/curator/revisions/c-SEQUENCE.json
@@ -28,7 +29,9 @@ file. La nota corrente nel packet e una proiezione logica con link ribasati, non
 ulteriore file confermato. Incoerenze bloccano la lettura; il Curator non genera
 metadati tecnici. Note invariate non producono revisioni; il confronto normalizza
 riferimenti verso le stesse versioni.
-Non sono introdotti cancellazioni, rinomine o rami.
+Il nome di una nuova revisione inizia con il nome logico della nota (`nome--`) per chi
+sfoglia il vault; l'identità resta `kn-UUID@REV` e le revisioni senza prefisso restano
+valide. Non sono introdotti cancellazioni, rinomine o rami.
 
 ## Checkpoint e categorie facoltative
 

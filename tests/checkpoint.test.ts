@@ -106,193 +106,78 @@ test('optional UTF-8 priorities are frozen once; a prepared batch needs no exter
   assert.deepEqual(await readFile(join(prepared.run!, 'packet.json')), packet);
   assert.deepEqual(await readFile(join(prepared.run!, 'run.json')), run);
   const approved = await f.noop(prepared);
-  await applyCurator(f.work, approved.seal, true);
+  await applyCurator(f.work, approved.seal);
   assert.equal((await f.status()).through, 2);
 });
 
-test('the old skill name is administrative history, never a new authorization', async (t) => {
-  for (const native of [false, true]) {
+test('prepare is triggered by the command, independently of the last user text', async (t) => {
+  for (const text of [
+    'Continue',
+    'Describe $knownex-checkpoint',
+    '\x60$knownex-checkpoint\x60',
+    '$knownex-checkpoint-other',
+  ]) {
     const f = await fixture(t);
-    const text = native
-      ? `[$knownex-handoff](${join(f.root, '.agents/skills/knownex-handoff/SKILL.md')})`
-      : '$knownex-handoff';
-    await f.event('user_message', 'old-command', text);
-    const before = await readFile(f.feed);
-    assert.equal((await f.status()).handoff.status, 'none');
-    assert.equal((await f.status()).administrativePending, 1);
-    await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_REQUIRED' });
-    assert.deepEqual(await readFile(f.feed), before);
+    await f.event('user_message', 'later', text);
+    const p = await f.prepare();
+    assert.equal(p.through, 3);
+    const packet = JSON.parse(
+      await readFile(join(p.run!, 'packet.json'), 'utf8'),
+    );
+    assert.equal(packet.events.at(-1).text, text);
+    assert.equal((await f.status()).through, 0);
   }
 });
 
-test('suggestions, ordinary replies, quoted commands and legacy consent never authorize a batch', async (t) => {
-  for (const text of [
-    'Sì',
-    'Save the progress',
-    'Non ora',
-    'Describe $knownex-checkpoint',
-    '`$knownex-checkpoint`',
-    '```\n$knownex-checkpoint\n```',
-    '$knownex-checkpoint-other',
-    '[$knownex-checkpoint](F:/another/.agents/skills/knownex-checkpoint/SKILL.md)',
-  ])
-    await t.test(text, async (t) => {
-      const f = await fixture(t);
-      await writeFile(
-        join(f.work, 'consent.json'),
-        '{"assessment":{"decision":"approved"}}',
-      );
-      await f.event('user_message', 'reply', text);
-      const before = await readFile(f.feed);
-      assert.equal((await f.status()).handoff.status, 'none');
-      await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_REQUIRED' });
-      assert.deepEqual(await readFile(f.feed), before);
-      assert.equal((await f.status()).through, 0);
-    });
+test('administrative turns remain excluded after subsequent messages from another session', async (t) => {
+  for (const mode of ['plain', 'ide', 'native']) {
+    const f = await fixture(t);
+    const command =
+      mode === 'native'
+        ? '[$knownex-checkpoint](' +
+          join(f.root, '.agents/skills/knownex-checkpoint/SKILL.md') +
+          ')'
+        : mode === 'ide'
+          ? ideCommand('$knownex-checkpoint')
+          : '$knownex-checkpoint';
+    await f.event('user_message', 'admin', command);
+    await f.event('assistant_final', 'admin', 'Administrative report.');
+    await f.event('user_message', 'next', 'New project fact.', 'B');
+    const p = await f.prepare();
+    const packet = JSON.parse(
+      await readFile(join(p.run!, 'packet.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      packet.events.map((e: { sequence: number }) => e.sequence),
+      [1, 2, 5],
+    );
+    assert.equal(p.through, 5);
+    assert.equal(packet.administrativeExcluded, 2);
+    await applyCurator(f.work, (await f.noop(p)).seal);
+    assert.equal((await f.status()).through, 5);
+  }
 });
 
-test('plain, IDE-wrapped and native skill invocations each authorize one frozen batch', async (t) => {
-  for (const mode of ['plain', 'ide', 'native'])
-    await t.test(mode, async (t) => {
-      const f = await fixture(t);
-      const command =
-        mode === 'native'
-          ? `[$knownex-checkpoint](${join(f.root, '.agents/skills/knownex-checkpoint/SKILL.md')})`
-          : mode === 'ide'
-            ? ideCommand('$knownex-checkpoint')
-            : '$knownex-checkpoint Consolidate this phase.';
-      await f.event('user_message', 'manual', command);
-      assert.equal((await f.status()).handoff.status, 'available');
-      const before = await readFile(f.feed),
-        prep = await f.prepare();
-      const packet = JSON.parse(
-        await readFile(join(prep.run!, 'packet.json'), 'utf8'),
-      );
-      assert.deepEqual(
-        packet.events.map((e: { sequence: number }) => e.sequence),
-        [1, 2],
-      );
-      assert.equal(packet.through, 2);
-      assert.equal(packet.directive, '');
-      const request = await curatorRequest(prep.run!);
-      assert.equal(
-        JSON.parse(request.text.split('INPUT_REFERENCES_JSON\n')[1]!).packet
-          .path,
-        join(prep.run!, 'packet.json'),
-      );
-      await assert.rejects(readFile(f.directive), { code: 'ENOENT' });
-      await assert.rejects(readFile(join(f.root, '.knownex/directive.md')), {
-        code: 'ENOENT',
-      });
-      assert.equal((await f.status()).handoff.status, 'consumed');
-      assert.equal((await f.prepare()).run, prep.run);
-      await f.event(
-        'user_message',
-        'later',
-        'New technical fact after cutoff',
-        'B',
-      );
-      const approval = await f.noop(prep);
-      await applyCurator(f.work, approval.seal, true);
-      const checkpoint = await readFile(join(f.work, 'checkpoint.json'));
-      await applyCurator(f.work, approval.seal, true);
-      assert.deepEqual(
-        await readFile(join(f.work, 'checkpoint.json')),
-        checkpoint,
-      );
-      assert.ok(
-        (await readFile(f.feed)).subarray(0, before.length).equals(before),
-      );
-      assert.equal((await f.status()).through, 2);
-      assert.equal((await f.status()).pending, mode === 'plain' ? 2 : 1);
-      assert.equal((await f.status()).pendingRaw, 2);
-      if (mode === 'plain') {
-        const mixed = await readPendingEvents(f.work, f.feed);
-        assert.ok(mixed.events.some((e) => e.text === command));
-      }
-      await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_REQUIRED' });
-      await assert.rejects(readFile(join(f.work, 'consent.json')), {
-        code: 'ENOENT',
-      });
-    });
-});
-
-test('an assistant command and a closed user turn cannot authorize another batch', async (t) => {
+test('explicit withdrawal preserves failed source events and permits another explicit prepare', async (t) => {
   const f = await fixture(t);
-  await f.event('assistant_final', 'model', '$knownex-checkpoint');
-  await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_REQUIRED' });
-  await f.event('user_message', 'manual', '$knownex-checkpoint');
-  await assert.rejects(prepareCurator(f.work, undefined, { through: 4 }), {
-    code: 'CURATOR_HANDOFF_CUTOFF_INVALID',
-  });
-  await f.event(
-    'assistant_final',
-    'manual',
-    'Turn completed without applying.',
-  );
-  await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_REQUIRED' });
-});
-
-test('preparation failure spends the invocation and preserves pending across processes', async (t) => {
-  const f = await fixture(t);
-  await f.event('user_message', 'manual', '$knownex-checkpoint');
-  const before = await readFile(f.feed);
+  const checkpoint = await readFile(join(f.work, 'checkpoint.json'));
   await assert.rejects(prepareCurator(f.work, join(f.root, 'missing.md')), {
     code: 'ENOENT',
   });
-  await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_CONSUMED' });
-  assert.ok((await f.status()).unconfirmedRun);
-  assert.deepEqual(await readFile(f.feed), before);
-  assert.equal((await f.status()).through, 0);
+  const p = await f.prepare();
+  await writeFile(p.proposal!, '{');
+  await assert.rejects(validateCurator(f.work));
+  assert.equal((await f.prepare()).run, p.run);
+  await abandonCurator(f.work, basename(p.run!));
+  const next = await f.prepare();
+  assert.notEqual(next.run, p.run);
+  assert.deepEqual(await readFile(join(f.work, 'checkpoint.json')), checkpoint);
+  await applyCurator(f.work, (await f.noop(next)).seal);
+  assert.equal((await f.status()).through, 2);
 });
 
-test('failed curation requires withdrawal and a new user invocation; it never renews authorization', async (t) => {
-  for (const failure of ['delegation', 'json', 'review', 'before-apply'])
-    await t.test(failure, async (t) => {
-      const f = await fixture(t);
-      await f.event('user_message', 'manual', '$knownex-checkpoint');
-      const prep = await f.prepare(),
-        checkpoint = await readFile(join(f.work, 'checkpoint.json')),
-        feed = await readFile(f.feed);
-      if (failure === 'delegation')
-        await assert.rejects(validateCurator(f.work), { code: 'ENOENT' });
-      else if (failure === 'json') {
-        await writeFile(prep.proposal!, '{');
-        await assert.rejects(validateCurator(f.work));
-      } else {
-        const seal = await f.noop(prep);
-        if (failure === 'before-apply')
-          await assert.rejects(applyCurator(f.work, 'wrong'), {
-            code: 'CURATOR_CONFIRMATION_REQUIRED',
-          });
-        else assert.ok(seal);
-      }
-      // Review rejection is an explicit fixture decision, not a semantic classifier.
-      await abandonCurator(f.work, basename(prep.run!));
-      await assert.rejects(f.prepare(), { code: 'CURATOR_HANDOFF_CONSUMED' });
-      assert.deepEqual(
-        await readFile(join(f.work, 'checkpoint.json')),
-        checkpoint,
-      );
-      assert.deepEqual(await readFile(f.feed), feed);
-      await f.event(
-        'assistant_final',
-        'manual',
-        'Not confirmed; events retained.',
-      );
-      await f.event('user_message', 'retry', '$knownex-checkpoint', 'B');
-      const next = await f.prepare();
-      assert.notEqual(next.run, prep.run);
-      await applyCurator(f.work, (await f.noop(next)).seal, true);
-      assert.equal((await f.status()).through, 2);
-      assert.equal((await f.status()).pending, 0);
-      assert.equal((await f.status()).pendingRaw, 3);
-    });
-});
-
-test('the same feed cannot spend an invocation through a different curator workspace', async (t) => {
+test('one feed cannot be prepared by a different curator workspace', async (t) => {
   const f = await fixture(t);
-  await f.event('user_message', 'manual', '$knownex-checkpoint');
   await f.prepare();
   const other = join(f.root, '.knownex/other');
   await initCurator(other, f.seed, f.feed, 0);
@@ -301,37 +186,24 @@ test('the same feed cannot spend an invocation through a different curator works
   });
 });
 
-test('legacy uncommitted batches can be withdrawn but not promoted by the new policy', async (t) => {
+test('changing the frozen run after validation cannot bypass the publication seal', async (t) => {
   const f = await fixture(t);
-  await f.event('user_message', 'manual', '$knownex-checkpoint');
-  const prep = await f.prepare(),
-    approval = await f.noop(prep);
-  const file = join(prep.run!, 'run.json'),
+  const p = await f.prepare(),
+    approval = await f.noop(p);
+  const file = join(p.run!, 'run.json'),
     run = JSON.parse(await readFile(file, 'utf8'));
-  delete run.authorization;
-  run.consent = {
-    request: 'old-request',
-    sequence: 3,
-    checksum: '0'.repeat(64),
-  };
+  run.directive = 'Changed after validation';
   await writeFile(file, JSON.stringify(run));
-  await assert.rejects(applyCurator(f.work, approval.seal, true), {
-    code: 'CURATOR_HANDOFF_REQUIRED',
+  await assert.rejects(applyCurator(f.work, approval.seal), {
+    code: 'CURATOR_STAGE_CHANGED',
   });
-  assert.equal(
-    (await abandonCurator(f.work, basename(prep.run!))).status,
-    'abandoned',
-  );
-  assert.equal((await f.status()).through, 0);
 });
 
-test('a new manual invocation cannot bypass inconsistent storage', async (t) => {
+test('a new prepare cannot bypass inconsistent memory', async (t) => {
   const f = await fixture(t);
-  await f.event('user_message', 'manual', '$knownex-checkpoint');
   await f.prepare();
   const owner = await readFile(f.feed + '.curator.json');
   await writeFile(join(f.work, 'memory/STATE.md'), '# Unexpected edit\n');
-  await f.event('user_message', 'new-command', '$knownex-checkpoint');
   await assert.rejects(f.prepare());
   assert.deepEqual(await readFile(f.feed + '.curator.json'), owner);
 });
@@ -340,7 +212,7 @@ test('administrative handoff turns are excluded without deleting feed or hiding 
   const f = await fixture(t);
   await f.event('user_message', 'manual', '$knownex-checkpoint');
   const first = await f.prepare();
-  await applyCurator(f.work, (await f.noop(first)).seal, true);
+  await applyCurator(f.work, (await f.noop(first)).seal);
   await f.event('user_message', 'other-work', 'Critical new project fact', 'B');
   await f.event('assistant_final', 'other-work', 'Independent result', 'B');
   await f.event('assistant_final', 'manual', 'Progressi salvati.');
@@ -357,7 +229,7 @@ test('administrative handoff turns are excluded without deleting feed or hiding 
     [4, 5],
   );
   assert.equal(packet.administrativeExcluded, 1);
-  await applyCurator(f.work, (await f.noop(next)).seal, true);
+  await applyCurator(f.work, (await f.noop(next)).seal);
   await appendFeedEvent(
     f.directory,
     {
@@ -406,7 +278,7 @@ test('administrative handoff turns are excluded without deleting feed or hiding 
   assert.deepEqual(await readFile(join(f.work, 'checkpoint.json')), cp);
 });
 
-test('artifact paths need authorized Markdown links and invalid proposal UTF-8 is refused', async (t) => {
+test('artifacts are cited as workspace paths, links stay limited to authorized files, invalid proposal UTF-8 is refused', async (t) => {
   const f = await fixture(t);
   const artifact = join(f.root, 'report.md');
   await writeFile(artifact, '# Report\n');
@@ -420,7 +292,7 @@ test('artifact paths need authorized Markdown links and invalid proposal UTF-8 i
   const link = packet.artifacts.find((p: string) => p.endsWith('/report.md'));
   const proposal = {
     action: 'update',
-    state: '# State\n\nResult in `report.md`. [E001](' + packet.feed + ')\n',
+    state: '# State\n\nResult in `report.md`. [E001]\n',
     history: {
       summary: 'Result',
       topics: ['Report'],
@@ -428,12 +300,17 @@ test('artifact paths need authorized Markdown links and invalid proposal UTF-8 i
     },
     knowledge: {},
   };
+  // A plain workspace path is the canonical artifact reference: no link is required.
+  await writeFile(prep.proposal!, JSON.stringify(proposal));
+  await validateCurator(f.work);
+  const outside = join(f.root, 'secret.md');
+  await writeFile(outside, '# Secret\n');
+  proposal.state = '# State\n\n[Secret](../../secret.md) [E001]\n';
   await writeFile(prep.proposal!, JSON.stringify(proposal));
   await assert.rejects(validateCurator(f.work), {
-    code: 'CURATOR_ARTIFACT_LINK_REQUIRED',
+    code: 'CURATOR_LINK_INVALID',
   });
-  proposal.state =
-    '# State\n\n[Report](' + link + ') [E001](' + packet.feed + ')\n';
+  proposal.state = '# State\n\n[Report](' + link + ') [E001]\n';
   const good = JSON.stringify(proposal);
   await writeFile(
     prep.proposal!,
@@ -449,11 +326,11 @@ test('artifact paths need authorized Markdown links and invalid proposal UTF-8 i
     createHash('sha256').update(Buffer.from(good)).digest('hex'),
   );
   await writeFile(prep.proposal!, good + '\n');
-  await assert.rejects(applyCurator(f.work, validated.seal, true), {
+  await assert.rejects(applyCurator(f.work, validated.seal), {
     code: 'CURATOR_STAGE_CHANGED',
   });
   await writeFile(prep.proposal!, good, 'utf8');
-  await applyCurator(f.work, validated.seal, true);
+  await applyCurator(f.work, validated.seal);
   const state = await readFile(join(f.work, 'memory/STATE.md'), 'utf8');
   assert.ok(state.includes('[Report]('));
   assert.equal((await f.status()).through, 2);

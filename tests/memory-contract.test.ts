@@ -5,7 +5,8 @@ import {
   validateKnowledge,
   validateKnowledgeEvolution,
 } from '../src/memory-contract.ts';
-import { historyAppendix, historySegments } from '../src/history.ts';
+import { historySegments } from '../src/history.ts';
+import { historyAppendix } from './legacy-history.ts';
 const note =
   '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n\n# Topic\n';
 
@@ -40,7 +41,6 @@ test('history boundaries, progress, source interval and previous STATE are struc
     2,
     3,
     '2026-11-03T12:00:00.000Z',
-    '../feed.jsonl',
     { summary: 'Two events', topics: ['Memory'], transition: 'New state' },
   );
   const history = initial + appendix;

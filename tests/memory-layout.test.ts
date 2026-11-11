@@ -156,7 +156,8 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
   assert.deepEqual(
     await readdir(join(memory, 'knowledge', 'checkpoint-0002')),
     [
-      second.knowledgeVersions.heads['knowledge/a.md'].id +
+      'a--' +
+        second.knowledgeVersions.heads['knowledge/a.md'].id +
         '--' +
         second.knowledgeVersions.heads['knowledge/a.md'].revision +
         '.md',
@@ -202,7 +203,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
   assert.match(await memoryState(memory), /Updated project/);
   assert.equal((await cp()).sequence, 3);
   const history = await readFile(join(memory, 'HISTORY.md'), 'utf8');
-  assert.equal((history.match(/:begin -->/g) || []).length, 2);
+  assert.equal((history.match(/^- \[H\d{6,}\]/gm) || []).length, 2);
   await rebuildTaxonomy(work);
   assert.match(
     await readFile(join(memory, 'topics/category-spec.md'), 'utf8'),

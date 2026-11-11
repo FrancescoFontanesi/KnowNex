@@ -58,9 +58,14 @@ const categoryKey = (key: string) =>
   !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(key);
 const checkpointFolder = (through: number) =>
   'checkpoint-' + String(through).padStart(4, '0');
+/**
+ * New revision files start with the note name (`storage--kn-…--r-….md`) so people browsing
+ * the vault see what a file is. The prefix is cosmetic: identity checks use `name`, without it.
+ */
+const slug = (logical: string) => logical.slice('knowledge/'.length, -3) + '--';
 function placement(file: string) {
   const m =
-    /^(checkpoint-(\d{4,}))\/(?:([a-z0-9-]+)\/)?(kn-[a-f0-9-]+--[br]-[a-f0-9-]+\.md)$/.exec(
+    /^(checkpoint-(\d{4,}))\/(?:([a-z0-9-]+)\/)?(?:[a-z0-9-]+?--)?(kn-[a-f0-9-]+--[br]-[a-f0-9-]+\.md)$/.exec(
       file,
     );
   if (
@@ -360,7 +365,6 @@ export function revisionLinks(
 }
 export interface VersionPlan {
   tree: Tree;
-  previousState: string;
   versions: KnowledgeVersions;
   files: RevisionPublication[];
 }
@@ -439,6 +443,7 @@ export function planVersions(
                 file:
                   checkpointFolder(base.sequence) +
                   '/' +
+                  slug(name) +
                   revisionFile({
                     id: parseNoteIdentity(text).id,
                     revision: 'b-' + runId,
@@ -489,6 +494,7 @@ export function planVersions(
               checkpointFolder(through) +
               '/' +
               (categories[name] ? categories[name] + '/' : '') +
+              slug(name) +
               revisionFile({
                 id: parseNoteIdentity(raw[name]!).id,
                 revision: 'r-' + runId,
@@ -526,14 +532,6 @@ export function planVersions(
     work,
     heads,
   );
-  const previousState = revisionLinks(
-    before['STATE.md']!,
-    join(memory, 'STATE.md'),
-    join(memory, 'STATE.md'),
-    memory,
-    work,
-    oldHeads,
-  );
   let checkpoint = prior?.checkpoint;
   if (!checkpoint) {
     const content =
@@ -549,7 +547,6 @@ export function planVersions(
   }
   return {
     tree,
-    previousState,
     files,
     versions: { baseline: prior?.baseline ?? base.sequence, heads, checkpoint },
   };
@@ -620,7 +617,9 @@ export async function resolveVersionLink(
     .join('/');
   if (!state || file.startsWith('../') || isAbsolute(file)) return;
   const name = target.split(/[\\/]/).at(-1)!;
-  const match = name.match(/^(kn-[a-f0-9-]+)--([br]-[a-f0-9-]+)\.md$/);
+  const match = name.match(
+    /^(?:[a-z0-9-]+?--)?(kn-[a-f0-9-]+)--([br]-[a-f0-9-]+)\.md$/,
+  );
   if (!match || archivePath(work, file) !== target)
     fail('KNOWLEDGE_REFERENCE_INVALID');
   let ref = Object.values(state.heads).find((r) => r.id === match[1]);

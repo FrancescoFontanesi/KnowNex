@@ -56,20 +56,12 @@ async function fixture(t: test.TestContext) {
   const bytes = JSON.stringify(proposal);
   await writeFile(prepared.proposal!, bytes);
   const review = {
-    version: 2,
+    version: 3,
     proposalSha256: hash(bytes),
     summary: 'Open prerequisite preserved.',
     sources: [1],
     changes: [
       { path: 'STATE.md', summary: 'Added open prerequisite.', sources: [1] },
-    ],
-    critical: [
-      {
-        before: '',
-        after: { sha256: hash(state), startLine: 3, endLine: 3 },
-        reason: 'New prerequisite remains open.',
-        sources: [1],
-      },
     ],
     uncertainties: [] as string[],
     anomalies: [] as string[],
@@ -77,17 +69,10 @@ async function fixture(t: test.TestContext) {
   const save = () =>
     writeFile(join(dir, 'review.json'), JSON.stringify(review));
   await save();
-  const validate = (summary = true) =>
+  const validate = () =>
     spawnSync(
       process.execPath,
-      [
-        'src/index.ts',
-        'curate',
-        'validate',
-        '--work',
-        work,
-        ...(summary ? ['--summary'] : []),
-      ],
+      ['src/index.ts', 'curate', 'validate', '--work', work],
       { encoding: 'utf8', windowsHide: true },
     );
   return { work, memory, dir, review, save, validate };
@@ -97,44 +82,33 @@ test('ordinary compact validation exposes decisions, checks and receipts without
   const f = await fixture(t);
   const raw = await readFile(join(f.dir, 'review.json'));
   const runSkill = await readFile(join(f.dir, 'SKILL.md'), 'utf8');
-  const sourceSkill = (
-    await readFile('.agents/skills/knownex-curator/SKILL.md', 'utf8')
-  ).replaceAll('../../../docs/MEMORY-CONTRACT.md', 'MEMORY-CONTRACT.md');
-  assert.equal(runSkill, sourceSkill);
-  assert.deepEqual(
-    await readFile(join(f.dir, 'MEMORY-CONTRACT.md')),
-    await readFile('docs/MEMORY-CONTRACT.md'),
+  const sourceSkill = await readFile(
+    '.agents/skills/knownex-curator/SKILL.md',
+    'utf8',
   );
+  assert.equal(runSkill, sourceSkill);
+  // The skill is self-contained: the human contract is no longer frozen into runs.
+  await assert.rejects(readFile(join(f.dir, 'MEMORY-CONTRACT.md')), {
+    code: 'ENOENT',
+  });
   const cli = f.validate();
   assert.equal(cli.status, 0, cli.stderr);
   const compact = JSON.parse(cli.stdout);
+  // Without critical evidence the plain report carries no STATE text at all.
   assert.ok(!cli.stdout.includes('DOCUMENT_BODY_NOT_FOR_ORDINARY_PARENT'));
-  assert.deepEqual(compact.review.report.critical, [
-    {
-      index: 0,
-      textChange: 'added',
-      reason: f.review.critical[0]!.reason,
-      sources: [1],
-    },
-  ]);
+  assert.ok(!('critical' in compact.review.report));
   assert.equal(compact.proposalSha256, f.review.proposalSha256);
   assert.equal(compact.review.sha256, hash(raw));
   assert.equal(compact.checks.frozenInputs, true);
   assert.equal(compact.checks.provenance, true);
   assert.equal(compact.checks.links, true);
-  const full = f.validate(false);
-  assert.equal(full.status, 0, full.stderr);
-  assert.equal(compact.seal, JSON.parse(full.stdout).seal);
   assert.deepEqual(await readFile(join(f.dir, 'review.json')), raw);
   assert.equal(
     await readFile(join(f.memory, 'STATE.md'), 'utf8'),
     emptyMemory['STATE.md'],
   );
   const detailed = await validateCurator(f.work);
-  assert.equal(
-    detailed.review!.report.critical[0]!.after,
-    'DOCUMENT_BODY_NOT_FOR_ORDINARY_PARENT',
-  );
+  assert.equal(detailed.seal, compact.seal);
   await applyCurator(f.work, detailed.seal);
   assert.ok(
     (await readFile(join(f.memory, 'STATE.md'), 'utf8')).includes(
@@ -156,7 +130,6 @@ test('compact validation retains escalation evidence; withholding apply preserve
   assert.deepEqual(result.review.report.anomalies, f.review.anomalies);
   assert.deepEqual(result.review.report.uncertainties, f.review.uncertainties);
   assert.equal(result.review.path, join(f.dir, 'review.json'));
-  assert.equal(result.review.report.critical[0].index, 0);
   assert.equal(
     await readFile(join(f.memory, 'STATE.md'), 'utf8'),
     emptyMemory['STATE.md'],
@@ -183,14 +156,12 @@ test('compact noop reports rationale and confirms events without rewriting memor
   f.review.proposalSha256 = hash(bytes);
   f.review.summary = 'No durable change.';
   f.review.changes = [];
-  f.review.critical = [];
   await f.save();
   const cli = f.validate();
   assert.equal(cli.status, 0, cli.stderr);
   const compact = JSON.parse(cli.stdout);
   assert.equal(compact.action, 'noop');
   assert.equal(compact.review.report.summary, 'No durable change.');
-  assert.deepEqual(compact.review.report.critical, []);
   await applyCurator(f.work, compact.seal);
   assert.equal(
     await readFile(join(f.memory, 'STATE.md'), 'utf8'),

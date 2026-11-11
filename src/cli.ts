@@ -11,6 +11,7 @@ import {
   memoryFind,
   memoryRead,
   memoryCategory,
+  memoryHistory,
 } from './navigator.ts';
 import type { MemoryScope } from './navigator.ts';
 import { initWorkspace } from './bootstrap.ts';
@@ -26,6 +27,7 @@ const memoryUsage = [
   '       knownex memory find "<query>" [--type history|knowledge] [--memory <directory>]',
   '       knownex memory read <id[@revision]|reference>[#section] [--at <checkpoint-sequence|H-ID>] [--memory <directory>]',
   '       knownex memory category <key> [--limit <1..20> --cursor <token>] [--memory <directory>]',
+  '       knownex memory history [--last <1..50>] [--before <H-ID>] [--memory <directory>]',
 ].join('\n');
 const initUsage = 'Usage: knownex init [--workspace <directory>]';
 const usage =
@@ -37,7 +39,7 @@ const usage =
   '\nUsage: knownex pending [--workspace <directory>] [--from <sequence> --through <sequence> | --cursor <token>] [--limit <1..20>] [--include-administrative]' +
   '\n' +
   memoryUsage +
-  '\n       knownex curate <native|checkpoint|init|prepare|validate|apply|abandon> [options]' +
+  '\n       knownex curate <native|init|prepare|validate|apply|abandon|read|write|complete> [options]' +
   '\n       knownex taxonomy <prepare|validate|apply|rebuild> [options]';
 
 class UsageError extends Error {}
@@ -78,7 +80,7 @@ async function main(args: string[]) {
       args[1] === '--help') ||
     (args.length === 3 &&
       args[0] === 'memory' &&
-      ['state', 'find', 'read', 'category'].includes(args[1]!) &&
+      ['state', 'find', 'read', 'category', 'history'].includes(args[1]!) &&
       args[2] === '--help')
   ) {
     console.log(
@@ -213,6 +215,18 @@ async function main(args: string[]) {
           ...(await memoryRead(memory, command.value!, { at: command.at })),
         }),
       );
+    else if (command.operation === 'history')
+      console.log(
+        transportJson({
+          status: 'ok',
+          results: await memoryHistory(memory, {
+            ...(command.last === undefined
+              ? {}
+              : { last: Number(command.last) }),
+            ...(command.before === undefined ? {} : { before: command.before }),
+          }),
+        }),
+      );
     else if (command.operation === 'category')
       console.log(
         transportJson(
@@ -260,7 +274,7 @@ function parseMemoryCommand(args: string[]) {
     const [operation, ...rest] = args;
     if (
       !operation ||
-      !['state', 'find', 'read', 'category'].includes(operation)
+      !['state', 'find', 'read', 'category', 'history'].includes(operation)
     )
       throw new UsageError();
     const { values, positionals, tokens } = parseArgs({
@@ -275,6 +289,12 @@ function parseMemoryCommand(args: string[]) {
               cursor: { type: 'string' as const },
             }
           : {}),
+        ...(operation === 'history'
+          ? {
+              last: { type: 'string' as const },
+              before: { type: 'string' as const },
+            }
+          : {}),
       },
       strict: true,
       allowPositionals: true,
@@ -283,7 +303,10 @@ function parseMemoryCommand(args: string[]) {
     const names = tokens.filter((t) => t.kind === 'option').map((t) => t.name);
     if (
       new Set(names).size !== names.length ||
-      positionals.length !== (operation === 'state' ? 0 : 1) ||
+      positionals.length !==
+        (operation === 'state' || operation === 'history' ? 0 : 1) ||
+      (values.last !== undefined &&
+        !/^[1-9]\d*$/.test(values.last as string)) ||
       [...positionals, ...Object.values(values)].some(
         (v) => typeof v !== 'string' || !v.trim() || v.includes('\0'),
       ) ||
@@ -300,6 +323,8 @@ function parseMemoryCommand(args: string[]) {
       at: values.at as string | undefined,
       limit: values.limit as string | undefined,
       cursor: values.cursor as string | undefined,
+      last: values.last as string | undefined,
+      before: values.before as string | undefined,
     };
   } catch {
     throw new UsageError();

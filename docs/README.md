@@ -4,7 +4,7 @@
 
 - [INSTALL](INSTALL.md): installazione, aggiornamento e rimozione.
 - [RUNTIME](RUNTIME.md): lifecycle, continuita fra sessioni e pending read-only.
-- [CHECKPOINT-CONSENT](CHECKPOINT-CONSENT.md): avvio manuale, autorizzazione monouso e batch falliti.
+- [CHECKPOINT-CONSENT](CHECKPOINT-CONSENT.md): prepare esplicito, batch congelati e pubblicazione.
 - [NAVIGATOR](NAVIGATOR.md): ricerca e lettura selettiva della memoria.
 - [TAXONOMY](TAXONOMY.md): categorie approvate, classificazione retroattiva e indici Markdown.
 

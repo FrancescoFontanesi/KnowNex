@@ -15,7 +15,7 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { memoryState, memoryFind, memoryRead } from '../src/navigator.ts';
-import { historyAppendix } from '../src/history.ts';
+import { historyAppendix } from './legacy-history.ts';
 
 const note = (n: number, title: string, body: string) =>
   `---\nid: kn-00000000-0000-4000-8000-${String(n).padStart(12, '0')}\ntype: knowledge\n---\n\n# ${title}\n\n${body}\n`;
@@ -41,7 +41,6 @@ async function fixture(t: TestContext) {
       i,
       i,
       '2026-11-03T12:00:00.000Z',
-      '../feed.jsonl',
       {
         summary:
           i === 2 ? 'targetdecision explained' : 'Shared history outcome',

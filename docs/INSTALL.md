@@ -43,7 +43,7 @@ Usare la stessa grafia del percorso che verra passata alla sessione Codex:
 il preflight la preserva nelle chiamate native, anche per la lettera del drive
 Windows. Il controllo hook e diagnostico e non viene eseguito automaticamente
 dal checkpoint; autorizzazione e integrita del feed restano obbligatorie nel runtime.
-Le interfacce native di diagnostica e il launcher esterno mantengono i codici pubblici degli errori App Server; il checkpoint nativo non li avvia.
+Le interfacce native di diagnostica mantengono i codici pubblici degli errori App Server; il checkpoint nativo non le avvia.
 Il runtime conserva diagnostici esclusivi in `.knownex/internal/diagnostics/`:
 fase, metodo RPC, eseguibile richiesto e risoluzione PATH stimata, cwd, avvio,
 terminazione, durata e codice originale. Messaggi e stderr non riconosciuti
@@ -68,15 +68,22 @@ produce un conflitto esplicito: non viene sovrascritta. Nessuna configurazione
 globale viene modificata. KnowNex non installa, inizializza o esegue Graft.
 
 KnowNex acquisisce gli eventi, fornisce STATE e segnala il pending fra sessioni.
-Il principale recupera selettivamente il contesto e suggerisce `$knownex-checkpoint`
+Il principale riusa il contesto disponibile e delega Recall solo quando necessario
+a `knownex_recaller`, senza navigare direttamente la memoria. Init distribuisce
+questo ruolo accanto a `knownex_curator`: entrambi usano Terra medium, con
+responsabilita e sessioni separate. I permessi sono quelli dell'harness; il ruolo
+non crea una sandbox read-only separata. Se la delega manca, il principale segnala
+il limite senza fallback automatico.
+
+Il principale suggerisce `$knownex-checkpoint`
 ai milestone significativi, senza aspettare una risposta. Per salvare, invocare
 `$knownex-checkpoint` nella chat: l'invocazione autorizza un solo batch. Non occorre
 rispondere Si/No, scegliere cosa salvare o usare parole di assenso prestabilite.
 Nessun modello viene avviato dall'installer.
 
 Il checkpoint usa il feed acquisito e non richiede App Server, history Codex o
-accesso ai database globali. Le interfacce native opzionali di preflight hook e
-il launcher esterno richiedono un Codex compatibile nel PATH, o KNOWNEX_CODEX_BIN,
+accesso ai database globali. Le interfacce native opzionali di preflight hook
+richiedono un Codex compatibile nel PATH, o KNOWNEX_CODEX_BIN,
 e il CODEX_HOME della sessione; non sono prerequisiti della materializzazione.
 
 ## Aggiornamento e reinstallazione

@@ -1,21 +1,31 @@
 ---
 name: knownex-checkpoint
-description: Suggerisce $knownex-checkpoint ai milestone; su invocazione esplicita prepara, delega la curatela una volta e completa il checkpoint nativo. Non usarla per recall o sola amministrazione.
+description: Esegue un checkpoint KnowNex quando l'utente invoca esplicitamente $knownex-checkpoint. Congela gli eventi acquisiti, delega una volta la curatela a knownex_curator in parallelo al lavoro corrente e completa la pubblicazione. Ai milestone significativi suggerisce soltanto l'invocazione. Non usarla per il recall né per leggere o correggere la memoria.
 ---
 
-# Checkpoint KnowNex — delega nativa
+# Checkpoint KnowNex
 
-Suggerisci brevemente `$knownex-checkpoint` ai milestone significativi, poi continua il lavoro. Il suggerimento non autorizza. Solo l'invocazione esplicita dell'utente avvia questa procedura; il feed rimane l'autorità del permesso monouso.
+Ai milestone significativi (decisioni sostituite, risultati verificati, cambi di focus) puoi suggerire in una riga `$knownex-checkpoint` e continuare il lavoro. Solo l'invocazione esplicita dell'utente avvia la procedura: un assenso generico non basta.
 
-1. Usa il runtime locale installato: `node node_modules/knownex/dist/index.js`, oppure `node dist/index.js` nel checkout KnowNex già compilato. Non cercare runtime in altri workspace o cache. Esegui:
+Il principale coordina tre comandi deterministici e una delega. Non legge feed, packet, STATE, HISTORY, Knowledge, proposta o review: copertura e continuità spettano al Curator.
+
+`<RUNTIME>` è `node node_modules/knownex/dist/index.js` nel workspace, oppure `node dist/index.js` nel checkout di KnowNex già compilato. Non cercarlo altrove. Se manca, termina con `ERROR / CURATOR_RUNTIME_UNAVAILABLE`.
+
+## Procedura
+
+1. **Congela il batch.**
 
    ```text
-   <RUNTIME> curate native --stage prepare --work .knownex/internal/curator --authorization captured-user-invocation
+   <RUNTIME> curate native --stage prepare --work .knownex/internal/curator
    ```
 
-   Il runtime risolve l'invocazione acquisita nel feed, verifica recovery e integrità del registro, consuma il permesso monouso e congela il batch. Non consulta la history Codex. Non inventare sequenze, cutoff o autorizzazioni. Procedi solo su `READY`; conserva `runId` e `requestFile` restituiti senza aprire i documenti. Un errore interrompe il percorso, senza retry.
+   - `SUCCESS` con `action: noop`: non ci sono eventi da curare. Termina.
+   - `READY`: conserva `runId`, `run` e `requestFile` senza aprire i documenti.
+   - Qualsiasi altro esito: riporta l'errore e termina.
 
-2. Delega **una sola volta** al custom agent nativo `knownex_curator` (Terra medium), con contesto indipendente: non ereditare la conversazione del principale (`fork_turns: none`, dove esposto). Trasmetti soltanto questo incarico con i riferimenti reali restituiti da prepare:
+   Ripetere prepare restituisce lo stesso batch attivo.
+
+2. **Delega una volta** all'agente `knownex_curator`, con contesto indipendente (`fork_turns: "none"` dove esiste) e solo questo incarico:
 
    ```json
    {
@@ -29,21 +39,26 @@ Suggerisci brevemente `$knownex-checkpoint` ai milestone significativi, poi cont
    }
    ```
 
-   Il Curator legge autonomamente `requestFile` e gli input congelati, svolge tutta la curatela e restituisce soltanto `{ proposal: ricevuta, review: ricevuta }` dell'I/O canonico, oppure un errore. Nessun documento nel messaggio di delega o nel risultato.
+   Se l'agente `knownex_curator` non è disponibile, termina con `ERROR / CURATOR_NATIVE_UNAVAILABLE` senza sostituirlo con un altro ruolo o modello.
 
-3. Attendi il risultato con gli strumenti nativi di attesa dei subagent. Non inviare richieste di avanzamento, supervisione o correzione. Le attese dell'host non sono nuove deleghe. Se Terra fallisce o non consegna entrambe le ricevute, termina con errore compatto senza eseguire complete, correggere artefatti o delegare nuovamente.
-4. Con le ricevute reali esegui:
+3. **Continua il lavoro dell'utente mentre il Curator lavora.** Il batch è congelato: i nuovi eventi andranno al checkpoint successivo. Non inviare al Curator richieste di avanzamento o correzioni. Quando arriva il suo risultato:
+   - con `{proposal, review}` vai al passo 4;
+   - con un errore, riportalo e termina senza complete e senza un'altra delega.
+
+4. **Completa.**
 
    ```text
-   <RUNTIME> curate native --stage complete --work .knownex/internal/curator --run RUN_ID --proposal-sha256 HASH_PROPOSAL --review-sha256 HASH_REVIEW
+   <RUNTIME> curate native --stage complete --work .knownex/internal/curator --run RUN_ID
    ```
 
-   Questa primitiva verifica ricevute, proposta, review, anomalie e integrità finale del batch acquisito, poi applica transazionalmente se consentito. Non ripetere validate, review o apply separatamente. Non interpretare le ricevute come conferma di pubblicazione.
+   Il runtime legge proposta e review dal run, verifica il batch acquisito e il rapporto, poi pubblica in modo transazionale. Non eseguire validate, review o apply separatamente.
 
-5. Riporta soltanto il risultato conclusivo `SUCCESS`, `BLOCKED` o `ERROR` e i metadati essenziali del runtime.
+   Due codici non consumano il batch e indicano che la consegna non è ancora pronta: `CURATOR_WORKER_OUTPUT_INCOMPLETE` (manca la consegna) e `DESTINATION_BUSY` (il Curator sta scrivendo). Esegui di nuovo complete solo dopo il risultato del Curator. Ogni altro errore è definitivo per il batch.
 
-Non leggere feed, packet, STATE, HISTORY, Knowledge, proposal o review né analizzare le fonti per gestire il checkpoint. Il Curator è responsabile di continuità storica e copertura semantica; il principale coordina soltanto le primitive deterministiche. Non invocare `curate checkpoint`: avvia il launcher esterno. Nessun fallback npm, npx, codex exec, secondo agente, retry o riparazione. Runtime assente: `ERROR / CURATOR_RUNTIME_UNAVAILABLE`.
+5. **Riporta** solo l'esito `SUCCESS`, `BLOCKED` o `ERROR` con i metadati restituiti dal runtime. `BLOCKED` significa che il Curator ha dichiarato incertezze o anomalie: la proposta resta da rivedere esplicitamente.
 
-Se il custom agent o l'attesa nativa non sono disponibili, restituisci `ERROR / CURATOR_NATIVE_UNAVAILABLE` senza sostituire Terra con un altro ruolo/modello. La configurazione project-scoped deve essere caricata dalla sessione Codex.
+## Vincoli
 
-Un'interruzione del Curator non autorizza un'altra delega. Conserva il risultato diagnostico; solo una nuova invocazione utente può autorizzare un nuovo tentativo. Non dichiarare completo un checkpoint senza un risultato di conferma.
+- Non usare fallback come npm, npx, `codex exec` o un secondo agente.
+- Un'interruzione o un fallimento del Curator non autorizzano un'altra delega: solo una nuova invocazione dell'utente può farlo.
+- Non dichiarare completo un checkpoint senza un esito `SUCCESS` del runtime.

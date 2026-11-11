@@ -18,13 +18,24 @@ function fail(code: string): never {
 }
 
 export async function measureContext(run: string) {
-  const files = Object.fromEntries(
-    await Promise.all(
-      ['packet.json', 'WINDOW.md', 'SKILL.md', 'MEMORY-CONTRACT.md'].map(
-        async (name) => [name, await readFile(join(run, name))] as const,
-      ),
-    ),
-  );
+  const files: Record<string, Buffer> = {};
+  for (const name of [
+    'packet.json',
+    'WINDOW.md',
+    'SKILL.md',
+    'inputs.json',
+    'MEMORY-CONTRACT.md',
+  ])
+    try {
+      files[name] = await readFile(join(run, name));
+    } catch (e) {
+      // inputs.json is absent in legacy runs; MEMORY-CONTRACT.md only exists in them.
+      if (
+        (e as NodeJS.ErrnoException).code !== 'ENOENT' ||
+        !['inputs.json', 'MEMORY-CONTRACT.md'].includes(name)
+      )
+        throw e;
+    }
   const packet = JSON.parse(decode(files['packet.json']!));
   if (
     !Number.isSafeInteger(packet.from) ||

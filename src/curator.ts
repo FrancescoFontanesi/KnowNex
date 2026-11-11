@@ -72,11 +72,7 @@ import {
   validateKnowledge,
   validateKnowledgeEvolution,
 } from './memory-contract.ts';
-import {
-  historySegments,
-  historyAppendix,
-  type Transition,
-} from './history.ts';
+import { historySegments, historyWindow, type Transition } from './history.ts';
 type Tree = Record<string, string>;
 export const emptyMemory: Tree = {
   'STATE.md':
@@ -105,7 +101,6 @@ interface Run {
   inputManifestSha256?: string;
   revisionLayout?: 1;
   taxonomy?: Record<string, string>;
-  authorization?: { sequence: number; checksum: string };
   id: string;
   base: Checkpoint;
   last: Row;
@@ -117,12 +112,6 @@ interface Run {
 }
 interface FeedAuthority {
   work: string;
-  spent?: {
-    runId: string;
-    sequence: number;
-    checksum: string;
-    through: number;
-  };
 }
 type Proposal =
   | { action: 'noop' }
@@ -140,7 +129,14 @@ function fail(code: string): never {
 const object = (x: unknown): x is Record<string, unknown> =>
   x !== null && typeof x === 'object' && !Array.isArray(x);
 const allowed = (name: string) =>
-  /^(?:(?:STATE|HISTORY)\.md|knowledge\/[a-z0-9-]+\.md)$/.test(name);
+  /^(?:(?:STATE|HISTORY)\.md|knowledge\/[a-z0-9-]+\.md|history\/H\d{6,}\.md)$/.test(
+    name,
+  );
+/** Links written for the memory root, moved one level down into history/. */
+const intoHistory = (text: string) =>
+  text.replace(/(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, label, href) =>
+    /^(?:[a-z]+:|#)/i.test(href) ? whole : `[${label}](../${href})`,
+  );
 const inside = (root: string, target: string) => {
   const r = relative(root, target);
   return (
@@ -202,6 +198,20 @@ async function treeAt(
         if (complete || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
     }
+    let windows: string[] = [];
+    try {
+      if ((await lstat(join(root, 'history'))).isSymbolicLink())
+        fail('CURATOR_UNSAFE_PATH');
+      windows = await readdir(join(root, 'history'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    for (const file of windows) {
+      const name = 'history/' + file;
+      if (!allowed(name) || (await lstat(join(root, name))).isSymbolicLink())
+        fail('CURATOR_UNSAFE_PATH');
+      result[name] = await readUtf8(join(root, name));
+    }
     return result;
   }
   const tree: Tree = {};
@@ -212,7 +222,8 @@ async function treeAt(
         name = relative(root, p).split(sep).join('/');
       if (entry.isSymbolicLink()) fail('CURATOR_UNSAFE_PATH');
       if (entry.isDirectory()) {
-        if (name !== 'knowledge') fail('CURATOR_UNSAFE_PATH');
+        if (name !== 'knowledge' && name !== 'history')
+          fail('CURATOR_UNSAFE_PATH');
         await walk(p);
       } else {
         if (!entry.isFile() || !allowed(name)) fail('CURATOR_UNSAFE_PATH');
@@ -378,12 +389,38 @@ async function validateTree(
     /knownex-history:/.test(tree['STATE.md']!)
   )
     fail('CURATOR_STATE_INVALID');
-  historySegments(tree['HISTORY.md']!, cutoff);
-  for (const field of tree['HISTORY.md']!.matchAll(/^- Eventi: `([^`]+)`$/gm))
-    validateEventLabel(field[1]!, rows, cutoff);
+  const windows = historySegments(tree['HISTORY.md']!, cutoff).flatMap((s) =>
+    s.window ? [s.window] : [],
+  );
+  // Index and windows match one to one: no orphan window, no indexed window missing.
+  const stored = Object.keys(tree).filter((n) => n.startsWith('history/'));
+  if (
+    stored.length !== windows.length ||
+    windows.some((n) => !Object.hasOwn(tree, n))
+  )
+    fail('CURATOR_HISTORY_INVALID');
+  for (const name of ['HISTORY.md', ...windows])
+    for (const field of tree[name]!.matchAll(/^- Eventi: `([^`]+)`$/gm))
+      validateEventLabel(field[1]!, rows, cutoff);
   for (const [name, text] of Object.entries(tree)) {
     let provenance = false;
-    const linked = new Set<string>();
+    // Provenance is a bracketed event label: bare [E017] / [E015–E016], or a legacy link to the feed.
+    const cite = (label: string) => {
+      validateEventLabel(label, rows, cutoff);
+      if (name !== 'HISTORY.md') {
+        const range = label.match(/^E(\d+)(?:\s*(?:\.\.|[–-])\s*E(\d+))?$/);
+        if (
+          range &&
+          excluded.some(
+            (n) => n >= Number(range[1]) && n <= Number(range[2] ?? range[1]),
+          )
+        )
+          fail('CURATOR_PROVENANCE_INVALID');
+      }
+      provenance = true;
+    };
+    // Anything bracketed that starts like a label is one, so a malformed [E1] is refused, not ignored.
+    for (const m of text.matchAll(/\[(E\d[^\]]*)\](?!\()/g)) cite(m[1]!);
     const hrefs = links(text);
     const labels = [...text.matchAll(/\[([^\]]*)\]\(([^)\n]*)\)/g)];
     for (const [i, href] of hrefs.entries()) {
@@ -394,7 +431,6 @@ async function validateTree(
         dirname(join(root, name)),
         decodeURIComponent(url || name.split('/').at(-1)!),
       );
-      linked.add(target);
       const key = relative(root, target).split(sep).join('/'),
         internal = inside(root, target) && Object.hasOwn(tree, key);
       const versionContent =
@@ -427,19 +463,8 @@ async function validateTree(
       )
         fail('CURATOR_PROVENANCE_INVALID');
       if (target === feed) {
-        validateEventLabel(label, rows, cutoff);
-        if (name !== 'HISTORY.md') {
-          const range = label.match(/^E(\d+)(?:\s*(?:\.\.|[–-])\s*E(\d+))?$/);
-          if (
-            range &&
-            excluded.some(
-              (n) => n >= Number(range[1]) && n <= Number(range[2] ?? range[1]),
-            )
-          )
-            fail('CURATOR_PROVENANCE_INVALID');
-        }
         if (anchor) fail('CURATOR_PROVENANCE_INVALID');
-        provenance = true;
+        cite(label);
       }
       if (anchor) {
         const body = internal
@@ -452,17 +477,6 @@ async function validateTree(
           fail('CURATOR_LINK_INVALID');
       }
     }
-    if (name !== 'HISTORY.md')
-      for (const artifact of external) {
-        if (artifact === feed || linked.has(artifact)) continue;
-        const forms = [
-          artifact,
-          relative(dirname(join(root, name)), artifact),
-          relative(workspaceFromFeed(feed), artifact),
-        ].map((p) => p.split(sep).join('/'));
-        if (forms.some((p) => p && text.includes(p)))
-          fail('CURATOR_ARTIFACT_LINK_REQUIRED');
-      }
     if (name !== 'HISTORY.md' && !provenance && text !== emptyMemory[name])
       fail('CURATOR_PROVENANCE_INVALID');
   }
@@ -484,6 +498,9 @@ async function syncTree(
   if (canonicalWork(work) && memoryDirectory(work) === root) {
     for (const name of ['STATE.md', 'HISTORY.md'])
       await syncPath(join(root, name));
+    const windows = Object.keys(tree).filter((n) => n.startsWith('history/'));
+    for (const name of windows) await syncPath(join(root, name));
+    if (windows.length) await syncDirectory(join(root, 'history'));
     for (const ref of Object.values(versions?.heads ?? {})) {
       const file = archivePath(work, revisionFile(ref));
       await syncPath(file);
@@ -498,8 +515,9 @@ async function syncTree(
     return;
   }
   for (const name of Object.keys(tree)) await syncPath(join(root, name));
-  if (Object.keys(tree).some((name) => name.startsWith('knowledge/')))
-    await syncDirectory(join(root, 'knowledge'));
+  for (const folder of ['knowledge', 'history'])
+    if (Object.keys(tree).some((name) => name.startsWith(folder + '/')))
+      await syncDirectory(join(root, folder));
   await syncDirectory(root);
   await syncDirectory(dirname(root));
 }
@@ -753,7 +771,7 @@ async function recoverApply(work: string) {
       )
     )
       fail('CURATOR_RECOVERY_INVALID');
-    // run.json/pending.json are durably established before the authorization record.
+    // run.json/pending.json are durably established before publication.
     const run = await json<Run>(join(work, 'runs', r.runId, 'run.json'));
     if (run.id !== r.runId) fail('CURATOR_RECOVERY_INVALID');
     const rows = await feedRows(r.before.feed);
@@ -980,11 +998,7 @@ export async function curatorStatus(work: string, feed: string) {
     const through = state?.cp.sequence ?? 0;
     const excluded = recordedExclusions(state?.cp);
     const run = initialized ? await pendingRun(work) : undefined;
-    const owner = state ? await authorityAt(work, state.cp.feed) : undefined;
-    const invocation = currentInvocation(
-      rows.filter((r) => !excluded.has(r.event.sequence)),
-      feed,
-    );
+    if (state) await authorityAt(work, state.cp.feed);
     const administrative = administrativeTurns(rows, feed);
     if (run && state) checkRun(state.cp, rows, run);
     return {
@@ -993,30 +1007,16 @@ export async function curatorStatus(work: string, feed: string) {
       ...pendingCounts(rows, through, administrative, excluded),
       latest: rows.length,
       readyThrough:
-        [...rows]
+        rows
+          .slice(through)
           .reverse()
           .find(
             (r) =>
-              r.event.type === 'assistant_final' &&
               !excluded.has(r.event.sequence) &&
               !inAdministrativeTurn(r, administrative),
           )?.event.sequence ?? through,
       activeRun: run ? join(work, 'runs', run.id) : null,
       staleRun: false,
-      unconfirmedRun:
-        owner?.spent && owner.spent.through > through
-          ? join(work, 'runs', owner.spent.runId)
-          : null,
-      handoff: invocation
-        ? {
-            status:
-              owner?.spent && invocation.event.sequence <= owner.spent.sequence
-                ? ('consumed' as const)
-                : ('available' as const),
-            sequence: invocation.event.sequence,
-            checksum: invocation.checksum,
-          }
-        : { status: 'none' as const },
       memory: initialized ? memoryDirectory(work) : null,
       state: state?.memory['STATE.md'] ?? emptyMemory['STATE.md']!,
     };
@@ -1337,8 +1337,8 @@ export async function abandonCurator(work: string, runId: string) {
       };
     if (run.id !== runId) fail('CURATOR_STALE_BATCH');
     checkRun(cp, rows, run);
-    if (run.authorization) await checkAuthorization(work, rows, run);
-    // Preserve staging and the spent invocation; withdrawal never renews authorization.
+    await authorityAt(work, cp.feed);
+    // Preserve staging and feed; only a new explicit prepare creates another batch.
     await unlink(join(work, 'pending.json'));
     await syncDirectory(work);
     return {
@@ -1444,7 +1444,6 @@ function administrativeTurns(rows: Row[], feed: string) {
       .filter(
         (r) =>
           r.event.type === 'user_message' &&
-          r.event.hook === 'UserPromptSubmit' &&
           isCheckpointInvocation(r.event.text, feed, true, true),
       )
       .map((r) => JSON.stringify([r.event.sessionId, r.event.turnId])),
@@ -1452,17 +1451,6 @@ function administrativeTurns(rows: Row[], feed: string) {
 }
 const inAdministrativeTurn = (row: Row, turns: Set<string>) =>
   turns.has(JSON.stringify([row.event.sessionId, row.event.turnId]));
-
-function currentInvocation(rows: Row[], feed: string) {
-  const row = [...rows]
-    .reverse()
-    .find((r) => ['user_message', 'assistant_final'].includes(r.event.type));
-  return row?.event.type === 'user_message' &&
-    row.event.hook === 'UserPromptSubmit' &&
-    isCheckpointInvocation(row.event.text, feed)
-    ? row
-    : undefined;
-}
 
 async function authorityAt(
   work: string,
@@ -1475,45 +1463,10 @@ async function authorityAt(
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw e;
   }
-  if (
-    !object(owner) ||
-    typeof owner.work !== 'string' ||
-    (owner.spent !== undefined &&
-      (!object(owner.spent) ||
-        typeof owner.spent.runId !== 'string' ||
-        !/^[a-z0-9-]+$/.test(owner.spent.runId) ||
-        !Number.isSafeInteger(owner.spent.sequence) ||
-        owner.spent.sequence < 1 ||
-        !Number.isSafeInteger(owner.spent.through) ||
-        owner.spent.through < 0 ||
-        owner.spent.through >= owner.spent.sequence ||
-        typeof owner.spent.checksum !== 'string' ||
-        !/^[a-f0-9]{64}$/.test(owner.spent.checksum)))
-  )
-    fail('CURATOR_HANDOFF_INVALID');
+  if (!object(owner) || typeof owner.work !== 'string')
+    fail('CURATOR_WORKSPACE_CONFLICT');
   if (owner.work !== work) fail('CURATOR_WORKSPACE_CONFLICT');
   return owner;
-}
-
-async function checkAuthorization(work: string, rows: Row[], run: Run) {
-  const owner = await authorityAt(work, run.base.feed),
-    source = run.authorization;
-  const row = source && rows[source.sequence - 1];
-  if (
-    !owner?.spent ||
-    !source ||
-    !row ||
-    owner.spent.runId !== run.id ||
-    owner.spent.sequence !== source.sequence ||
-    owner.spent.checksum !== source.checksum ||
-    owner.spent.through !== run.last.event.sequence ||
-    row.checksum !== source.checksum ||
-    row.event.type !== 'user_message' ||
-    row.event.hook !== 'UserPromptSubmit' ||
-    !isCheckpointInvocation(row.event.text, run.base.feed, false, true) ||
-    run.last.event.sequence >= source.sequence
-  )
-    fail('CURATOR_HANDOFF_REQUIRED');
 }
 
 /** Start a new workspace from an explicitly reviewed canonical memory and cutoff. */
@@ -1587,12 +1540,14 @@ export async function prepareCurator(
     through?: number;
     context?: string[];
     artifacts?: string[];
-    requireInvocation?: boolean;
     autonomous?: boolean;
   } = {},
 ): Promise<{
   status: string;
   run?: string;
+  runId?: string;
+  packet?: string;
+  snapshot?: string;
   proposal?: string;
   manifest?: string;
   from?: number;
@@ -1607,30 +1562,18 @@ export async function prepareCurator(
     const excluded = recordedExclusions(cp);
     const pending = await pendingRun(work);
     const administrative = administrativeTurns(rows, cp.feed);
-    const required =
-      options.requireInvocation || basename(cp.feed) === 'project.jsonl';
-    const invocation =
-      required && !pending
-        ? currentInvocation(
-            rows.filter((r) => !excluded.has(r.event.sequence)),
-            cp.feed,
-          )
-        : undefined;
-    if (required && !pending && !invocation) fail('CURATOR_HANDOFF_REQUIRED');
     const cutoff =
       pending?.last.event.sequence ??
-      (invocation
-        ? ([...rows.slice(0, invocation.event.sequence - 1)]
-            .reverse()
-            .find(
-              (r) =>
-                r.event.type === 'assistant_final' &&
-                !excluded.has(r.event.sequence) &&
-                !inAdministrativeTurn(r, administrative),
-            )?.event.sequence ?? cp.sequence)
-        : rows.length);
+      rows
+        .slice(cp.sequence)
+        .reverse()
+        .find(
+          (r) =>
+            !excluded.has(r.event.sequence) &&
+            !inAdministrativeTurn(r, administrative),
+        )?.event.sequence ??
+      cp.sequence;
     const through = options.through ?? cutoff;
-    if (required && through !== cutoff) fail('CURATOR_HANDOFF_CUTOFF_INVALID');
     if (
       !Number.isSafeInteger(through) ||
       through < cp.sequence ||
@@ -1643,26 +1586,13 @@ export async function prepareCurator(
     const last = selected.at(-1) ?? pending?.last;
     if (!last) fail('CURATOR_STALE_BATCH');
     const id = `${cp.sequence + 1}-${last.event.sequence}-${randomUUID()}`;
-    let authorization: Run['authorization'];
-    if (required && !pending) {
-      const source = invocation!;
-      const releaseFeed = await acquireJournalLock(cp.feed + '.lock');
-      try {
-        const owner = (await authorityAt(work, cp.feed)) ?? { work };
-        if (owner.spent && source.event.sequence <= owner.spent.sequence)
-          fail('CURATOR_HANDOFF_CONSUMED');
-        authorization = {
-          sequence: source.event.sequence,
-          checksum: source.checksum,
-        };
-        // Spend before staging/delegation. A partial or failed batch cannot renew the invocation.
-        await atomicJson(cp.feed + '.curator.json', {
-          ...owner,
-          spent: { runId: id, ...authorization, through },
-        });
-      } finally {
-        await releaseFeed();
-      }
+    const releaseFeed = await acquireJournalLock(cp.feed + '.lock');
+    try {
+      const owner = await authorityAt(work, cp.feed);
+      if (pending && !owner) fail('CURATOR_WORKSPACE_CONFLICT');
+      if (!owner) await atomicJson(cp.feed + '.curator.json', { work });
+    } finally {
+      await releaseFeed();
     }
     const directive =
       directiveFile === undefined
@@ -1701,7 +1631,6 @@ export async function prepareCurator(
     for (const p of external)
       if (!(await stat(p)).isFile()) fail('CURATOR_LINK_INVALID');
     if (pending) {
-      if (required) await checkAuthorization(work, rows, pending);
       checkRun(cp, rows, pending);
       if (
         directive !== pending.directive ||
@@ -1712,10 +1641,26 @@ export async function prepareCurator(
       )
         fail('CURATOR_PENDING_EXISTS');
       const run = join(work, 'runs', pending.id);
-      return { status: 'prepared', run, proposal: join(run, 'proposal.json') };
+      return {
+        status: 'prepared',
+        run,
+        runId: pending.id,
+        proposal: join(run, 'proposal.json'),
+        packet: join(run, 'packet.json'),
+        manifest: join(run, 'inputs.json'),
+        snapshot: join(run, 'base'),
+        from: cp.sequence + 1,
+        through: pending.last.event.sequence,
+      };
     }
     const dir = join(work, 'runs', id),
       base = join(dir, 'base');
+    const batchExcluded = new Set([
+      ...excluded,
+      ...selected
+        .filter((r) => inAdministrativeTurn(r, administrative))
+        .map((r) => r.event.sequence),
+    ]);
     const run: Run = {
       ...(autonomous ? { autonomous: true as const } : {}),
       revisionLayout: 1,
@@ -1726,16 +1671,19 @@ export async function prepareCurator(
       context,
       external,
       directive,
-      ...(authorization ? { authorization } : {}),
-      ...(excluded.size
+      ...(batchExcluded.size
         ? {
-            excluded: [...excluded]
+            excluded: [...batchExcluded]
               .filter((n) => n > cp.sequence && n <= last.event.sequence)
               .sort((a, b) => a - b),
           }
         : {}),
     };
-    await putTree(base, rebase(memory, memoryDirectory(work), base));
+    // History windows are not curation input: copying them would grow every run with the whole past.
+    const snapshot = Object.fromEntries(
+      Object.entries(memory).filter(([n]) => !n.startsWith('history/')),
+    );
+    await putTree(base, rebase(snapshot, memoryDirectory(work), base));
     const baseTree = await treeAt(base);
     const material = selected.filter(
       (r) =>
@@ -1802,39 +1750,56 @@ export async function prepareCurator(
       JSON.stringify(packet, null, 2) + '\n',
       { mode: 0o600 },
     );
+    // WINDOW.md is the Curator's reading copy of the packet: the fields curation needs,
+    // without per-event checksums, byte offsets or a session/turn line repeated per event.
+    const label = (n: number) => 'E' + String(n).padStart(3, '0');
+    // The feed stays an authorized link target for legacy notes, but is not something to cite.
+    const cited = external
+      .filter((p) => p !== cp.feed)
+      .map((p) => relative(workspaceFromFeed(cp.feed), p).split(sep).join('/'));
+    const categories = Object.entries(taxonomy ?? {});
+    let turn = '';
     const window =
-      (orderingIssues.length
-        ? `Avvisi ordine: ${orderingIssues.join(', ')}\n\n`
+      `# Batch ${label(packet.from)}..${label(packet.through)}\n\n` +
+      (cited.length
+        ? `- Artefatti citabili (percorso dalla radice del workspace): ${cited.map((a) => '`' + a + '`').join(', ')}\n`
         : '') +
+      (orderingIssues.length
+        ? `- Avvisi ordine: ${orderingIssues.join(', ')}\n`
+        : '') +
+      (categories.length
+        ? '\n## Categorie approvate\n\n' +
+          categories.map(([k, d]) => `- \`${k}\`: ${d}`).join('\n') +
+          '\n'
+        : '') +
+      (directive?.trim()
+        ? `\n## Direttiva del principale\n\n${directive}\n`
+        : '') +
+      '\n' +
       ordered
-        .map(
-          (r) =>
-            `## E${String(r.event.sequence).padStart(3, '0')} — ${r.event.type}\n\n` +
-            `Sessione: ${r.event.sessionId}; turno: ${r.event.turnId}.\n\n${r.event.text}\n`,
-        )
+        .map((r) => {
+          const key = `Sessione: ${r.event.sessionId}; turno: ${r.event.turnId}.\n\n`,
+            heading = key === turn ? '' : key;
+          turn = key;
+          return (
+            `## ${label(r.event.sequence)} — ${r.event.type}\n\n` +
+            heading +
+            `${r.event.text}\n`
+          );
+        })
         .join('\n');
     await writeFile(join(dir, 'WINDOW.md'), window, { mode: 0o600 });
     await writeFile(
       join(dir, 'SKILL.md'),
-      (
-        await readFile(
-          new URL(
-            '../.agents/skills/knownex-curator/SKILL.md',
-            import.meta.url,
-          ),
-          'utf8',
-        )
-      ).replaceAll('../../../docs/MEMORY-CONTRACT.md', 'MEMORY-CONTRACT.md'),
+      await readFile(
+        new URL('../.agents/skills/knownex-curator/SKILL.md', import.meta.url),
+      ),
     );
-    await writeFile(
-      join(dir, 'MEMORY-CONTRACT.md'),
-      await readFile(new URL('../docs/MEMORY-CONTRACT.md', import.meta.url)),
-    );
-    if (autonomous) {
+    {
       const names = [
         'packet.json',
+        'WINDOW.md',
         'SKILL.md',
-        'MEMORY-CONTRACT.md',
         ...Object.keys(baseTree).map((n) => 'base/' + n),
       ];
       const files = Object.fromEntries(
@@ -1876,15 +1841,14 @@ export async function prepareCurator(
     await atomicJson(join(work, 'pending.json'), { id });
     return {
       status: 'prepared',
+      runId: id,
+      packet: join(dir, 'packet.json'),
+      snapshot: base,
       run: dir,
       proposal: join(dir, 'proposal.json'),
-      ...(autonomous
-        ? {
-            manifest: join(dir, 'inputs.json'),
-            from: cp.sequence + 1,
-            through: last.event.sequence,
-          }
-        : {}),
+      manifest: join(dir, 'inputs.json'),
+      from: cp.sequence + 1,
+      through: last.event.sequence,
     };
   } finally {
     await release();
@@ -1945,17 +1909,31 @@ function materialize(
       workFromMemory(target),
       plan.versions.heads,
     );
-    plan.tree['HISTORY.md'] =
-      memory['HISTORY.md']! +
-      historyAppendix(
-        memory['HISTORY.md']!,
-        plan.previousState,
-        cp.sequence + 1,
-        run.last.event.sequence,
-        run.last.event.capturedAt,
-        relative(target, cp.feed).split(sep).map(encodeURIComponent).join('/'),
-        { ...proposal.history, transition },
-      );
+    const work = workFromMemory(target),
+      folder = join(target, 'history');
+    const notes = Object.keys(proposal.knowledge)
+      .sort()
+      .map((key): [string, string] => {
+        const ref = plan.versions.heads[key];
+        const file = ref
+          ? archivePath(work, revisionFile(ref))
+          : join(target, key);
+        return [
+          key,
+          relative(folder, file).split(sep).map(encodeURIComponent).join('/'),
+        ];
+      });
+    const entry = historyWindow(
+      memory['HISTORY.md']!,
+      cp.sequence + 1,
+      run.last.event.sequence,
+      run.last.event.capturedAt,
+      { ...proposal.history, transition: intoHistory(transition) },
+      notes,
+      intoHistory(plan.tree['STATE.md']!),
+    );
+    plan.tree['HISTORY.md'] = memory['HISTORY.md']! + entry.index;
+    plan.tree[entry.name] = entry.text;
   }
   return finishVersions(
     plan,
@@ -1966,56 +1944,13 @@ function materialize(
 }
 
 interface CurationReview {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   proposalSha256: string;
   summary: string;
   sources: number[];
   changes: { path: string; summary: string; sources: number[] }[];
-  critical: {
-    before: string;
-    after: string;
-    reason: string;
-    sources: number[];
-  }[];
   uncertainties: string[];
   anomalies: string[];
-}
-// References select exact LF-delimited lines; neither branch normalizes text.
-// Their source is implicit: frozen base STATE for before, proposal STATE for after.
-function criticalEvidence(
-  value: unknown,
-  state: string,
-  version: 1 | 2,
-): string {
-  if (typeof value === 'string') {
-    // Preserve v1, including already sealed legacy reviews, exactly.
-    if (version === 1) {
-      if (!state.includes(value)) fail('CURATOR_REVIEW_INVALID');
-      return value;
-    }
-    if (value === '') return value;
-    const first = state.indexOf(value);
-    if (!value.trim() || first < 0 || state.indexOf(value, first + 1) !== -1)
-      fail('CURATOR_REVIEW_INVALID');
-    return value;
-  }
-  if (
-    version !== 2 ||
-    !object(value) ||
-    Object.keys(value).sort().join(',') !== 'endLine,sha256,startLine' ||
-    value.sha256 !== sha(state) ||
-    !Number.isSafeInteger(value.startLine) ||
-    !Number.isSafeInteger(value.endLine)
-  )
-    fail('CURATOR_REVIEW_INVALID');
-  const start = value.startLine as number,
-    end = value.endLine as number,
-    lines = state.split('\n');
-  if (start < 1 || end < start || end > lines.length)
-    fail('CURATOR_REVIEW_INVALID');
-  const text = lines.slice(start - 1, end).join('\n');
-  if (!text.trim()) fail('CURATOR_REVIEW_INVALID');
-  return text;
 }
 
 async function reviewAt(
@@ -2023,16 +1958,23 @@ async function reviewAt(
   run: Run,
   proposal: Proposal,
   bytes: Buffer,
+  draftReview?: Buffer,
 ) {
-  if (!run.autonomous) return;
   const manifestBytes = await readFile(join(dir, 'inputs.json'));
   if (sha(manifestBytes) !== run.inputManifestSha256)
     fail('CURATOR_INPUTS_CHANGED');
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
-  if (!object(manifest.files)) fail('CURATOR_INPUTS_CHANGED');
+  if (
+    manifest.version !== 1 ||
+    manifest.from !== run.base.sequence + 1 ||
+    manifest.through !== run.last.event.sequence ||
+    !object(manifest.files)
+  )
+    fail('CURATOR_INPUTS_CHANGED');
   for (const [name, expected] of Object.entries(manifest.files)) {
     if (
-      !/^(packet\.json|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/[a-z0-9-]+\.md))$/.test(
+      // MEMORY-CONTRACT.md is only frozen in runs prepared before WINDOW.md replaced it.
+      !/^(packet\.json|WINDOW\.md|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/[a-z0-9-]+\.md))$/.test(
         name,
       ) ||
       !object(expected)
@@ -2046,19 +1988,23 @@ async function reviewAt(
     )
       fail('CURATOR_INPUTS_CHANGED');
   }
+  if (!run.autonomous) return;
   let reviewBytes: Buffer;
-  try {
-    reviewBytes = await readFile(join(dir, 'review.json'));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT')
-      fail('CURATOR_REVIEW_REQUIRED');
-    throw e;
+  if (draftReview) reviewBytes = draftReview;
+  else {
+    try {
+      reviewBytes = await readFile(join(dir, 'review.json'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT')
+        fail('CURATOR_REVIEW_REQUIRED');
+      throw e;
+    }
+    if (
+      (await lstat(join(dir, 'review.json'))).isSymbolicLink() ||
+      (await realpath(join(dir, 'review.json'))) !== resolve(dir, 'review.json')
+    )
+      fail('CURATOR_REVIEW_INVALID');
   }
-  if (
-    (await lstat(join(dir, 'review.json'))).isSymbolicLink() ||
-    (await realpath(join(dir, 'review.json'))) !== resolve(dir, 'review.json')
-  )
-    fail('CURATOR_REVIEW_INVALID');
   let r: unknown;
   try {
     r = JSON.parse(decodeUtf8(reviewBytes, true));
@@ -2078,16 +2024,18 @@ async function reviewAt(
         !(run.excluded ?? []).includes(n) &&
         !(run.base.excluded ?? []).includes(n),
     );
+  // v1/v2 reviews (sealed before v3) still carry a critical list; it is no longer checked.
+  const legacy = object(r) && (r.version === 1 || r.version === 2);
   if (
     !object(r) ||
     Object.keys(r).sort().join(',') !==
-      'anomalies,changes,critical,proposalSha256,sources,summary,uncertainties,version' ||
-    (r.version !== 1 && r.version !== 2) ||
+      `anomalies,changes,${legacy ? 'critical,' : ''}proposalSha256,sources,summary,uncertainties,version` ||
+    (!legacy && r.version !== 3) ||
+    (legacy && !Array.isArray(r.critical)) ||
     r.proposalSha256 !== sha(bytes) ||
     !nonempty(r.summary) ||
     !sources(r.sources) ||
     !Array.isArray(r.changes) ||
-    !Array.isArray(r.critical) ||
     !Array.isArray(r.uncertainties) ||
     !r.uncertainties.every(nonempty) ||
     !Array.isArray(r.anomalies) ||
@@ -2115,29 +2063,9 @@ async function reviewAt(
     paths.slice().sort().join('|') !== expected.sort().join('|')
   )
     fail('CURATOR_REVIEW_INVALID');
-  const before = (
-    await json<{ context: Record<string, string> }>(join(dir, 'packet.json'))
-  ).context['STATE.md']!;
-  if (decodeUtf8(await readFile(join(dir, 'base', 'STATE.md'))) !== before)
-    fail('CURATOR_INPUTS_CHANGED');
-  const after = proposal.action === 'update' ? proposal.state : before;
-  const critical: CurationReview['critical'] = [];
-  for (const c of r.critical) {
-    if (!object(c) || !nonempty(c.reason) || !sources(c.sources))
-      fail('CURATOR_REVIEW_INVALID');
-    const old = criticalEvidence(c.before, before, r.version),
-      current = criticalEvidence(c.after, after, r.version);
-    if (!old.trim() && !current.trim()) fail('CURATOR_REVIEW_INVALID');
-    critical.push({
-      before: old,
-      after: current,
-      reason: c.reason,
-      sources: c.sources as number[],
-    });
-  }
   return {
     sha256: sha(reviewBytes),
-    report: { ...r, critical } as unknown as CurationReview,
+    report: r as unknown as CurationReview,
     path: join(dir, 'review.json'),
   };
 }
@@ -2161,66 +2089,98 @@ function versionSeal(
   );
 }
 
+/** Every check validate applies to a proposal and its review, without staging anything. */
+async function checkProposal(
+  work: string,
+  draft?: { proposal: Buffer; review?: Buffer },
+) {
+  const { cp, rows, memory } = await stateAt(work),
+    run = await pendingRun(work);
+  if (!run) fail('CURATOR_NO_PENDING');
+  checkRun(cp, rows, run);
+  const dir = join(work, 'runs', run.id);
+  const proposalBytes =
+    draft?.proposal ?? (await readFile(join(dir, 'proposal.json')));
+  const raw: unknown = JSON.parse(decodeUtf8(proposalBytes));
+  const proposalSha256 = createHash('sha256')
+    .update(proposalBytes)
+    .digest('hex');
+  if (!object(raw) || !['update', 'noop'].includes(raw.action as string))
+    fail('CURATOR_PROPOSAL_INVALID');
+  const keys =
+    raw.action === 'noop'
+      ? ['action']
+      : [
+          'action',
+          'state',
+          'history',
+          'knowledge',
+          ...(Object.hasOwn(raw, 'categories') ? ['categories'] : []),
+        ];
+  if (
+    Object.keys(raw).length !== keys.length ||
+    Object.keys(raw).some((k) => !keys.includes(k))
+  )
+    fail('CURATOR_PROPOSAL_INVALID');
+  if (
+    raw.action === 'update' &&
+    (typeof raw.state !== 'string' ||
+      !object(raw.knowledge) ||
+      !object(raw.history) ||
+      (raw.categories !== undefined && !object(raw.categories)) ||
+      typeof raw.history.transition !== 'string')
+  )
+    fail('CURATOR_PROPOSAL_INVALID');
+  const proposal = raw as unknown as Proposal;
+  const review = await reviewAt(
+    dir,
+    run,
+    proposal,
+    proposalBytes,
+    draft?.review,
+  );
+  const target = memoryDirectory(work);
+  const plan = materialize(memory, run, proposal, target, dir);
+  validateKnowledgeEvolution(memory, plan.tree);
+  await validateTree(
+    plan.tree,
+    target,
+    run.external,
+    rows,
+    run.last.event.sequence,
+    cp.feed,
+    [...(run.base.excluded ?? []), ...(run.excluded ?? [])],
+    plan.files,
+    plan.versions,
+  );
+  for (const p of plan.files) await checkRevisionPublication(work, p);
+  return { run, dir, proposal, proposalSha256, review, target, plan };
+}
+
+/** Lets `curate write` reject a draft with validate's own checks while the Curator can still fix it. */
+export async function checkCurationDraft(
+  work: string,
+  proposal: Buffer,
+  review?: Buffer,
+) {
+  work = await realpath(work);
+  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  try {
+    await checkProposal(work, { proposal, review });
+  } finally {
+    await release();
+  }
+}
+
 export async function validateCurator(work: string) {
   work = await realpath(work);
   const release = await acquireJournalLock(join(work, 'curator.lock'));
   try {
-    const { cp, rows, memory } = await stateAt(work),
-      run = await pendingRun(work);
-    if (!run) fail('CURATOR_NO_PENDING');
-    checkRun(cp, rows, run);
-    const dir = join(work, 'runs', run.id);
-    const proposalBytes = await readFile(join(dir, 'proposal.json'));
-    const raw: unknown = JSON.parse(decodeUtf8(proposalBytes));
-    const proposalSha256 = createHash('sha256')
-      .update(proposalBytes)
-      .digest('hex');
-    if (!object(raw) || !['update', 'noop'].includes(raw.action as string))
-      fail('CURATOR_PROPOSAL_INVALID');
-    const keys =
-      raw.action === 'noop'
-        ? ['action']
-        : [
-            'action',
-            'state',
-            'history',
-            'knowledge',
-            ...(Object.hasOwn(raw, 'categories') ? ['categories'] : []),
-          ];
-    if (
-      Object.keys(raw).length !== keys.length ||
-      Object.keys(raw).some((k) => !keys.includes(k))
-    )
-      fail('CURATOR_PROPOSAL_INVALID');
-    if (
-      raw.action === 'update' &&
-      (typeof raw.state !== 'string' ||
-        !object(raw.knowledge) ||
-        !object(raw.history) ||
-        (raw.categories !== undefined && !object(raw.categories)) ||
-        typeof raw.history.transition !== 'string')
-    )
-      fail('CURATOR_PROPOSAL_INVALID');
-    const proposal = raw as unknown as Proposal;
-    const review = await reviewAt(dir, run, proposal, proposalBytes);
-    const target = memoryDirectory(work),
-      candidate = join(dir, 'candidate-' + randomUUID());
-    const plan = materialize(memory, run, proposal, target, dir);
+    const { run, dir, proposal, proposalSha256, review, target, plan } =
+      await checkProposal(work);
+    const candidate = join(dir, 'candidate-' + randomUUID());
     const next = plan.tree;
     const stateBytes = Buffer.byteLength(next['STATE.md']!, 'utf8');
-    validateKnowledgeEvolution(memory, next);
-    await validateTree(
-      next,
-      target,
-      run.external,
-      rows,
-      run.last.event.sequence,
-      cp.feed,
-      [...(run.base.excluded ?? []), ...(run.excluded ?? [])],
-      plan.files,
-      plan.versions,
-    );
-    for (const p of plan.files) await checkRevisionPublication(work, p);
     await putTree(candidate, rebase(next, target, candidate));
     const staged = await treeAt(candidate),
       treeHash = digest(staged);
@@ -2265,12 +2225,8 @@ export async function validateCurator(work: string) {
   }
 }
 
-/** Persist authorization before promoting any confirmed file; recovery needs no proposal. */
-export async function applyCurator(
-  work: string,
-  seal: string,
-  requireInvocation = false,
-) {
+/** Persist sealed apply intent before promoting any confirmed file; recovery needs no proposal. */
+export async function applyCurator(work: string, seal: string) {
   work = await realpath(work);
   const release = await acquireJournalLock(join(work, 'curator.lock'));
   let releaseFeed: (() => Promise<void>) | undefined;
@@ -2291,8 +2247,7 @@ export async function applyCurator(
     if (!run) fail('CURATOR_NO_PENDING');
     releaseFeed = await acquireJournalLock(cp.feed + '.lock');
     const rows = await feedRows(cp.feed);
-    if (requireInvocation || basename(cp.feed) === 'project.jsonl')
-      await checkAuthorization(work, rows, run);
+    if (!(await authorityAt(work, cp.feed))) fail('CURATOR_WORKSPACE_CONFLICT');
     const dir = join(work, 'runs', run.id);
     const approval = await json<{
       seal: string;
@@ -2329,6 +2284,7 @@ export async function applyCurator(
       fail('CURATOR_STAGE_CHANGED');
     if (digest(rebase(next, target, approval.candidate)) !== approval.treeHash)
       fail('CURATOR_STAGE_CHANGED');
+    // Windows need no check of their own: materialize only adds the next one.
     if (!next['HISTORY.md']!.startsWith(memory['HISTORY.md']!))
       fail('CURATOR_HISTORY_CHANGED');
     await validateTree(
@@ -2370,11 +2326,10 @@ export async function applyCurator(
     await syncDirectory(dirname(cp.feed));
     await syncDirectory(work);
     await syncDirectory(dirname(work));
-    // Re-read the acquired feed at the durable authorization boundary; no native oracle.
+    // Re-read the acquired feed at the durable publication boundary; no native oracle.
     const finalRows = await feedRows(cp.feed);
     checkRun(cp, finalRows, run);
-    if (requireInvocation || basename(cp.feed) === 'project.jsonl')
-      await checkAuthorization(work, finalRows, run);
+    if (!(await authorityAt(work, cp.feed))) fail('CURATOR_WORKSPACE_CONFLICT');
     const record: ApplyRecord = {
       version: 2,
       runId: run.id,

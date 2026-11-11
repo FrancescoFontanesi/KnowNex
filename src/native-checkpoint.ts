@@ -9,20 +9,15 @@ import {
   writeExclusiveFiles,
 } from './artifact-io.ts';
 import { curatorRequest } from './curator-request-data.ts';
+import { readCurationRun } from './curation-io.ts';
 import {
   finishPreparedCheckpoint,
-  verifyCurationReceipts,
   type CheckpointResult,
 } from './checkpoint-controller.ts';
 
-/** A reference, not permission supplied by the model. The feed remains authoritative. */
-export const nativeAuthorization = 'captured-user-invocation';
-export interface NativeCheckpointOptions {
+export interface PreparedCheckpointOptions {
   stage: 'prepare' | 'complete';
-  authorization?: string;
   run?: string;
-  proposalSha256?: string;
-  reviewSha256?: string;
 }
 export interface DelegationResult extends Omit<CheckpointResult, 'status'> {
   status: 'SUCCESS' | 'BLOCKED' | 'ERROR';
@@ -53,14 +48,15 @@ function fail(code: string): never {
 const json = async (p: string) => JSON.parse((await readArtifact(p)).text);
 
 /** Principal coordinates prepare/complete; Curator only materializes the frozen run. */
-export async function nativeCheckpoint(
+export async function preparedCheckpoint(
   work: string,
-  options: NativeCheckpointOptions,
+  options: PreparedCheckpointOptions,
 ) {
   work = resolve(work);
   const workspace = resolve(work, canonicalWork(work) ? '../../..' : '../..');
-  const layout = workspaceLayout(workspace),
-    feed = join(layout.feed, 'project.jsonl');
+  const layout =
+    options.stage === 'prepare' ? workspaceLayout(workspace) : undefined;
+  let feed = layout ? join(layout.feed, 'project.jsonl') : '';
   let phase = 'runtime',
     through: number | null = null,
     run: string | undefined,
@@ -74,57 +70,61 @@ export async function nativeCheckpoint(
       (!options.run || !/^[a-z0-9-]+$/.test(options.run))
     )
       fail('CURATOR_ARGUMENT_INVALID');
-    if (
-      options.stage === 'prepare' &&
-      options.authorization !== nativeAuthorization
-    )
-      fail('CURATOR_HANDOFF_REQUIRED');
+    if (options.stage === 'complete') {
+      run = join(work, 'runs', options.run!);
+      feed = (await readCurationRun(run)).base.feed;
+    }
     // Status completes only already authorized recovery, before any new delegation is claimed.
     let status = await curatorStatus(work, feed);
     through = status.through;
-    if (
-      options.stage === 'prepare' &&
-      (status.handoff.status !== 'available' || status.activeRun)
-    )
-      fail(
-        status.activeRun
-          ? 'CURATOR_CHECKPOINT_RETRY_FORBIDDEN'
-          : 'CURATOR_HANDOFF_REQUIRED',
-      );
+    if (options.stage === 'prepare' && !status.initialized && !status.pending)
+      return delegationResult({ status: 'applied', through, action: 'noop' });
     if (!status.initialized) {
       if (options.stage !== 'prepare') fail('CURATOR_NOT_INITIALIZED');
-      await initCurator(work, layout.memory, feed, 0);
+      await initCurator(work, layout!.memory, feed, 0);
     }
     release = await acquireJournalLock(join(work, 'controller.lock'));
     if (options.stage === 'prepare') {
       phase = 'prepare';
       const prepared = await prepareCurator(work, undefined, {
         autonomous: true,
-        requireInvocation: true,
       });
-      if (!prepared.run) fail('CURATOR_CHECKPOINT_BATCH_REQUIRED');
+      if (!prepared.run)
+        return delegationResult({ status: 'applied', through, action: 'noop' });
       run = prepared.run;
       const record = await json(join(run, 'run.json'));
-      if (!record.authorization) fail('CURATOR_HANDOFF_REQUIRED');
-      receipt = {
+      let existing;
+      try {
+        existing = await json(join(run, 'controller.json'));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+      if (existing && existing.policy !== 'frozen-batch-clean-report-v1')
+        fail('CURATOR_RUN_REQUIRED');
+      if (existing && existing.status !== 'prepared')
+        fail('CURATOR_CHECKPOINT_RETRY_FORBIDDEN');
+      receipt = existing ?? {
         version: 1,
-        mode: 'native',
-        policy: 'initial-invocation-clean-report-v1',
+        policy: 'frozen-batch-clean-report-v1',
         status: 'prepared',
         phase,
         through,
-        authorization: record.authorization,
         startedAt: new Date().toISOString(),
       };
-      await writeExclusiveFiles([
-        {
-          path: join(run, 'controller.json'),
-          text: jsonText(receipt, 2) + '\n',
-        },
-      ]);
+      if (!existing)
+        await writeExclusiveFiles([
+          {
+            path: join(run, 'controller.json'),
+            text: jsonText(receipt, 2) + '\n',
+          },
+        ]);
       const request = await curatorRequest(run);
       const requestFile = join(run, 'request.txt');
-      await writeExclusiveFiles([{ path: requestFile, text: request.text }]);
+      if (existing) {
+        if ((await readArtifact(requestFile)).text !== request.text)
+          fail('CURATOR_INPUTS_CHANGED');
+      } else
+        await writeExclusiveFiles([{ path: requestFile, text: request.text }]);
       return {
         status: 'READY' as const,
         version: 1,
@@ -138,55 +138,71 @@ export async function nativeCheckpoint(
       };
     }
     run = join(work, 'runs', options.run!);
-    const saved = await json(join(run, 'controller.json'));
-    if (
-      saved.mode !== 'native' ||
-      saved.policy !== 'initial-invocation-clean-report-v1'
-    )
-      fail('CURATOR_NATIVE_RUN_REQUIRED');
-    receipt = saved;
+    let saved;
+    try {
+      saved = await json(join(run, 'controller.json'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    if (!saved) {
+      if (resolve(status.activeRun ?? '') !== run) fail('CURATOR_RUN_REQUIRED');
+      saved = {
+        version: 1,
+        policy: 'frozen-batch-clean-report-v1',
+        status: 'prepared',
+        phase: 'delivery',
+        through,
+      };
+      await writeExclusiveFiles([
+        { path: join(run, 'controller.json'), text: jsonText(saved, 2) + '\n' },
+      ]);
+    }
+    if (saved.policy !== 'frozen-batch-clean-report-v1')
+      fail('CURATOR_RUN_REQUIRED');
     // Replay is restricted to this run's sealed apply journal, never a worker retry.
     const recover = async () => {
       const journal = await json(join(work, 'apply.json'));
       return (
         journal.record?.runId === options.run &&
-        journal.record?.seal === receipt!.seal &&
+        journal.record?.seal === saved.seal &&
         journal.record?.after?.sequence === through
       );
     };
-    if (!status.activeRun && receipt!.seal && (await recover()))
+    if (!status.activeRun && saved.seal && (await recover()))
       return delegationResult({
         status: 'applied',
         through,
         replayed: true,
         warnings: ['CURATOR_SEMANTIC_SELF_REVIEW_ONLY'],
       });
-    if (resolve(status.activeRun ?? '') !== run)
-      fail('CURATOR_NATIVE_RUN_REQUIRED');
-    if (receipt!.status !== 'prepared')
-      fail('CURATOR_CHECKPOINT_RETRY_FORBIDDEN');
-    const record = await json(join(run, 'run.json'));
-    if (
-      JSON.stringify(record.authorization) !==
-      JSON.stringify(receipt!.authorization)
-    )
-      fail('CURATOR_HANDOFF_INVALID');
-    phase = 'receipt-validation';
-    receipt!.status = 'finishing';
-    await writeAtomicText(
-      join(run, 'controller.json'),
-      jsonText(receipt, 2) + '\n',
+    if (resolve(status.activeRun ?? '') !== run) fail('CURATOR_RUN_REQUIRED');
+    if (saved.status !== 'prepared') fail('CURATOR_CHECKPOINT_RETRY_FORBIDDEN');
+    // Until the Curator has delivered both artifacts nothing is consumed: complete can be repeated.
+    phase = 'delivery';
+    // A Curator may still be writing in parallel: its write holds this lock, so complete
+    // either sees a whole delivery and freezes it, or stops busy without consuming the run.
+    const releaseDelivery = await acquireJournalLock(
+      join(run, 'delivery.lock'),
     );
-    const result: Record<string, unknown> = {};
-    for (const name of ['proposal', 'review'] as const) {
-      const actual = await readArtifact(join(run, name + '.json'));
-      result[name] = {
-        ...actual,
-        sha256:
-          options[name === 'proposal' ? 'proposalSha256' : 'reviewSha256'],
-      };
+    try {
+      for (const name of ['proposal.json', 'review.json'])
+        try {
+          await readArtifact(join(run, name));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'ENOENT')
+            fail('CURATOR_WORKER_OUTPUT_INCOMPLETE');
+          throw e;
+        }
+      // From here a failure is final: the run is marked failed and never retried.
+      receipt = saved as Record<string, any>;
+      receipt.status = 'finishing';
+      await writeAtomicText(
+        join(run, 'controller.json'),
+        jsonText(receipt, 2) + '\n',
+      );
+    } finally {
+      await releaseDelivery();
     }
-    await verifyCurationReceipts(run, result);
     const final = await finishPreparedCheckpoint(work, run, receipt!, (p) => {
       phase = p;
     });
@@ -198,6 +214,7 @@ export async function nativeCheckpoint(
           ? raw
           : 'CURATOR_CHECKPOINT_FAILED';
     try {
+      if (!feed) feed = (await json(join(work, 'checkpoint.json'))).feed;
       const status = await curatorStatus(work, feed);
       through = status.through;
       if (phase === 'apply' && run && receipt?.seal) {
@@ -231,9 +248,9 @@ export async function nativeCheckpoint(
       through,
       code,
       phase,
-      cause: 'Native checkpoint stopped; no worker retry is authorized.',
+      cause: 'Checkpoint stopped; no worker retry is authorized.',
       action:
-        'Inspect internal evidence; a new attempt requires a new captured invocation.',
+        'Inspect internal evidence; withdraw an uncommitted batch before explicitly preparing a new one.',
       ...(run ? { evidence: run } : {}),
     });
   } finally {

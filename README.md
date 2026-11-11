@@ -1,35 +1,79 @@
 # KnowNex
 
-Il feed JSONL acquisito dagli hook e la fonte autorevole della materializzazione.
-Il checkpoint verifica gli eventi registrati senza interrogare la history Codex.
-Modifiche retroattive non acquisite dagli hook non vengono rilevate automaticamente.
-Introduzione, installazione e
-modifiche della rc.11: [README dell'installer](docs/INSTALLER-README.md).
+Memoria secondaria per progetti portati avanti con agenti LLM: codice, ricerca,
+appunti. L'opposto del compacting: invece di riassumere e perdere dettaglio,
+KnowNex registra la conversazione e la cura in una memoria Markdown esplorabile,
+così una nuova sessione (o un'altra persona) riparte dall'ultimo stato operativo
+senza rileggere tutti i documenti o ricostruire il progetto dal codice.
 
-Memoria procedurale locale per il lavoro in Codex: STATE conserva il contesto
-confermato, HISTORY gli stati precedenti e Knowledge i dettagli riutilizzabili.
-Il feed conserva gli eventi; il recupero e selettivo, senza ricerca LLM.
+Versione corrente: **0.1.0-rc.11**. Provider supportato oggi: Codex.
 
-La release candidate corrente e **0.1.0-rc.11**. Dopo l'installazione nel progetto
-e `knownex init`, aprire una nuova chat dalla radice del workspace e approvare
-gli hook se richiesto. Il principale suggerisce il salvataggio ai milestone;
-solo l'invocazione utente di `$knownex-checkpoint` avvia una materializzazione.
-Nessuna domanda Si/No o interpretazione di assensi: un comando autorizza un batch.
-La memoria consultabile risiede in .knownex/memory/: STATE, HISTORY e Knowledge
-immutabili per checkpoint. Feed, run, journal e ricevute sono in .knownex/internal/.
-Le nuove installazioni non creano seed/ o copie piatte delle note correnti.
-I workspace legacy mantengono il proprio layout, senza conversione automatica.
-[Layout, compatibilita e limiti](docs/MEMORY-LAYOUT.md).
+## Come funziona
+
+1. **Acquisizione.** Gli hook registrano messaggi utente e risposte finali
+   dell'assistente in un feed JSONL locale, senza consumare token. Il feed è la
+   fonte autorevole e conserva tutto.
+2. **Checkpoint esplicito.** Solo l'utente lo avvia, con `$knownex-checkpoint`.
+   Il runtime congela il batch di eventi; un agente Curator lo legge e scrive una
+   bozza (nuovo STATE, note Knowledge, rapporto). `curate write` la valida subito,
+   così il Curator corregge gli errori mentre lavora; `complete` la pubblica in
+   modo transazionale. Il lavoro può proseguire in parallelo: gli eventi successivi
+   vanno al checkpoint dopo.
+3. **Ripresa.** All'avvio di una sessione STATE entra nel contesto. Il resto si
+   apre solo quando serve: un riferimento noto si legge direttamente, una ricerca
+   si delega al Recaller.
+
+## La memoria
+
+Tutto ciò che si esplora sta in `.knownex/memory/`, apribile anche come vault
+Obsidian:
+
+```text
+.knownex/memory/
+  STATE.md                       radice: obiettivo, decisioni, blocker, prossime azioni, link
+  HISTORY.md                     indice dei checkpoint, una riga ciascuno
+  history/H000012.md             finestra di un checkpoint: transizione, note scritte, STATE prodotto
+  knowledge/checkpoint-0145/     note scritte in quel checkpoint, immutabili
+    storage--kn-UUID--r-REV.md
+```
+
+- **STATE** è la radice dell'albero: rimanda alle Knowledge invece di contenerle.
+- **Knowledge** sono note tematiche con testo e riferimenti a codice e artefatti
+  (percorsi dalla radice del workspace). Ogni modifica crea una revisione nuova; le
+  vecchie restano leggibili.
+- **HISTORY** si legge a finestre: `memory history` elenca i checkpoint senza aprirli,
+  `memory read H000012` apre solo quello che serve.
+- **Provenienza.** Ogni affermazione cita gli eventi da cui viene, come `[E017]`:
+  la sequenza dell'evento nel feed. `pending` legge solo gli eventi non ancora
+  curati; un comando per rileggere un evento già curato non esiste ancora.
+
+Feed, run, journal e ricevute stanno in `.knownex/internal/`, fuori dal vault.
+
+```powershell
+npm exec --offline -- knownex memory state
+npm exec --offline -- knownex memory history --last 10
+npm exec --offline -- knownex memory read H000012
+npm exec --offline -- knownex memory find "termini distintivi"
+npm exec --offline -- knownex pending
+```
+
+## Garanzie e limiti
+
+- Il runtime controlla struttura, provenienza, link, identità delle note e integrità
+  degli input; la pubblicazione è transazionale e recuperabile dopo un crash.
+- Non garantisce la completezza semantica: cosa conservare lo decide il Curator.
+  Incertezze o anomalie dichiarate bloccano la pubblicazione automatica.
+- Modifiche retroattive non acquisite dagli hook non vengono rilevate.
+- I test offline non dimostrano il comportamento di un modello reale.
+
+## Documentazione
 
 - [Installazione, aggiornamento e rimozione](docs/INSTALL.md)
-- [Indice della documentazione corrente](docs/README.md)
-- [Visione del progetto](docs/VISION.md)
-- [Evidenza offline della release candidate](docs/RELEASE-CANDIDATE.md)
-
-Le verifiche funzionali non garantiscono completezza semantica, scelta dei
-milestone o efficienza in ogni progetto. I test offline non dimostrano il
-comportamento di un modello; le singole prove reali non costituiscono una
-qualificazione generale.
+- [Contratto della memoria](docs/MEMORY-CONTRACT.md) e
+  [revisioni delle Knowledge](docs/KNOWLEDGE-REVISIONS.md)
+- [Navigatore e recall](docs/NAVIGATOR.md)
+- [Layout, compatibilità e limiti](docs/MEMORY-LAYOUT.md)
+- [Indice completo](docs/README.md) · [Visione](docs/VISION.md)
 
 ## Sviluppo
 
@@ -38,24 +82,18 @@ TypeScript globale, provider o dipendenze runtime aggiuntive.
 
 ```powershell
 npm ci
-npm run check
+npm run check                           # typecheck, test, Prettier, build
+node --test evaluation/tests/*.test.mjs # regressioni di retrieval e cold start
 npm run dev -- --help
-npm start -- --help
 ```
 
-`check` esegue typecheck, test nativi Node, controllo Prettier e build. Il codice
-usa ESM e import relativi `.ts`; la build produce JavaScript in `dist/`.
+Il codice usa ESM e import relativi `.ts`; la build produce JavaScript in `dist/`.
 
-## Struttura
-
-- `src/`: CLI, acquisizione, feed, navigatore, curator e bootstrap.
+- `src/`: CLI, acquisizione, feed, curatela, navigatore, bootstrap.
 - `tests/`: verifiche deterministiche con dati sintetici.
-- `.agents/skills/`: checkpoint, curator, recall e taxonomy distribuiti dal package.
-- `.codex/hooks/`: entrypoint degli hook.
+- `evaluation/`: fixture isolati per retrieval e ripartenza a freddo.
+- `.agents/skills/`: skill di checkpoint, curator, recall e taxonomy distribuite dal package.
+- `.codex/`: hook e ruoli degli agenti Codex.
 - `docs/`: contratti e procedure correnti.
-- `.local/`: contesto e artefatti locali mantenuti, esclusi da Git.
 
-Feed, journal e dati privati di progetto risiedono in `.knownex/`, esclusa da Git.
-Anche `node_modules/`, `dist/` e la cache opzionale `graft/` sono ignorati.
-Le evidenze storiche e gli script di prova superati sono archiviati fuori dal
-repository; il percorso locale e registrato in `.local/ARCHIVE.md`.
+`.knownex/`, `.local/`, `node_modules/`, `dist/` e la cache `graft/` sono esclusi da Git.

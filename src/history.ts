@@ -10,8 +10,22 @@ const fail = (): never => {
   });
 };
 const identifier = (n: number) => 'H' + String(n).padStart(6, '0');
+const event = (n: number) => 'E' + String(n).padStart(3, '0');
+const indexLine =
+  /^- \[(H\d{6,})\]\(history\/(H\d{6,})\.md\) · `([^`]+)` · `E(\d{3,})\.\.E(\d{3,})` · .+$/;
 
-/** Explicit boundaries allow reading one segment without rewriting earlier history. */
+export interface HistorySegment {
+  id: string;
+  from: number;
+  through: number;
+  /** Window file of an indexed segment; absent for inline segments written before windows. */
+  window?: string;
+}
+
+/**
+ * HISTORY.md holds inline segments (older format, explicit boundaries) followed by one index
+ * line per later checkpoint, whose detail lives in an immutable history/H000000.md window.
+ */
 export function historySegments(text: string, through: number) {
   const markers = [
     ...text.matchAll(/^<!-- knownex-history:(H\d+):(begin|end) -->$/gm),
@@ -21,7 +35,7 @@ export function historySegments(text: string, through: number) {
     markers.length % 2
   )
     fail();
-  const segments: { id: string; from: number; through: number }[] = [];
+  const segments: HistorySegment[] = [];
   for (let i = 0; i < markers.length; i += 2) {
     const start = markers[i]!,
       end = markers[i + 1]!;
@@ -51,22 +65,37 @@ export function historySegments(text: string, through: number) {
       !body.includes('\n### STATE precedente\n\n> ')
     )
       fail();
-    for (const label of ['Fonte', 'Argomenti', 'Descrizione', 'Transizione'])
+    // Fonte (a feed link) only exists in segments written before provenance became a label.
+    for (const label of ['Argomenti', 'Descrizione', 'Transizione'])
       if (!new RegExp('^- ' + label + ': .+$', 'm').test(body)) fail();
     segments.push({ id, from, through: to });
+  }
+  const last = markers.at(-1);
+  const tail = last ? text.slice(last.index! + last[0].length) : text;
+  for (const [line] of tail.matchAll(/^- \[H.*$/gm)) {
+    const m = indexLine.exec(line),
+      id = identifier(segments.length + 1);
+    const from = Number(m?.[4]),
+      to = Number(m?.[5]);
+    if (
+      !m ||
+      m[1] !== id ||
+      m[2] !== id ||
+      event(from) !== 'E' + m[4] ||
+      event(to) !== 'E' + m[5] ||
+      from < 1 ||
+      to < from ||
+      to > through ||
+      (segments.length && from <= segments.at(-1)!.through) ||
+      !Number.isFinite(Date.parse(m[3]!))
+    )
+      fail();
+    segments.push({ id, from, through: to, window: `history/${id}.md` });
   }
   return segments;
 }
 
-export function historyAppendix(
-  history: string,
-  state: string,
-  from: number,
-  through: number,
-  date: string,
-  source: string,
-  details: Transition,
-) {
+function checkDetails(details: Transition) {
   if (
     !details ||
     typeof details.summary !== 'string' ||
@@ -79,18 +108,39 @@ export function historyAppendix(
     )
   )
     fail();
-  const id = identifier(historySegments(history, through).length + 1);
-  const event = (n: number) => 'E' + String(n).padStart(3, '0');
-  return (
-    `${history.endsWith('\n') ? '\n' : '\n\n'}<!-- knownex-history:${id}:begin -->\n## ${id}\n\n` +
-    `- Data: \`${date}\`\n- Eventi: \`${event(from)}..${event(through)}\`\n` +
-    `- Fonte: [${event(from)}–${event(through)}](${source})\n` +
-    `- Argomenti: ${details.topics.join('; ')}\n- Descrizione: ${details.summary}\n` +
-    `- Transizione: ${details.transition}\n\n### STATE precedente\n\n` +
-    state
-      .split('\n')
-      .map((line) => '> ' + line)
-      .join('\n') +
-    `\n<!-- knownex-history:${id}:end -->\n`
-  );
+}
+
+/**
+ * One checkpoint as an index line plus a window. The window is self-contained: metadata,
+ * the revisions written by that checkpoint and the STATE it produced. Links in `notes`,
+ * `transition` and `state` must already be relative to the history/ directory.
+ */
+export function historyWindow(
+  history: string,
+  from: number,
+  through: number,
+  date: string,
+  details: Transition,
+  notes: [label: string, href: string][],
+  state: string,
+) {
+  checkDetails(details);
+  const id = identifier(historySegments(history, through).length + 1),
+    name = `history/${id}.md`,
+    range = `${event(from)}..${event(through)}`,
+    topics = details.topics.join('; ');
+  return {
+    name,
+    index:
+      (history.endsWith('\n') ? '' : '\n') +
+      `- [${id}](${name}) · \`${date}\` · \`${range}\` · ${topics} — ${details.summary}\n`,
+    text:
+      `# ${id} — ${topics}\n\n- Data: \`${date}\`\n- Eventi: \`${range}\`\n` +
+      `- Argomenti: ${topics}\n- Descrizione: ${details.summary}\n` +
+      `- Transizione: ${details.transition}\n\n## Note scritte\n\n` +
+      (notes.length
+        ? notes.map(([label, href]) => `- [${label}](${href})`).join('\n')
+        : '- nessuna') +
+      `\n\n## STATE risultante\n\n${state}`,
+  };
 }

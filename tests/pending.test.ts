@@ -191,7 +191,7 @@ test('C: deferred checkpoint does not prevent read-only recall; no invocation is
   const before = await f.snapshot();
   const runtime = await runtimeStatus(f.root);
   assert.ok(runtime.status === 'ok');
-  assert.equal(runtime.handoff.status, 'none');
+  assert.equal(runtime.activeRun, null);
   const page = await f.read({ limit: 1 });
   const child = spawnSync(
     process.execPath,
@@ -215,12 +215,8 @@ test('C: deferred checkpoint does not prevent read-only recall; no invocation is
   assert.ok(Buffer.byteLength(child.stdout) <= 16384);
   const directive = join(f.root, 'directive.md');
   await writeFile(directive, 'Synthetic protocol test only.');
-  await assert.rejects(prepareCurator(f.work, directive), {
-    code: 'CURATOR_HANDOFF_REQUIRED',
-  });
   assert.deepEqual(await f.snapshot(), before);
-  // Only a separate, explicitly approved operation changes the checkpoint.
-  await f.event('user_message', 'manual', '$knownex-checkpoint', 'B');
+  // Only the separate explicit prepare/apply changes the checkpoint.
   const prep = await prepareCurator(f.work, directive);
   await writeFile(prep.proposal!, '{"action":"noop"}');
   await applyCurator(f.work, (await validateCurator(f.work)).seal);

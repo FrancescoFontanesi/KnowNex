@@ -5,7 +5,7 @@
 Il feed acquisito dagli hook e la fonte conversazionale del checkpoint.
 Sol esegue prepare, Terra materializza, Sol esegue complete. Il percorso non
 richiede history Codex, App Server annidati o review semantica di Sol.
-Autorizzazione monouso, cutoff, hash, ricevute, revisioni e recovery rimangono
+Preparazione esplicita, cutoff, hash, ricevute, revisioni e recovery rimangono
 obbligatori. La compatibilita dei dati legacy fa parte della versione corrente.
 
 ## Verifiche riproducibili

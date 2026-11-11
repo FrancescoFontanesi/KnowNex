@@ -14,17 +14,17 @@ bootstrap installa ruolo e skill nella stessa distribuzione. Una sessione deve
 caricare questa configurazione; se il ruolo non e esposto, la skill si ferma con
 `CURATOR_NATIVE_UNAVAILABLE`, senza usare un ruolo o un modello alternativo.
 
-Sol chiama prepare con `--authorization captured-user-invocation`. Il riferimento
-simbolico non e un permesso inventato dal modello: prepare risolve l'invocazione corrente acquisita nel feed,
-la consuma sotto il lock esistente e registra sequenza/checksum nel run. Non e una
-prova dell'identita nativa del messaggio di delega: la fonte dell'autorita rimane
-l'evento utente del feed. `complete` richiede il run esplicito e ricontrolla il binding.
+Il comando prepare esplicito e il trigger operativo, indipendentemente dal feed.
+Il runtime congela gli eventi gia acquisiti e gli snapshot prima della curatela.
+I messaggi amministrativi identificabili sono esclusi; non serve un finale
+assistant o un formato Codex per preparare il batch. Complete verifica il run,
+le ricevute e il prefisso al cutoff: gli append successivi sono per il prossimo batch.
 
 Sol trasmette soltanto workspace, run ID, `requestFile`, percorso della skill e
 `workerMode: materialize-only`. Terra legge autonomamente la richiesta e il batch
 congelato, esegue tutta la curatela e restituisce le ricevute dell'I/O canonico.
-Non esegue primitive di checkpoint o App Server. Sol passa run ID e hash reali
-delle ricevute a complete. Questa primitiva riusa verifica ricevute, validate, policy sulle
+Non esegue primitive di checkpoint o App Server. Sol passa il solo run ID
+a complete. Questa primitiva legge proposta e review dal run e riusa validate, policy sulle
 anomalie, sigillo e apply del controller esistente. Non lancia worker. Non serve
 un secondo sistema di checkpoint o una review indipendente del principale.
 Prepare e complete verificano il feed acquisito e il binding del batch, senza
@@ -56,54 +56,17 @@ non e quindi una sandbox contro un agente che ignora le istruzioni. Le prove
 deterministiche verificano le primitive e le istruzioni, non il comportamento LLM.
 Vedere [custom agents Codex](https://developers.openai.com/codex/subagents).
 
-## Launcher esterno preservato, non predefinito
+## I/O del Curator
 
-Il comando seguente mantiene la modalita precedente, non deve essere invocato
-da Sol o dal Curator nel percorso nativo:
-
-```powershell
-npm exec --offline -- knownex curate checkpoint --work .knownex/internal/curator
-```
-
-Prima il principale eseguiva runtime, prepare, generazione della richiesta,
-delega, validate, review e apply in interazioni distinte. Ora il controller Node
-esegue queste operazioni deterministiche e restituisce soltanto esito, cutoff,
-conteggi disponibili e warning essenziali. Non trasferisce documenti, proposta
-o rapporto al contesto di Sol. `runtime --summary` e `validate --summary` restano
-interfacce diagnostiche, non passi obbligatori del principale.
-
-Il controller usa recovery e stato runtime esistenti; inizializza soltanto il seed
-vuoto quando necessario. `prepare --autonomous` congela base, batch e contratto
-con hash in `inputs.json`. Il generatore della richiesta passa riferimenti,
-non fonti inline. Il Curator legge il batch completo e sceglie dal catalogo le
-Knowledge pertinenti; legge integralmente quelle che modifica. Le altre restano
-intatte. Il controller non interpreta né sintetizza semanticamente le fonti.
-
-## Esecuzione del launcher esterno e I/O
-
-Il launcher verifica tramite RPC native read-only autenticazione ChatGPT, provider
-corrente, modello/effort economico configurati e disponibilità del Node REPL.
-Non aggiunge API key o fallback di provider. Avvia una sola `codex exec --json`
-con modello/effort/provider espliciti e sandbox `workspace-write`, dalla directory
-scratch del run. Hook del solo worker e ulteriori subagent sono disabilitati;
-SessionStart del prodotto non cambia. La directory di lavoro non costituisce
-una garanzia di isolamento da strumenti MCP esterni.
-
-Il Curator importa il modulo JavaScript `io.module`, usa `readCurationInput`,
-`stateEvidence` e `writeCurationArtifacts` e restituisce soltanto le ricevute
-di proposta e review. Nessun writer alternativo o trascrizione di Sol. Da checkout
-eseguire prima la build; skill e contratto congelati provengono dalla stessa
-distribuzione del runtime. Non mescolare pacchetto installato e working tree.
-
-Il controller attende il processo senza polling LLM, verifica ricevute sui byte
-effettivi, esegue validate e applica con il sigillo restituito. `controller.json`
-registra la policy prima dell'avvio; `worker-events.jsonl`, `worker-stderr.log`
-e `worker.json` conservano evidenze e diagnostica internamente. Il worker non
-esegue prepare, validate o apply e non modifica la memoria confermata.
+Il Curator usa la CLI indicata in io.cli per leggere gli input congelati e consegnare
+proposta e review; restituisce soltanto le ricevute. La CLI riusa le primitive
+canoniche, senza writer alternativo o trascrizione del chiamante. Da checkout
+eseguire prima la build; skill congelata e runtime provengono dalla stessa
+distribuzione. Non mescolare pacchetto installato e working tree.
 
 ## Policy di pubblicazione e limiti semantici
 
-L'invocazione iniziale autorizza un batch monouso, senza seconda conferma utente.
+Il comando prepare esplicito crea un batch congelato; apply richiede il suo sigillo.
 Con validazione positiva e array `uncertainties` e `anomalies` entrambi vuoti,
 il controller applica automaticamente sotto quell'autorizzazione. Qualsiasi voce
 blocca la pubblicazione: non esiste classificazione permissiva per gravità o parole

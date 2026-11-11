@@ -22,6 +22,7 @@ memoria confermata; gli indici Markdown derivati non sono una seconda memoria.
 memory/
 ├── STATE.md
 ├── HISTORY.md
+├── history/H000001.md
 └── knowledge/*.md
 ```
 
@@ -54,35 +55,42 @@ KnowNex verifica il payload prodotto, non la consegna effettiva al modello:
 esecuzione, gestione dell'output e finestra di contesto dipendono dall'harness.
 Il [contratto runtime](RUNTIME.md) distingue questi confini e i limiti documentati.
 
-`HISTORY.md` è un unico documento cronologico senza limite dimensionale.
-Ogni aggiornamento confermato aggiunge esattamente un segmento. Il codice conserva
-lo STATE precedente con prefisso Markdown `> ` per riga e destinazioni Knowledge
-fissate alle revisioni confermate quando il workspace adotta il versionamento;
-la descrizione della transizione fornisce il contesto storico. Il testo già
-confermato rimane un prefisso identico byte per byte e viene promosso per append.
-Non si riassume né riscrive globalmente HISTORY. Gli archivi precedenti al
-prototipo procedurale possono essere citati come artefatti originali.
+`HISTORY.md` è l'indice cronologico dei checkpoint: una riga per aggiornamento
+confermato, così aprirlo costa poco anche dopo centinaia di checkpoint. Il
+dettaglio di ogni checkpoint è una finestra immutabile `history/H000001.md`, che
+si apre da sola: metadati, revisioni scritte da quel checkpoint e STATE prodotto,
+con i link spostati di un livello (`../`). Il testo già confermato di HISTORY
+rimane un prefisso identico byte per byte e una finestra non cambia più; un
+indice e le sue finestre corrispondono uno a uno, senza orfane né mancanti.
 
 ```markdown
-<!-- knownex-history:H000001:begin -->
+- [H000003](history/H000003.md) · `2026-11-03T12:00:00.000Z` · `E015..E016` · contratto; curatela — adozione del contratto
+```
 
-## H000001
+```markdown
+# H000003 — contratto; curatela
 
 - Data: `2026-11-03T12:00:00.000Z`
 - Eventi: `E015..E016`
-- Fonte: [E015–E016](../../feed/session.jsonl)
 - Argomenti: contratto; curatela
 - Descrizione: adozione del contratto
-- Transizione: stato aggiornato; motivazioni nella [nota](knowledge/contratto.md).
+- Transizione: stato aggiornato; motivazioni nella [nota](../knowledge/contratto.md).
 
-### STATE precedente
+## Note scritte
 
-> # Stato precedente
->
-> Contesto completo dello STATE precedente.
+- [knowledge/contratto.md](../knowledge/checkpoint-0016/contratto--kn-UUID--r-REV.md)
 
-<!-- knownex-history:H000001:end -->
+## STATE risultante
+
+# Progetto
+
+…
 ```
+
+I segmenti scritti prima delle finestre restano in testa a HISTORY.md, tra
+delimitatori `<!-- knownex-history:H000001:begin -->` e `:end`, con lo STATE
+precedente citato riga per riga; la numerazione prosegue nelle righe d'indice.
+Le finestre non sono input della curatela e non vengono copiate nei run.
 
 Gli ID `H000001`, `H000002`, … sono progressivi; i delimitatori sono riservati.
 La data deriva dall'acquisizione dell'ultimo evento incluso, non pretende di
@@ -128,22 +136,30 @@ il suo limite superiore, esplicito `--through` o ultimo evento completo presente
 Nuovi eventi successivi restano pendenti. `WINDOW.md` e `packet.json` nello staging
 sono copie derivate rigenerabili, non archivi alternativi; non si modificano per
 correggere il feed. Il pacchetto include sessione, turni, sequenze, checksum e byte
-di origine. Non contiene il corpo della vecchia HISTORY.
+di origine. Non contiene il corpo della vecchia HISTORY. `WINDOW.md`, verificato
+dal manifest, e la copia di lettura del Curator: eventi con sequenza, tipo e testo
+integrale, sessione e turno al loro cambio, e un'intestazione con artefatti
+citabili, categorie approvate, direttiva e avvisi d'ordine.
 
-La provenienza esplicita usa link al feed fissato dal workspace, per esempio
-`[E017](../../feed/session.jsonl)`, oppure il campo `- Eventi` nei segmenti HISTORY.
-Titoli, argomenti e prosa ordinaria (anche `Catalogo E1` o `E999`) non dichiarano
-provenienza e non vengono interpretati come eventi.
+La provenienza esplicita è un'etichetta tra parentesi quadre senza link, per
+esempio `[E017]` o `[E015–E016]`, oppure il campo `- Eventi` nei segmenti HISTORY.
+Il feed sta fuori dalla cartella memory: un link verso di esso sarebbe rotto in
+Obsidian e per un agente aprirebbe un JSONL intero, mentre l'etichetta basta a
+leggere l'evento per sequenza. `curate write` riduce a etichetta i link al feed
+copiati da note precedenti; i link al feed già pubblicati restano validi e vengono
+controllati come prima. Titoli, argomenti e prosa ordinaria non tra parentesi
+quadre (anche `Catalogo E1` o `E999`) non dichiarano provenienza.
 
-Nelle etichette dei link al feed ogni riferimento usa `E` seguito dal numero con
-almeno tre cifre, senza zeri aggiuntivi: `E001`, `E017`, `E1000`. Sono ammesse
-etichette descrittive come `ripetizione E009`; tutti gli ID presenti nell'etichetta
-devono essere validi. Gli intervalli nei link usano `E015–E016`, `E015..E016` o
-`E015-E016`, con estremi ordinati e inclusivi. Intervalli incompleti o concatenati
-sono rifiutati. Il campo HISTORY conserva la sintassi `E015..E016` già definita.
-Un'etichetta composta soltanto da un ID canonico o un intervallo non può puntare
-a un altro documento fingendo di essere provenienza. Gli altri link restano
-normali collegamenti Markdown soggetti ai controlli di percorso e autorizzazione.
+Ogni riferimento usa `E` seguito dal numero con almeno tre cifre, senza zeri
+aggiuntivi: `E001`, `E017`, `E1000`. Un testo tra parentesi quadre che inizia come
+un'etichetta (`[E1]`, `[E002–E001]`) è trattato come etichetta e quindi rifiutato
+se malformato. Nei link al feed sono ammesse etichette descrittive come
+`ripetizione E009`; tutti gli ID presenti devono essere validi. Gli intervalli usano
+`E015–E016`, `E015..E016` o `E015-E016`, con estremi ordinati e inclusivi; quelli
+incompleti o concatenati sono rifiutati. Il campo HISTORY conserva la sintassi
+`E015..E016`. Un'etichetta linkata a un documento diverso dal feed è rifiutata.
+Codice e artefatti si citano come percorsi dalla radice del workspace in backtick;
+eventuali link verso file esterni restano limitati agli artefatti autorizzati.
 
 Per i riferimenti riconosciuti, la sequenza è
 scoped al feed fissato dal workspace (di sessione o di progetto). Non sono anchor JSONL. Le sequenze
@@ -188,7 +204,9 @@ I batch legacy senza manifest restano compatibili: --context seleziona note
 esplicite; non si cambia modalita in un batch pendente. Il nuovo workflow non
 richiede questa selezione al principale.
 
-Il pacchetto, la skill e questo contratto sono gli input autorizzati. La proposta
+Il pacchetto, WINDOW.md, la skill e la base congelata sono gli input autorizzati;
+questo contratto non viene piu congelato nei run (i run preparati prima lo includono
+ancora e restano validi). La proposta
 è un JSON UTF-8 senza recinti Markdown:
 
 ```json
@@ -219,8 +237,9 @@ Una proposta senza cambiamento effettivo è rifiutata: usare `{"action":"noop"}`
 
 `validate` genera il candidato e il segmento storico, verifica identità Knowledge,
 provenienza, link, confini di scrittura e sorgente congelata, senza modificare la
-memoria confermata. Nel percorso ordinario Sol esegue prepare, delega a Terra la sola curatela del batch congelato e completa `curate native --stage complete` con le ricevute del Curator. La primitiva verifica le ricevute,
-valida e invoca apply con il sigillo sotto l'autorizzazione iniziale monouso.
+memoria confermata. Nel percorso ordinario Sol esegue prepare, delega a Terra la sola curatela del batch congelato e completa `curate native --stage complete --run RUN` dopo la consegna del Curator. La primitiva legge proposta e review dal run,
+valida e invoca apply con il sigillo del batch congelato. Il trigger e il comando
+prepare esplicito, non un messaggio o un permesso ricavato dal feed.
 Qualsiasi voce in uncertainties o anomalies blocca l'apply automatico. Il checkpoint
 avanza soltanto dopo le scritture. Il confronto storico, la continuita critica e
 la verifica preliminare della copertura spettano al Curator; non esiste review
@@ -231,30 +250,30 @@ un percorso manuale esplicito per eccezioni e legacy, non un passo ordinario.
 La delega nativa trasmette solo workspace, operazione e riferimento all'invocazione
 acquisita. La preparazione risolve tale riferimento sotto l'autorita del feed;
 sequenza/checksum sono congelati nel run e nella ricevuta controller nativa.
-Complete richiede il medesimo run e gli hash delle ricevute, senza nuove autorizzazioni.
+Complete richiede solo il medesimo run, senza nuove autorizzazioni. Prima della consegna
+di proposta e review restituisce CURATOR_WORKER_OUTPUT_INCOMPLETE e lascia il run
+prepared; dopo, ogni errore e definitivo per il run.
 Il risultato finale e una proiezione SUCCESS/BLOCKED/ERROR senza documenti.
-Il launcher esterno resta disponibile ma non e il percorso predefinito.
 
 ### Confine I/O supportato
 
-Il Curator produce oggetti nel Node REPL e importa il modulo JavaScript io.module
-fornito dalla richiesta. readCurationInput(run, nome) legge UTF-8 strettamente,
-conserva BOM e terminatori e verifica gli hash del manifest; gli artefatti esterni
-testuali restano limitati a quelli esplicitamente autorizzati. stateEvidence
-costruisce i riferimenti v2. writeCurationArtifacts(run, proposal, review) serializza
-JSON con ordine delle proprieta invariato, indentazione 2 e LF finale; inserisce
-proposalSha256 dai byte reali e restituisce ricevute SHA-256 e dimensioni. Il modello
-non implementa encoding, persistenza o hashing. Non sono supportati writer shell,
-redirezioni, encoder globali nel tool exec o trascrizioni del principale.
+Il Curator usa curate read e write tramite CLI. Questi comandi richiamano
+readCurationInput e writeCurationDraft/writeCurationArtifacts, disponibili
+anche come API programmatica opzionale. Le letture verificano UTF-8 e manifest;
+il writer serializza JSON con indentazione 2 e LF finale, inserisce/verifica
+proposalSha256 e restituisce hash e byte effettivi. Unicode, BOM e terminatori
+dei valori restano integri. Il modello non implementa persistenza o hashing.
 
-I file vengono prima scritti in temporanei esclusivi, sincronizzati e riletti per
+Non sono supportati writer alternativi verso gli artefatti canonici o
+trascrizioni del principale. File di bozza e stdin sono input della CLI, non
+writer distinti. I file vengono prima scritti in temporanei esclusivi, sincronizzati e riletti per
 confrontare i byte; un link atomico pubblica senza overwrite su filesystem che lo
 supportano. La review precede la proposta: un crash precedente al commit della
 proposta non rende validabile una coppia incompleta. Errori di scrittura interrompono
 l'operazione; temporanei orfani non sono artefatti validi. Il writer pubblica solo
 artefatti esclusivi del run pending; validate/apply mantengono il lock esistente.
 Questa operazione non consuma autorizzazioni
-e non modifica la memoria confermata. Se Node REPL, build JavaScript o primitive
+e non modifica la memoria confermata. Se la CLI, build JavaScript o primitive
 filesystem richieste non sono disponibili, fermarsi senza fallback.
 
 Il core usa lo stesso nucleo Node artifact-io per letture UTF-8 e scritture della
@@ -262,7 +281,7 @@ memoria; le letture JSONL e gli hash incrementali conservano i byte originali.
 La CLI trasporta i valori con JSON ASCII-safe, separatamente dalla serializzazione
 degli artefatti: gli escape non cambiano i valori dopo parsing, gli hash o i file.
 Nessuna normalizzazione Unicode, conversione di newline o riscrittura retroattiva.
-I file legacy e review v1/v2 continuano a essere validati senza imporre ricevute
+I file legacy e le review v1/v2 restano accettati senza imporre ricevute
 o marcatori I/O nuovi; la compatibilita non autorizza writer alternativi nei nuovi
 run. Le istruzioni operative sono nella skill Curator, senza cambiare il suo compito
 semantico o quello del principale.
@@ -273,26 +292,14 @@ review.json e un artefatto del run, non una seconda memoria o un registro di tas
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "proposalSha256": "SHA-256 dei byte di proposal.json",
   "summary": "Modifiche e motivazione, oppure motivazione del noop",
   "sources": [25],
   "changes": [
-    { "path": "STATE.md", "summary": "Modifica operativa", "sources": [25] }
-  ],
-  "critical": [
     {
-      "before": {
-        "sha256": "hash dello STATE congelato",
-        "startLine": 7,
-        "endLine": 7
-      },
-      "after": {
-        "sha256": "hash del testo proposal.state",
-        "startLine": 9,
-        "endLine": 9
-      },
-      "reason": "destinazione giustificata",
+      "path": "STATE.md",
+      "summary": "Modifica operativa, voci chiuse o rimosse",
       "sources": [25]
     }
   ],
@@ -302,41 +309,22 @@ review.json e un artefatto del run, non una seconda memoria o un registro di tas
 ```
 
 changes contiene esattamente STATE e le note proposte; noop richiede changes vuoto.
-critical descrive conservazioni, aggiornamenti e rimozioni giustificate. Nella
-versione 2 before/after accettano un riferimento con i soli campi sha256, startLine
-ed endLine: hash SHA-256 UTF-8 del testo e intervallo inclusivo di righe da 1,
-delimitate da LF. before seleziona esclusivamente base/STATE.md congelato, il cui
-hash e presente in inputs.json; after seleziona proposal.state, oppure lo STATE
-congelato su noop. L'hash dello STATE proposto non e proposalSha256. Il codice
-verifica hash e intervallo ed estrae il testo originale senza normalizzare Unicode,
-maiuscole, apostrofi o terminatori. Il rapporto restituito da validate espande i
-riferimenti in stringhe before/after; review.json originale non viene riscritto e
-il sigillo continua a vincolarne i byte originali. Nessun testo alternativo o
-percorso arbitrario puo essere associato al riferimento.
+La voce di STATE dichiara anche decisioni, blocker o prerequisiti chiusi o rimossi.
+sources contiene sequenze positive fino al cutoff, escluse quelle amministrative
+filtrate; puo citare fonti precedenti pertinenti, non eventi futuri.
 
-La CLI con --summary omette soltanto gli estratti prima/dopo dall'output: ogni voce
-critical conserva index nel rapporto originale (da zero), reason, sources e
-textChange, che indica esclusivamente differenza testuale. Modifiche, motivazioni,
-incertezze e anomalie non vengono troncate. checks segnala i controlli deterministici
-superati; il principale puo esaminare il rapporto nel percorso manuale eccezionale. La proiezione
-non cambia review.json, ricevute, verifiche, candidato o sigillo; la forma
-dettagliata resta disponibile senza --summary e non e una seconda review obbligatoria.
+La versione 3 non ha piu la mappa `critical` riga per riga: la sceglieva il modello
+stesso, quindi un'omissione restava invisibile, e una voce persa resta comunque
+recuperabile da HISTORY e dalle revisioni immutabili. Le review v1/v2 gia scritte,
+per esempio di un batch BLOCKED in attesa di apply esplicito, restano accettate:
+`critical` deve essere una lista ma il suo contenuto non viene piu verificato.
+Il writer canonico produce solo la versione 3.
 
-La versione 2 ammette anche estratti letterali che occorrono una sola volta;
-occorrenze ripetute richiedono righe esplicite. Una stringa vuota indica solo il
-lato assente di un'aggiunta/rimozione motivata; entrambi vuoti sono rifiutati.
-La versione 1 resta accettata con i controlli letterali precedenti, anche per
-proposte pendenti o gia validate: nessuna conversione automatica o riscrittura
-di ricevute. I riferimenti strutturati richiedono versione 2. sources contiene
-sequenze positive fino al cutoff, escluse quelle amministrative filtrate; puo
-citare fonti precedenti pertinenti, non eventi futuri. Nessun ID obbligatorio di task.
 Validate verifica forma, corrispondenza dei documenti, citazioni e hash degli input.
 Il sigillo lega anche l'hash del rapporto; apply ricontrolla gli input e rifiuta
-alterazioni. Le autorizzazioni e il journal di recovery restano invariati;
-una recovery gia autorizzata non richiede rapporto, revisione o delega nuovi.
-Questi controlli non provano lettura effettiva, completezza semantica o veridicita
-del rapporto. La review selettiva puo rilevare difetti, non garantire assenza di
-omissioni non segnalate: serve una futura valutazione reale indipendente.
+alterazioni. Una recovery gia autorizzata non richiede rapporto, revisione o
+delega nuovi. Questi controlli non provano lettura effettiva, completezza
+semantica o veridicita del rapporto.
 
 ## Integrità e recovery
 
@@ -372,3 +360,81 @@ rimane non dimostrata. Sono esclusi scrittori e lettori esterni che ignorano il 
 Resta la politica conservativa del lock:
 PID riutilizzato o gate di recupero abbandonato possono richiedere ispezione.
 La verifica legge integralmente feed e memoria; HISTORY non è inviata al modello.
+
+## Interfaccia CLI portabile della Curatela
+
+La CLI riusa curation-io e lo stesso completamento del runtime; il modulo resta
+un accesso programmatico opzionale. Serve Node per KnowNex, non Node REPL o Codex.
+<CLI> indica la CLI installata o node seguito dall'entry point assoluto io.cli.
+Per la curatela con review usare curate prepare --autonomous --work DIRECTORY:
+la preparazione non esegue inferenze. RUN sotto e il percorso della directory.
+
+### Lettura verificata
+
+    <CLI> curate read --run RUN --input packet.json
+    <CLI> curate read --run RUN --input base/STATE.md
+    <CLI> curate read --run RUN --input packet.json --offset BYTE --limit N --sha256 HASH
+
+Il JSON contiene path, bytes, sha256, text, runId, input, offset, nextOffset e
+complete. bytes e sha256 descrivono l'intero documento UTF-8. Senza intervallo
+il testo e completo, senza limiti nascosti. Gli offset sono byte: iniziale incluso,
+finale escluso. nextOffset dichiara il prossimo byte; complete=true indica la fine.
+Il limite puo essere ridotto per non spezzare un carattere UTF-8. Offset non validi
+o limiti troppo piccoli per un carattere falliscono, senza saltare dati.
+
+Un offset non iniziale richiede sha256 dell'intero documento gia acquisito.
+Ogni pagina ricontrolla autorizzazione e hash, senza caching. Riunire i campi text
+decodificati e verificare byte e SHA-256 finali. Il JSON ASCII-safe preserva Unicode,
+BOM e CRLF nel testo. Se il tool tronca il JSON, non e una lettura completa:
+recuperare intervalli verificabili. Restano i vincoli sugli input autorizzati
+e sul contesto Knowledge. Il feed live e solo provenienza, non un input.
+
+### Evidenze e consegna
+
+    <run>/draft/proposal.json      action, history, categories (senza state/knowledge)
+    <run>/draft/STATE.md           testo completo del nuovo STATE (solo update)
+    <run>/draft/knowledge/<n>.md   note nuove o aggiornate (solo update)
+    <run>/draft/review.json        review (versione 3)
+    <CLI> curate write --run RUN
+
+Il Curator scrive file semplici con il proprio strumento di scrittura file: nessun
+JSON che contenga Markdown, nessun serializzatore o pipe. write legge la bozza come
+UTF-8 stretto (BOM iniziale ignorata), assembla proposal con state e knowledge dai
+file Markdown, ricava gli sha256 delle evidenze critiche prive di hash (before da
+base/STATE.md, after da draft/STATE.md o, su noop, dallo STATE congelato) e chiama
+writeCurationArtifacts. Righe LF numerate da 1, estremi inclusi. Un sha256 presente
+deve coincidere. Bozza assente, JSON invalido o UTF-8 invalido non danno ricevute.
+
+Prima di persistere, write applica ai byte canonici gli stessi controlli di validate
+(schema, review, evidenze, identita Knowledge, provenienza, link), senza candidato
+ne validated.json. Un errore non persiste nulla e torna al Curator, che corregge la
+bozza e riesegue write. Finche il controller del run e prepared (o assente) una
+scrittura riuscita sostituisce la precedente, rimuovendo prima la proposta; dopo
+l'avvio di complete write e rifiutato con CURATOR_CHECKPOINT_RETRY_FORBIDDEN.
+Il Curator puo lavorare in parallelo al principale: write e il passaggio di complete
+a finishing prendono lo stesso lock `<run>/delivery.lock`, quindi complete congela
+una consegna intera oppure si ferma con DESTINATION_BUSY senza consumare il run.
+
+Il writer canonico inserisce/verifica proposalSha256, sincronizza e pubblica
+review e proposta, con proposta come commit point. Restituisce esattamente
+{proposal: ricevuta, review: ricevuta}; ogni ricevuta ha path, bytes e sha256 dei
+byte canonici persistiti e segnala al chiamante l'esito della consegna. Non pubblica
+la memoria. writeCurationArtifacts, usato direttamente come API, resta esclusivo e
+non valida.
+
+### Completamento indipendente
+
+    <CLI> curate complete --run RUN
+
+Complete legge proposta e review dal run e verifica run attivo, manifest, review e sigillo, riusando
+validate/apply e recovery esistenti. Non richiede un controller nativo preesistente,
+identita del Curator, provider, leader o sessione LLM. Gli append oltre il cutoff
+restano esclusi. Recovery/replay del journal sigillato non rilanciano agenti.
+I risultati compatti sono SUCCESS, BLOCKED o ERROR; solo SUCCESS conferma.
+Pubblicazione e rebasing dei link restano a carico del Core.
+
+Errori CLI: exit code non zero e JSON status=error/code su stderr. Gli esiti
+negativi di complete hanno exit code non zero e risultato compatto su stdout.
+Codici pertinenti: CURATOR_IO_INPUT_NOT_AUTHORIZED, CURATOR_INPUTS_CHANGED,
+CURATOR_IO_RANGE_INVALID, CURATOR_IO_PAYLOAD_INVALID, CURATOR_IO_UNSAFE_RUN e
+KNOWNEX_UTF8_INVALID. Nessun errore attiva fallback o inferenze.

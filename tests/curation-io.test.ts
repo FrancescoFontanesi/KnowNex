@@ -25,7 +25,6 @@ import {
 } from '../src/curator.ts';
 import {
   readCurationInput,
-  stateEvidence,
   transportJson,
   writeCurationArtifacts,
 } from '../src/curation-io.ts';
@@ -79,7 +78,6 @@ async function fixture(t: test.TestContext, sourceText = sample) {
     await append('consent-' + turn, '$knownex-checkpoint');
     const p = await prepareCurator(work, undefined, {
       autonomous,
-      requireInvocation: true,
     });
     return { run: p.run!, sequence: source.sequence };
   }
@@ -118,7 +116,7 @@ for (const size of ['small', 'large'] as const)
         p = await f.prepare(1);
       const names = [
         'SKILL.md',
-        'MEMORY-CONTRACT.md',
+        'WINDOW.md',
         'inputs.json',
         'packet.json',
         'base/STATE.md',
@@ -164,6 +162,13 @@ for (const size of ['small', 'large'] as const)
           assert.equal(packet.events[0].nativeThreadId, 'io-session');
           assert.equal(packet.events[0].hook, 'UserPromptSubmit');
         }
+        if (name === 'WINDOW.md') {
+          // The reading copy carries every event text verbatim, Unicode and CRLF included.
+          const label = 'E' + String(p.sequence).padStart(3, '0');
+          assert.ok(acquired.includes(`## ${label} — user_message\n\n`));
+          assert.ok(acquired.includes(source + '\n'));
+          assert.ok(acquired.includes('Result: ' + source + '\n'));
+        }
       }
       assert.equal(reads, names.length);
       if (size === 'small') assert.equal(outputs, names.length);
@@ -193,19 +198,11 @@ function artifacts(
       knowledge: {},
     },
     review: {
-      version,
+      version: 3,
       summary: 'Unicode update.',
       sources: [sequence],
       changes: [
         { path: 'STATE.md', summary: 'Unicode state.', sources: [sequence] },
-      ],
-      critical: [
-        {
-          before: version === 2 ? stateEvidence(before, 1) : '',
-          after: version === 2 ? stateEvidence(state, 1) : '# Project',
-          reason: 'Continuity with evidence.',
-          sources: [sequence],
-        },
       ],
       uncertainties: [],
       anomalies: [],
@@ -213,7 +210,7 @@ function artifacts(
   };
 }
 
-test('production writer creates v1/v2 artifacts, binds actual hashes and preserves consecutive confirmed states', async (t) => {
+test('production writer creates v3 artifacts on consecutive checkpoints, binds actual hashes and preserves consecutive confirmed states', async (t) => {
   const f = await fixture(t);
   for (const version of [1, 2]) {
     const p = await f.prepare(version),
@@ -253,9 +250,7 @@ test('production writer creates v1/v2 artifacts, binds actual hashes and preserv
     assert.deepEqual(await readFile(r.proposal.path), proposalBytes);
     const v = await validateCurator(f.work);
     assert.equal(v.review!.sha256, r.review!.sha256);
-    if (version === 2)
-      assert.equal(v.review!.report.critical[0]!.before, before.split('\n')[0]);
-    await applyCurator(f.work, v.seal, true);
+    await applyCurator(f.work, v.seal);
     const published = state.replaceAll(
       packet.feed,
       relative(f.memory, join(f.feed, 'project.jsonl')).split(sep).join('/'),
@@ -266,9 +261,13 @@ test('production writer creates v1/v2 artifacts, binds actual hashes and preserv
       /ENOENT|CURATOR_IO_RUN_NOT_PENDING/,
     );
   }
-  assert.ok(
-    (await readFile(join(f.memory, 'HISTORY.md'), 'utf8')).includes(sample),
-  );
+  for (const window of ['H000001', 'H000002'])
+    assert.ok(
+      (
+        await readFile(join(f.memory, 'history', window + '.md'), 'utf8')
+      ).includes(sample),
+      window,
+    );
 });
 
 test('I/O failures do not publish partial pairs, consume another authorization or mutate confirmed memory', async (t) => {
@@ -357,7 +356,7 @@ test('Node runtime without optional encoding globals can write the real artifact
     receipts.proposal.sha256,
     hash(await readFile(receipts.proposal.path)),
   );
-  await applyCurator(f.work, (await validateCurator(f.work)).seal, true);
+  await applyCurator(f.work, (await validateCurator(f.work)).seal);
 });
 
 test('legacy pending batches can use the canonical writer without acquiring a new review format', async (t) => {
@@ -368,7 +367,7 @@ test('legacy pending batches can use the canonical writer without acquiring a ne
   const bytes = await readFile(r.proposal.path);
   const v = await validateCurator(f.work);
   assert.equal(v.review, undefined);
-  await applyCurator(f.work, v.seal, true);
+  await applyCurator(f.work, v.seal);
   assert.deepEqual(await readFile(r.proposal.path), bytes);
   assert.equal(
     await readFile(join(f.memory, 'STATE.md'), 'utf8'),

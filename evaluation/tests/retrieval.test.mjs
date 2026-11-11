@@ -87,12 +87,27 @@ test('isolated reference fixture freezes five distinct protocols with a private 
     join(f.workspace, '.agents/skills/knownex-recall/SKILL.md'),
     'utf8',
   );
-  assert.match(recall, /`npm exec --offline -- knownex memory state`/);
+  // Commands use the workspace-local binary, through the alias K the skill defines.
+  assert.match(recall, /`K` = `npm exec --offline -- knownex`/);
+  assert.match(recall, /`K memory state`/);
   assert.doesNotMatch(recall, /`knownex (?:memory|pending)/);
+  for (const workspace of Object.values(f.workspaces)) {
+    const role = await readFile(
+      join(workspace, '.codex/agents/knownex_recaller.toml'),
+      'utf8',
+    );
+    assert.match(role, /name = "knownex_recaller"/);
+    assert.match(role, /model = "gpt-6\.1-terra"/);
+    assert.match(role, /model_reasoning_effort = "medium"/);
+    assert.match(role, /Non delegare/);
+    const policy = await readFile(join(workspace, 'AGENTS.md'), 'utf8');
+    assert.match(policy, /knownex_recaller/);
+    assert.match(policy, /fork_turns="none"/);
+  }
   if (process.platform === 'win32') {
-    const command = recall.match(
-      /`(npm exec --offline -- knownex memory state)`/,
-    )[1];
+    const command =
+      recall.match(/`K` = `(npm exec --offline -- knownex)`/)[1] +
+      ' memory state';
     const powershell = spawnSync(
       join(
         process.env.SystemRoot,

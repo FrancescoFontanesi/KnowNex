@@ -13,15 +13,15 @@ dell'assenso. [Protocollo manuale](CHECKPOINT-CONSENT.md).
 ## Delega nativa ordinaria
 
 Sol usa `node node_modules/knownex/dist/index.js curate native --stage prepare`
-con `--work .knownex/internal/curator --authorization captured-user-invocation`;
-nel checkout usa `node dist/index.js`. La primitiva risolve l'autorita dal feed,
-la consuma per un solo batch e restituisce run ID, requestFile e intervallo.
+con `--work .knownex/internal/curator`; nel checkout usa `node dist/index.js`.
+La primitiva congela il prefisso gia acquisito e restituisce run ID, requestFile
+e intervallo senza un permesso nel feed.
 Sol delega una sola volta a `knownex_curator` (Terra medium), con contesto
 indipendente e soltanto questi riferimenti in modalita materialize-only.
 Terra legge autonomamente il batch congelato, cura la memoria e produce
 gli artefatti via I/O canonico, senza primitive di checkpoint o App Server.
-Sol attende le sole ricevute e conclude con la stessa CLI, `--stage complete`,
-run esplicito e hash reali delle due ricevute. Validazione e apply condividono
+Sol attende le sole ricevute e conclude con la stessa CLI, `--stage complete`
+e il solo run esplicito: proposta e review si leggono dal run. Validazione e apply condividono
 le funzioni del controller esistente, inclusa la verifica finale del feed acquisito; il percorso
 non avvia altri agenti. Sol non legge documenti e non ripete l'analisi di Terra.
 Se il Curator fallisce, Sol termina senza complete e senza retry.
@@ -30,31 +30,6 @@ Sol riceve solo SUCCESS/BLOCKED/ERROR e metadati essenziali. Resta esplicita
 l'assenza di review semantica indipendente; anomalie e incertezze dichiarate
 bloccano l'apply. Un ruolo non disponibile causa errore, senza fallback.
 Limiti delle capacita per-agente e contratto in [CURATION-WORKFLOW.md](CURATION-WORKFLOW.md).
-
-## Controller con launcher esterno: percorso non predefinito
-
-```powershell
-npm exec --offline -- knownex curate checkpoint --work .knownex/internal/curator
-```
-
-Sol avvia una sola operazione e riceve soltanto esito, cutoff, conteggi disponibili
-e warning. Il controller prepara il batch autonomo, genera la richiesta per
-riferimenti, verifica le capacita native senza inferenza e avvia una sola
-codex exec con autenticazione/provider correnti e modello/effort economici
-configurati. Attende internamente, verifica ricevute, valida e applica con sigillo.
-Non richiede letture documentali, polling LLM o deleghe del principale.
-
-Qualsiasi incertezza o anomalia dichiarata blocca la pubblicazione automatica.
-Con rapporto valido privo di segnalazioni l'invocazione iniziale autorizza l'apply
-monouso. **La review semantica indipendente di Sol non fa parte di questo percorso.**
-L'autoverifica del Curator resta obbligatoria; i controlli deterministici non
-dimostrano completezza o pertinenza semantica. Il warning
-CURATOR_SEMANTIC_SELF_REVIEW_ONLY rende esplicito il limite.
-
-Gli artefatti interni conservano richiesta, ricevuta controller, eventi JSONL,
-stderr e metadati worker. Un pending gia reclamato non rilancia il worker; recovery
-e replay riguardano soltanto apply gia autorizzati. Dettagli, confini di isolamento
-e misura futura in [CURATION-WORKFLOW.md](CURATION-WORKFLOW.md).
 
 ## Ciclo manuale: soltanto eccezioni e legacy
 
@@ -101,23 +76,14 @@ congelata nel packet; categories assegna solo categorie esistenti alle note
 nuove o cambiate. Il codice pubblica revisioni immutabili sotto
 memory/knowledge/checkpoint-NNNN/[categoria]/; la proposta usa chiavi logiche.
 
-Il Curator passa gli oggetti al modulo I/O Node del prodotto indicato nella
-richiesta, usando il Node REPL; non implementa un writer o un encoder. Il
+Il Curator consegna proposta e review tramite curate write della CLI KnowNex;
+non implementa un writer o un encoder. Il
 [confine I/O](MEMORY-CONTRACT.md#confine-io-supportato) definisce letture, persistenza
 esclusiva e ricevute SHA-256. Validate
-con --summary restituisce controlli strutturali e rapporto compatto: modifiche per
-documento, fonti, motivazioni e indici delle evidenze critiche, incertezze e anomalie.
-Non ristampa gli estratti degli STATE. Il rapporto e legato alla proposta
-e agli input congelati; apply rifiuta modifiche dopo validate. Vedere lo schema
-nel [contratto](MEMORY-CONTRACT.md).
-
-La review versione 2 identifica le evidenze critiche con hash e intervalli di
-righe: before nello STATE congelato, after nello STATE proposto. Validate estrae
-e restituisce il testo esatto, senza richiederne la trascrizione al modello o
-riscrivere review.json. La versione 1 resta valida con il controllo letterale
-precedente, preservando anche i batch pendenti e i sigilli esistenti. Identificare
-un passaggio reale non dimostra la pertinenza semantica della transizione:
-questa rimane oggetto della review mirata del principale.
+restituisce controlli strutturali e rapporto: modifiche per documento, fonti,
+motivazioni, incertezze e anomalie, senza estratti degli STATE. Il rapporto e
+legato alla proposta e agli input congelati; apply rifiuta modifiche dopo
+validate. Vedere lo schema nel [contratto](MEMORY-CONTRACT.md).
 
 Il principale confronta ricevute e rapporto e, se coerente e privo di rischi non
 chiariti, puo applicare senza leggere fonti o candidati. Verifica puntualmente
@@ -148,7 +114,7 @@ autorizzazione manuale. Una modifica esplicita della proposta richiede review,
 una ricevuta hash aggiornata e rivalidazione; non si modifica la memoria confermata.
 
 ```powershell
-npm run curate -- validate --work .knownex/internal/curator --summary
+npm run curate -- validate --work .knownex/internal/curator
 # Il principale rivede il rapporto, approfondisce solo rischi specifici e usa il sigillo effettivo.
 npm run curate -- apply --work .knownex/internal/curator --confirm SIGILLO
 ```

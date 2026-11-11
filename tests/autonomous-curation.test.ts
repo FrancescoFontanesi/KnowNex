@@ -86,7 +86,7 @@ test('autonomous curation freezes references, binds targeted review and preserve
     await writeFile(prepared.proposal!, bytes);
     await assert.rejects(validateCurator(work), /CURATOR_REVIEW_REQUIRED/);
     const review = {
-      version: 1,
+      version: 3,
       proposalSha256: hash(bytes),
       summary: 'Change with evidence',
       sources: [n],
@@ -101,12 +101,6 @@ test('autonomous curation freezes references, binds targeted review and preserve
                 sources: [n],
               },
             ],
-      critical: [] as {
-        before: string;
-        after: string;
-        reason: string;
-        sources: number[];
-      }[],
       uncertainties: [],
       anomalies: [],
     };
@@ -116,17 +110,6 @@ test('autonomous curation freezes references, binds targeted review and preserve
     await save();
     await assert.rejects(validateCurator(work), /CURATOR_REVIEW_INVALID/);
     review.sources = [n];
-    review.critical = [
-      {
-        before: 'invented previous quote',
-        after: '',
-        reason: 'removed',
-        sources: [n],
-      },
-    ];
-    await save();
-    await assert.rejects(validateCurator(work), /CURATOR_REVIEW_INVALID/);
-    review.critical = [];
     await save();
     let validated = await validateCurator(work);
     review.summary = 'Explicit editorial change';

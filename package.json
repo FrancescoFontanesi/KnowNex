@@ -11,6 +11,7 @@
     "dist/",
     ".codex/config.toml",
     ".codex/agents/knownex_curator.toml",
+    ".codex/agents/knownex_recaller.toml",
     ".codex/hooks/stop.cjs",
     ".codex/hooks/feed.cjs",
     ".codex/hooks/session.cjs",

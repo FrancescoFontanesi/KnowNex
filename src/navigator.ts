@@ -132,34 +132,65 @@ async function historyEntries(root: string): Promise<Entry[]> {
   } catch {
     return fail('MEMORY_INVALID');
   }
-  return segments.map((segment, i) => {
-    const start = starts[i]!.index!,
-      marker = `<!-- knownex-history:${segment.id}:end -->`;
-    const end = text.indexOf(marker, start) + marker.length;
-    const content = text.slice(start, end + (text[end] === '\n' ? 1 : 0));
-    const field = (name: string) =>
-      content.match(new RegExp('^- ' + name + ': (.+)$', 'm'))![1]!;
-    const topics = field('Argomenti'),
-      description = field('Descrizione'),
-      date = field('Data').replaceAll('`', '');
-    return {
-      result: {
-        id: segment.id,
-        type: 'history',
-        title: topics,
-        path: 'HISTORY.md',
-        reference: 'HISTORY.md#' + segment.id.toLowerCase(),
-        date: clip(date, 64),
-        events: { from: segment.from, through: segment.through },
-      },
-      metadata: [segment.id, date, topics, description, field('Eventi')].join(
-        '\n',
-      ),
-      headings: headings(content),
-      body: content,
-      content,
-      description,
-    };
+  return Promise.all(
+    segments.map(async (segment, i) => {
+      let content: string;
+      if (segment.window) content = await textAt(root, segment.window);
+      else {
+        const start = starts[i]!.index!,
+          marker = `<!-- knownex-history:${segment.id}:end -->`;
+        const end = text.indexOf(marker, start) + marker.length;
+        content = text.slice(start, end + (text[end] === '\n' ? 1 : 0));
+      }
+      const field = (name: string) => {
+        const value = content.match(new RegExp('^- ' + name + ': (.+)$', 'm'));
+        return value ? value[1]! : fail('MEMORY_INVALID');
+      };
+      const topics = field('Argomenti'),
+        description = field('Descrizione'),
+        date = field('Data').replaceAll('`', '');
+      return {
+        result: {
+          id: segment.id,
+          type: 'history' as const,
+          title: topics,
+          path: segment.window ?? 'HISTORY.md',
+          reference: segment.window ?? 'HISTORY.md#' + segment.id.toLowerCase(),
+          date: clip(date, 64),
+          events: { from: segment.from, through: segment.through },
+        },
+        metadata: [segment.id, date, topics, description, field('Eventi')].join(
+          '\n',
+        ),
+        headings: headings(content),
+        body: content,
+        content,
+        description,
+      };
+    }),
+  );
+}
+
+/** Chronological HISTORY index, newest first, without window bodies: pick windows to open. */
+export async function memoryHistory(
+  directory: string,
+  options: { last?: number; before?: string } = {},
+) {
+  const last = options.last ?? 10;
+  if (!Number.isSafeInteger(last) || last < 1 || last > 50)
+    fail('MEMORY_INVALID_ID');
+  const root = await memoryRoot(directory);
+  return withConfirmedMemory(root, async () => {
+    const entries = await historyEntries(root);
+    let end = entries.length;
+    if (options.before !== undefined) {
+      end = entries.findIndex((e) => e.result.id === options.before);
+      if (end < 0) fail('MEMORY_NOT_FOUND');
+    }
+    return entries
+      .slice(Math.max(0, end - last), end)
+      .reverse()
+      .map((e) => ({ ...e.result, description: e.description }));
   });
 }
 
@@ -516,9 +547,11 @@ export async function memoryRead(
     id = anchor!.toUpperCase();
     anchor = undefined;
   }
+  const window = /^history\/(H\d{6,})\.md$/.exec(id);
+  if (window) id = window[1]!;
   const notePath = /^knowledge\/[a-z0-9-]+\.md$/.test(id) ? id : undefined;
   const archived =
-    /^(?:\.\.\/revisions\/|knowledge\/)((?:checkpoint-\d{4,}\/(?:[a-z0-9-]+\/)?)?(kn-[0-9a-f-]{36})--([br]-\d+-\d+-[0-9a-f-]{36})\.md)$/.exec(
+    /^(?:\.\.\/revisions\/|knowledge\/)((?:checkpoint-\d{4,}\/(?:[a-z0-9-]+\/)?(?:[a-z0-9-]+?--)?)?(kn-[0-9a-f-]{36})--([br]-\d+-\d+-[0-9a-f-]{36})\.md)$/.exec(
       id,
     );
   if (archived) id = archived[2] + '@' + archived[3];

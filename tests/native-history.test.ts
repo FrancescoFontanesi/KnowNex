@@ -152,12 +152,12 @@ test('recorded feed is authoritative with nativeHistory metadata and unavailable
   await applyCurator(f.work, approval.seal);
   assert.equal(
     (await readFile(join(f.work, 'memory/HISTORY.md'), 'utf8')).match(
-      /:begin -->/g,
+      /^- \[H\d{6,}\]/gm,
     )?.length,
     2,
   );
 });
-test('legacy confirmed exclusions remain fixed without rewriting the feed', async (t) => {
+test('confirmed exclusions stay fixed and newly acquired administration is excluded', async (t) => {
   const f = await fixture(t);
   await f.pair('first');
   await f.event('authorize', '$knownex-checkpoint');
@@ -176,7 +176,7 @@ test('legacy confirmed exclusions remain fixed without rewriting the feed', asyn
   await applyCurator(f.work, approval.seal);
   assert.deepEqual(
     JSON.parse(await readFile(f.checkpoint, 'utf8')).excluded,
-    [1],
+    [1, 3],
   );
   assert.deepEqual(await readFile(f.feed), raw);
 });

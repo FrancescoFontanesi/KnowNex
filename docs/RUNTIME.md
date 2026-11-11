@@ -17,10 +17,10 @@ alla history Codex. L'identita nativa letta dall'intestazione locale durante la
 cattura e metadato di provenienza, non una verifica dei turni attualmente retained.
 
 Prepare congela il batch dopo il cutoff confermato. Complete verifica il feed,
-i checksum del cutoff e dell'invocazione, input congelati, ricevute, proposta e
+i checksum del cutoff, input congelati, ricevute, proposta e
 review prima dell'apply sotto il lock esistente. Un'append successiva al cutoff
 resta per il prossimo batch; corruzione, troncamento o modifica del prefisso
-necessario non autorizzano una pubblicazione. L'invocazione resta monouso.
+necessario non autorizzano una pubblicazione. Il trigger e il comando prepare esplicito, non un permesso nel feed.
 
 I metadati storici nativeHistory e nativeThreadId non attivano letture esterne.
 Le esclusioni gia registrate nei checkpoint/run restano decisioni congelate:
@@ -103,7 +103,7 @@ nessun blocco della compattazione, nessuna garanzia di delega LLM a PreCompact.
 S4/S4.2 espongono gia cutoff e conteggio pending, S4.4 distingue arretrato da
 progresso, S4.6 conserva batch falliti ed eventi. Il packet esistente rende leggibile
 solo una finestra gia preparata: non copriva il pending senza creare un batch e
-consumare una invocazione. La primitiva read-only aggiunta riusa lo stesso feed, lock,
+creare un batch. La primitiva read-only aggiunta riusa lo stesso feed, lock,
 validazione dei frame e checkpoint, senza staging o seconda copia del feed.
 
 STATE e autorevole fino all'ultimo checkpoint confermato; eventi successivi possono

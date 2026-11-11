@@ -166,6 +166,97 @@ test(
       nativeRole,
       /Non eseguire prepare, validate, apply, curate native/,
     );
+    assert.ok(
+      initialized.created.includes('.codex/agents/knownex_recaller.toml'),
+    );
+    const recallRole = await readFile(
+      join(project, '.codex/agents/knownex_recaller.toml'),
+      'utf8',
+    );
+    assert.equal(
+      recallRole,
+      await readFile(
+        join(installed, '.codex/agents/knownex_recaller.toml'),
+        'utf8',
+      ),
+    );
+    assert.match(recallRole, /name = "knownex_recaller"/);
+    for (const role of [nativeRole, recallRole]) {
+      assert.match(role, /model = "gpt-6\.1-terra"/);
+      assert.match(role, /model_reasoning_effort = "medium"/);
+    }
+    assert.match(recallRole, /knownex-recall\/SKILL\.md/);
+    assert.match(recallRole, /Non delegare/);
+    assert.doesNotMatch(recallRole, /^sandbox_mode\s*=/m);
+    assert.match(agents, /knownex_recaller/);
+    assert.match(agents, /fork_turns="none"/);
+    const recallSkill = await readFile(
+      join(project, '.agents/skills/knownex-recall/SKILL.md'),
+      'utf8',
+    );
+    assert.match(recallSkill, /knownex_recaller/);
+    assert.match(recallSkill, /Nessun fallback automatico/);
+    assert.match(
+      recallSkill,
+      /istruzioni di delega del principale non si applicano/,
+    );
+    assert.match(recallRole, /permessi effettivi.*ereditati/);
+    assert.match(agents, /non naviga STATE, Knowledge, HISTORY o pending/);
+    // A known reference costs one read: no delegation for it.
+    assert.match(
+      agents,
+      /riferimento già noto[^\n]*`npm exec --offline -- knownex memory read`/,
+    );
+    assert.match(agents, /anche dopo compact/);
+    // Upgrade an owned installation without the new role; data and other roles stay intact.
+    const recallPath = '.codex/agents/knownex_recaller.toml';
+    const installPath = join(project, '.knownex/internal/install.json');
+    const previousInstall = JSON.parse(await readFile(installPath, 'utf8'));
+    delete previousInstall.files[recallPath];
+    await writeFile(
+      installPath,
+      JSON.stringify(previousInstall, null, 2) + '\n',
+    );
+    await rm(join(project, recallPath));
+    const roleUpgrade = cli(['init']);
+    assert.deepEqual(roleUpgrade.created, [recallPath]);
+    assert.deepEqual(roleUpgrade.updated, ['.knownex/internal/install.json']);
+    assert.equal(await readFile(join(project, recallPath), 'utf8'), recallRole);
+    assert.equal(
+      await readFile(
+        join(project, '.codex/agents/knownex_curator.toml'),
+        'utf8',
+      ),
+      nativeRole,
+    );
+    // A user-modified role blocks init before any managed resources are changed.
+    const guardedNames = [
+      'AGENTS.md',
+      '.codex/config.toml',
+      '.codex/hooks.json',
+      '.knownex/internal/install.json',
+      '.knownex/memory/STATE.md',
+      '.knownex/memory/HISTORY.md',
+      '.knownex/internal/feed/project.jsonl',
+    ];
+    const guarded = await Promise.all(
+      guardedNames.map(
+        async (name) => [name, await readFile(join(project, name))] as const,
+      ),
+    );
+    const personalRole = recallRole + '\n# Personal role customization\n';
+    await writeFile(join(project, recallPath), personalRole);
+    const roleConflict = node([entry, 'init']);
+    assert.equal(roleConflict.status, 1);
+    assert.equal(JSON.parse(roleConflict.stderr).code, 'BOOTSTRAP_CONFLICT');
+    assert.equal(JSON.parse(roleConflict.stderr).file, recallPath);
+    assert.equal(
+      await readFile(join(project, recallPath), 'utf8'),
+      personalRole,
+    );
+    for (const [name, bytes] of guarded)
+      assert.deepEqual(await readFile(join(project, name)), bytes, name);
+    await writeFile(join(project, recallPath), recallRole);
     const checkpointSkill = await readFile(
       join(project, '.agents/skills/knownex-checkpoint/SKILL.md'),
       'utf8',
@@ -183,14 +274,9 @@ test(
       'prepare',
       '--work',
       '.knownex/internal/curator',
-      '--authorization',
-      'captured-user-invocation',
     ]);
-    assert.equal(nativeDenied.status, 1);
-    assert.equal(
-      JSON.parse(nativeDenied.stdout).code,
-      'CURATOR_HANDOFF_REQUIRED',
-    );
+    assert.equal(nativeDenied.status, 0);
+    assert.equal(JSON.parse(nativeDenied.stdout).action, 'noop');
     await assert.rejects(
       stat(join(project, '.agents/skills/knownex-handoff/SKILL.md')),
       { code: 'ENOENT' },
@@ -383,9 +469,7 @@ test(
           join(project, '.agents/skills/knownex-checkpoint/SKILL.md') +
           ')',
       });
-      const state = cli(['runtime']).handoff;
-      assert.equal(state.status, 'available');
-      return state;
+      return { sequence: cli(['runtime']).latest };
     }
     const request = invokeHandoff('one');
     combined = await readFile(feed);
@@ -432,7 +516,10 @@ test(
       join(prep.run, 'packet.json'),
     );
     await stat(join(prep.run, 'SKILL.md'));
-    await stat(join(prep.run, 'MEMORY-CONTRACT.md'));
+    await stat(join(prep.run, 'WINDOW.md'));
+    await assert.rejects(stat(join(prep.run, 'MEMORY-CONTRACT.md')), {
+      code: 'ENOENT',
+    });
     await writeFile(prep.proposal, '{"action":"invalid"}\n');
     assert.equal(node([entry, 'curate', 'validate', '--work', work]).status, 1);
     assert.equal(cli(['runtime']).pending, 4);
@@ -538,7 +625,10 @@ test(
       history,
     );
     assert.equal(
-      (history.toString().match(/knownex-history:H000001:begin/g) ?? []).length,
+      (
+        history.toString().match(/^- \[H000001\]\(history\/H000001\.md\)/gm) ??
+        []
+      ).length,
       1,
     );
     const resumed = hooks('SessionStart', { source: 'compact' })
@@ -564,11 +654,8 @@ test(
     );
     hooks('SessionEnd', {});
     const reportOnly = node([entry, 'curate', 'prepare', '--work', work]);
-    assert.equal(reportOnly.status, 1);
-    assert.equal(
-      JSON.parse(reportOnly.stderr).code,
-      'CURATOR_HANDOFF_REQUIRED',
-    );
+    assert.equal(reportOnly.status, 0);
+    assert.equal(JSON.parse(reportOnly.stdout).status, 'noop');
     // E: a new SessionStart reports pending without treating it as progress or
     // mutating the checkpoint/authorization. This checks context, not model semantics.
     const cold = hooks('SessionStart', {
@@ -758,7 +845,7 @@ test(
           turn_id: milestone + '-reply',
           prompt: invoke ? '$knownex-checkpoint' : 'Non ora',
         });
-        return cli(['runtime']).handoff;
+        return { sequence: cli(['runtime']).latest };
       };
       hooks('Stop', {
         turn_id: 'two-yes',
@@ -774,10 +861,6 @@ test(
       });
       const no = manual('declined-smoke', false);
       const refusedSnapshot = await critical();
-      assert.equal(
-        node([entry, 'curate', 'prepare', '--work', work]).status,
-        1,
-      );
       assert.deepEqual(await critical(), refusedSnapshot);
       hooks('Stop', {
         turn_id: 'declined-smoke-reply',
@@ -801,11 +884,7 @@ test(
         failed.run.split(/[\\/]/).at(-1),
       ]);
       assert.equal(withdrawn.status, 'abandoned');
-      assert.equal(cli(['runtime']).unconfirmedRun, failed.run);
-      assert.equal(
-        node([entry, 'curate', 'prepare', '--work', work]).status,
-        1,
-      );
+      assert.equal(cli(['runtime']).activeRun, null);
       hooks('Stop', {
         turn_id: 'failed-smoke-reply',
         last_assistant_message:
@@ -817,7 +896,7 @@ test(
       await writeFile(fresh.proposal, '{"action":"noop"}');
       const freshApproval = cli(['curate', 'validate', '--work', work]);
       cli(['curate', 'apply', '--work', work, '--confirm', freshApproval.seal]);
-      assert.equal(cli(['runtime']).unconfirmedRun, null);
+      assert.equal(cli(['runtime']).activeRun, null);
       hooks('UserPromptSubmit', {
         turn_id: 'bounded',
         prompt: 'Large UTF-8 pending è 🧠 '.repeat(4000),

@@ -55,9 +55,7 @@ export async function sessionContext(directory: string) {
     `Memoria: ${status.memory ?? '.knownex/seed (seed non materializzato)'}. ` +
     (status.activeRun
       ? `Batch gia attivo: ${status.activeRun}; ${status.staleRun ? 'invalidato da un edit: ritiralo prima di una nuova invocazione utente. ' : ''}materializzazione non confermata, nessuna nuova delega automatica. Con storage verificato il lavoro puo proseguire. `
-      : status.unconfirmedRun
-        ? `Tentativo non confermato: ${status.unconfirmedRun}; eventi conservati, lavoro ordinario consentito. Un nuovo tentativo richiede una nuova invocazione utente di $knownex-checkpoint. `
-        : 'Al prossimo milestone significativo suggerisci $knownex-checkpoint senza eseguirlo: solo una invocazione utente avvia il salvataggio. ');
+      : 'Al prossimo milestone significativo suggerisci $knownex-checkpoint senza eseguirlo: la preparazione esplicita congela gli eventi gia acquisiti. ');
   // Emit the confirmed STATE intact. Delivery to the model is an independent harness boundary.
   return (
     prefix +

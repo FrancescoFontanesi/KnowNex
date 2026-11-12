@@ -43,13 +43,13 @@ Usare la stessa grafia del percorso che verra passata alla sessione Codex:
 il preflight la preserva nelle chiamate native, anche per la lettera del drive
 Windows. Il controllo hook e diagnostico e non viene eseguito automaticamente
 dal checkpoint; autorizzazione e integrita del feed restano obbligatorie nel runtime.
-Le interfacce native di diagnostica mantengono i codici pubblici degli errori App Server; il checkpoint nativo non le avvia.
+Le interfacce native di diagnostica mantengono i codici pubblici degli errori App Server; il checkpoint non le avvia.
 Il runtime conserva diagnostici esclusivi in `.knownex/internal/diagnostics/`:
 fase, metodo RPC, eseguibile richiesto e risoluzione PATH stimata, cwd, avvio,
 terminazione, durata e codice originale. Messaggi e stderr non riconosciuti
 come errori privi di contenuto sono sostituiti da fingerprint SHA-256; payload
 RPC e conversazioni non vengono salvati. Questi diagnostici non cambiano
-integrita del feed, autorizzazione o pubblicazione e non sono restituiti a Sol.
+integrita del feed, autorizzazione o pubblicazione e non sono restituiti al chiamante.
 Il processo App Server riceve il `CODEX_HOME` esplicito o, se assente, la stessa
 home predefinita risolta da Node (`homedir()/.codex`). Non viene creata una home
 alternativa ne vengono concessi permessi aggiuntivi. I diagnostici distinguono
@@ -62,23 +62,23 @@ HISTORY e Knowledge per checkpoint sono nella stessa memoria; feed, capture e
 Curator risiedono in .knownex/internal/. Nessuna seed/ o memory/ nella root.
 La rc.11 distribuisce questo layout nelle nuove installazioni. [Layout canonico e compatibilita legacy](MEMORY-LAYOUT.md).
 
-Init installa anche `.codex/config.toml` di progetto con Terra come subagente
-predefinito e reasoning `medium`. Una configurazione preesistente differente
-produce un conflitto esplicito: non viene sovrascritta. Nessuna configurazione
-globale viene modificata. KnowNex non installa, inizializza o esegue Graft.
+Init rimuove da installazioni precedenti, se non modificati, skill
+`knownex-checkpoint`, custom agent `knownex_curator`/`knownex_recaller` e
+`.codex/config.toml`. Nessuna configurazione globale viene modificata. KnowNex non
+installa, inizializza o esegue Graft.
 
 KnowNex acquisisce gli eventi, fornisce STATE e segnala il pending fra sessioni.
 Il principale riusa il contesto disponibile, legge direttamente un riferimento gia
-noto con `memory read` e delega le ricerche a `knownex_recaller`. Init distribuisce
-questo ruolo accanto a `knownex_curator`: entrambi usano Terra medium, con
-responsabilita e sessioni separate. I permessi sono quelli dell'harness; il ruolo
-non crea una sandbox read-only separata. Se la delega manca, il principale segnala
-il limite senza fallback automatico.
+noto con `memory read` e delega storia, tassonomia e ricerche a un subagente
+generico dell'harness che segue la skill `knownex-recall`. I permessi sono quelli
+dell'harness. Se la delega manca, il principale segnala il limite senza fallback
+automatico.
 
-Il principale suggerisce `$knownex-checkpoint`
-ai milestone significativi, senza aspettare una risposta. Per salvare, invocare
-`$knownex-checkpoint` nella chat: l'invocazione autorizza un solo batch. Non occorre
-rispondere Si/No, scegliere cosa salvare o usare parole di assenso prestabilite.
+Il principale suggerisce il comando di checkpoint ai milestone significativi, senza
+aspettare una risposta, e non cura mai la memoria. Per salvare l'utente esegue
+`npm exec --offline -- knownex checkpoint (--codex | --claude) [-m MODEL] [-r EFFORT]`
+(o lo chiede esplicitamente al principale, che lo lancia in background); l'esecuzione
+tratta un solo batch. Dettagli in [CURATION-WORKFLOW.md](CURATION-WORKFLOW.md#comando-knownex-checkpoint).
 Nessun modello viene avviato dall'installer.
 
 Il checkpoint usa il feed acquisito e non richiede App Server, history Codex o
@@ -113,7 +113,7 @@ revisione: i checkpoint mantengono i percorsi del workspace originale.
 La politica domanda/risposta rimane eliminata dalla rc.4. I vecchi consent.json vengono
 preservati ma non letti. Un batch non confermato del vecchio protocollo puo essere
 ritirato, non applicato; gli apply gia autorizzati recuperano attraverso il journal.
-Per iniziare un nuovo batch serve una nuova invocazione utente di `$knownex-checkpoint`.
+Per iniziare un nuovo batch serve un nuovo avvio di `knownex checkpoint`.
 L'aggiornamento non avvia checkpoint. Aprire una nuova chat per caricare le skill
 aggiornate ed evitare le istruzioni del workflow precedente rimaste nel contesto.
 
@@ -128,8 +128,8 @@ npm uninstall --no-save --package-lock=false --ignore-scripts --no-audit --no-fu
 ```
 
 Rimuovere soltanto gli hook KnowNex da `.codex/hooks.json` e i wrapper
-`knownex-feed.cjs`, `knownex-stop.cjs`, `knownex-session.cjs`; rimuovere le quattro skill
-`knownex-checkpoint`, `knownex-curator`, `knownex-recall`, `knownex-taxonomy` e il blocco `knownex:start/end`
+`knownex-feed.cjs`, `knownex-stop.cjs`, `knownex-session.cjs`; rimuovere le tre skill
+`knownex-curator`, `knownex-recall`, `knownex-taxonomy` e il blocco `knownex:start/end`
 da AGENTS.md, preservando le istruzioni personali. Nessuna configurazione globale
 viene modificata. **Conservare `.knownex/`, `memory/` e i log finche servono**:
 contengono memoria, sorgenti, consensi ed evidenze. Non cancellarli automaticamente.

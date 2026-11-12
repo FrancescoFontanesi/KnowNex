@@ -15,8 +15,8 @@ npm exec --offline -- knownex init
 
 Npm genera gli shim locali, incluso `knownex.cmd`; non serve installazione
 globale. Init preserva le istruzioni personali esterne al blocco KnowNex.
-Distribuisce checkpoint, curator, recall e taxonomy opzionale, i custom agent
-`knownex_curator` e `knownex_recaller` (Terra medium) e gli hook SessionStart, UserPromptSubmit, Stop e SessionEnd.
+Distribuisce curator, recall e taxonomy opzionale e gli hook SessionStart, UserPromptSubmit, Stop e SessionEnd.
+Su installazioni precedenti rimuove, se non modificati, skill checkpoint, custom agent e `.codex/config.toml`.
 
 Aprire esattamente quel workspace in Codex, autorizzarlo esplicitamente se
 richiesto e approvare gli hook tramite `/hooks` o **Review hooks**. Trust del
@@ -32,9 +32,9 @@ npm exec --offline -- knownex memory state
 npm exec --offline -- knownex memory read "knowledge/tema.md"
 ```
 
-Solo `$knownex-checkpoint` esplicito autorizza un checkpoint. Sol esegue prepare,
-delega una volta la curatela a Terra e conclude con complete. Il percorso usa
-il feed, senza App Server annidati o review semantica duplicata di Sol.
+Il checkpoint si esegue solo con `npm exec --offline -- knownex checkpoint (--codex | --claude)`,
+avviato dall'utente. Il percorso usa il feed, senza App Server annidati; dettagli in
+[CURATION-WORKFLOW.md](CURATION-WORKFLOW.md#comando-knownex-checkpoint).
 
 Per aggiornare ripetere installazione e init. Reinstallazione idempotente e
 controlli di ownership preservano i dati; modifiche ai file gestiti producono

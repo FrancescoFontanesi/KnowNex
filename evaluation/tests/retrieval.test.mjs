@@ -92,17 +92,14 @@ test('isolated reference fixture freezes five distinct protocols with a private 
   assert.match(recall, /`K memory state`/);
   assert.doesNotMatch(recall, /`knownex (?:memory|pending)/);
   for (const workspace of Object.values(f.workspaces)) {
-    const role = await readFile(
-      join(workspace, '.codex/agents/knownex_recaller.toml'),
-      'utf8',
+    // Recall runs in a generic subagent with the skill; no dedicated Codex role is installed.
+    await assert.rejects(
+      readFile(join(workspace, '.codex/agents/knownex_recaller.toml')),
+      { code: 'ENOENT' },
     );
-    assert.match(role, /name = "knownex_recaller"/);
-    assert.match(role, /model = "gpt-6\.1-terra"/);
-    assert.match(role, /model_reasoning_effort = "medium"/);
-    assert.match(role, /Non delegare/);
     const policy = await readFile(join(workspace, 'AGENTS.md'), 'utf8');
-    assert.match(policy, /knownex_recaller/);
-    assert.match(policy, /fork_turns="none"/);
+    assert.match(policy, /subagente/);
+    assert.match(policy, /knownex-recall/);
   }
   if (process.platform === 'win32') {
     const command =

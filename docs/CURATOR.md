@@ -1,35 +1,16 @@
 # Curatela procedurale
 
-Il principale usa la [skill checkpoint](../.agents/skills/knownex-checkpoint/SKILL.md)
-per delegare un checkpoint al Curator nativo Terra medium. Il curator applica la
+Il checkpoint si avvia con `npm exec --offline -- knownex checkpoint (--codex | --claude)`,
+lanciato dall'utente (o dal principale solo su sua richiesta esplicita, in background):
+una sessione effimera del provider applica la
 [skill editoriale](../.agents/skills/knownex-curator/SKILL.md) e il
-[contratto](MEMORY-CONTRACT.md). Nessun provider, scheduler o monitor automatico.
+[contratto](MEMORY-CONTRACT.md). Il Curator legge, scrive la bozza e consegna con
+`curate write`; prepare e complete li esegue il comando. Dettagli in
+[CURATION-WORKFLOW.md](CURATION-WORKFLOW.md). Nessuno scheduler o monitor automatico.
 Capture e feed continuano a funzionare indipendentemente dalla materializzazione.
 
-Il principale suggerisce `$knownex-checkpoint` ai milestone; solo l'invocazione
-utente acquisita avvia la materializzazione. Nessuna domanda Si/No o interpretazione
-dell'assenso. [Protocollo manuale](CHECKPOINT-CONSENT.md).
-
-## Delega nativa ordinaria
-
-Sol usa `node node_modules/knownex/dist/index.js curate native --stage prepare`
-con `--work .knownex/internal/curator`; nel checkout usa `node dist/index.js`.
-La primitiva congela il prefisso gia acquisito e restituisce run ID, requestFile
-e intervallo senza un permesso nel feed.
-Sol delega una sola volta a `knownex_curator` (Terra medium), con contesto
-indipendente e soltanto questi riferimenti in modalita materialize-only.
-Terra legge autonomamente il batch congelato, cura la memoria e produce
-gli artefatti via I/O canonico, senza primitive di checkpoint o App Server.
-Sol attende le sole ricevute e conclude con la stessa CLI, `--stage complete`
-e il solo run esplicito: proposta e review si leggono dal run. Validazione e apply condividono
-le funzioni del controller esistente, inclusa la verifica finale del feed acquisito; il percorso
-non avvia altri agenti. Sol non legge documenti e non ripete l'analisi di Terra.
-Se il Curator fallisce, Sol termina senza complete e senza retry.
-
-Sol riceve solo SUCCESS/BLOCKED/ERROR e metadati essenziali. Resta esplicita
-l'assenza di review semantica indipendente; anomalie e incertezze dichiarate
-bloccano l'apply. Un ruolo non disponibile causa errore, senza fallback.
-Limiti delle capacita per-agente e contratto in [CURATION-WORKFLOW.md](CURATION-WORKFLOW.md).
+Il principale suggerisce il comando ai milestone; non cura mai la memoria. Nessuna
+domanda Si/No o interpretazione dell'assenso. [Protocollo manuale](CHECKPOINT-CONSENT.md).
 
 ## Ciclo manuale: soltanto eccezioni e legacy
 
@@ -37,9 +18,8 @@ I passaggi seguenti descrivono la supervisione manuale esplicita, non il percors
 ordinario del controller. Restano disponibili per approfondire un blocco o gestire
 batch precedenti; non vanno eseguiti in aggiunta al controller per lo stesso batch.
 
-Nei workspace inizializzati S4, il principale suggerisce
-`$knownex-checkpoint` ai milestone significativi e lo esegue solo su invocazione utente: una sola delega per batch, nessun
-retry LLM automatico. `knownex runtime` mostra pending, cutoff e batch attivo.
+Nei workspace inizializzati S4 il principale suggerisce il comando
+`knownex checkpoint` ai milestone significativi: nessun retry LLM automatico. `knownex runtime` mostra pending, cutoff e batch attivo.
 Il feed `project.jsonl` conserva una sequenza di progetto con identita
 sessione/turno; il checkpoint registra la sessione dell'ultimo evento confermato.
 Il primo `init --through 0` accetta **solo** il seed vuoto esatto del bootstrap
@@ -54,20 +34,20 @@ positivo restano una API legacy per chiamanti fidati. Usare percorsi locali
 ignorati da Git per i dati, senza riutilizzare workspace sperimentali.
 
 ```powershell
-# L'utente ha invocato $knownex-checkpoint in chat.
+# Percorso manuale/portabile (il comando `knownex checkpoint` lo fa in automatico).
 # Solo al primo uso: curate init con il seed vuoto e --through 0.
 npm exec --offline -- knownex curate prepare --work .knownex/internal/curator --autonomous
 ```
 
-Il principale non legge integralmente feed, packet o Knowledge per sintetizzarli
-prima della delega. Il codice congela il batch autorizzato e tutta la base corrente;
+Chi avvia il percorso manuale non legge integralmente feed, packet o Knowledge per sintetizzarli
+prima della curatela. Il codice congela il batch autorizzato e tutta la base corrente;
 inputs.json espone un catalogo di identita, titoli e intestazioni senza corpi.
 Il Curator sceglie le note pertinenti, legge WINDOW.md (tutti gli eventi del
 batch), base/STATE.md e le note da aggiornare; le altre restano intatte. Non carica tutta la Knowledge
 per precauzione. Le note necessarie non collegate da STATE sono disponibili nel
 catalogo, senza selezione preliminare del principale.
 
-Il principale genera request.txt con dist/curator-request.js e delega una sola
+Il compito del run (request.txt) e generato con dist/curator-request.js e passa una sola
 volta i riferimenti con hash. La skill congelata nel run e letta dal Curator una
 volta, non ricopiata nel messaggio. --artifacts autorizza sorgenti gia note; --directive
 resta facoltativo per priorita brevi, non una sintesi del materiale. Nessun
@@ -85,13 +65,13 @@ motivazioni, incertezze e anomalie, senza estratti degli STATE. Il rapporto e
 legato alla proposta e agli input congelati; apply rifiuta modifiche dopo
 validate. Vedere lo schema nel [contratto](MEMORY-CONTRACT.md).
 
-Il principale confronta ricevute e rapporto e, se coerente e privo di rischi non
+Il revisore manuale confronta ricevute e rapporto e, se coerente e privo di rischi non
 chiariti, puo applicare senza leggere fonti o candidati. Verifica puntualmente
 solo rimozioni inattese, completamenti o modifiche insufficientemente giustificati,
 contraddizioni, fonti mancanti e incertezze rilevanti. Una criticita nota assente
 dal rapporto richiede approfondimento. Se l'evidenza resta insufficiente non
 applica. Nessuna approvazione automatica,
-nessuna rilettura integrale ordinaria e nessuna seconda delega. Un rifiuto mantiene
+nessuna rilettura integrale ordinaria e nessuna seconda sessione. Un rifiuto mantiene
 batch e pending; una correzione editoriale locale richiede report/hash aggiornati
 e rivalidazione. I batch legacy mantengono il precedente formato e --context;
 non si convertono implicitamente mentre sono pendenti.
@@ -115,7 +95,7 @@ una ricevuta hash aggiornata e rivalidazione; non si modifica la memoria conferm
 
 ```powershell
 npm run curate -- validate --work .knownex/internal/curator
-# Il principale rivede il rapporto, approfondisce solo rischi specifici e usa il sigillo effettivo.
+# Il revisore rivede il rapporto, approfondisce solo rischi specifici e usa il sigillo effettivo.
 npm run curate -- apply --work .knownex/internal/curator --confirm SIGILLO
 ```
 
@@ -143,8 +123,8 @@ non introducono categorie, campi o filtri deterministici nel formato della memor
 | Knowledge esistente `knowledge/percorsi.md`, ID stabile, fornita nel packet. E014 e poi E020 in checkpoint diversi aggiungono una causa e una verifica sullo stesso argomento, con un log autorizzato.            | Aggiornare la stessa nota completa mantenendo ID, dettaglio utile e link verificabile al log; aggiungere provenienze effettive di entrambi i momenti. Nessuna nota per checkpoint, duplicazione o tassonomia obbligatoria.                       |
 
 In una nuova sessione STATE e l'ultima memoria confermata, non la prova che tutto
-il pending sia gia rappresentato. Nel checkpoint nativo prepare congela il batch pertinente; il principale
-delega i riferimenti, senza sintetizzarne il contenuto. Il Curator interpreta
+il pending sia gia rappresentato. Nel checkpoint prepare congela il batch pertinente e la sessione riceve
+i riferimenti, senza una sintesi del contenuto. Il Curator interpreta
 novita, supersession, risultati, blocker e Knowledge pertinenti dal feed congelato. Il feed originale non viene filtrato dalla materializzazione.
 
 ## Conservazione sostanziale e linkage
@@ -157,7 +137,7 @@ feed. HISTORY e le revisioni immutabili mantengono il loro contratto: non sono
 un sostituto delle informazioni ancora pertinenti nella memoria corrente.
 
 Il curator distingue contenuto incidentale e sostanziale guardando significato
-e conseguenze, senza filtri lessicali. Nel percorso nativo il Curator, durante l'autoverifica,
+e conseguenze, senza filtri lessicali. Nel percorso ordinario il Curator, durante l'autoverifica,
 usa il rapporto strutturato per confrontare continuita critica e modifiche,
 verificando i passaggi e le fonti pertinenti nel candidato. Controlla conservazione, attribuzione, qualificazioni,
 negazioni e ambito delle prove; segue i collegamenti necessari e rifiuta perdite
@@ -194,11 +174,11 @@ pertinente di completamento, una decisione sostitutiva o una cancellazione espli
 e autorevole. Il silenzio recente non e una giustificazione. Si conserva il lavoro
 effettivamente aperto in forma concisa, senza aggiungere campi, registri o ID.
 
-Il principale controlla elementi scomparsi o indeboliti confrontando lo STATE
+Il revisore manuale controlla elementi scomparsi o indeboliti confrontando lo STATE
 precedente nel packet con la proposta e, dopo validate, con lo STATE del candidato.
 Usa gli eventi gia disponibili e le Knowledge pertinenti, senza rileggere archivi
 interi. Rifiuta apply se resta una perdita critica ingiustificata: batch e pending
-rimangono, nessuna seconda delega o retry LLM, nessun riuso della invocazione consumata.
+rimangono, nessun retry LLM automatico.
 Validate verifica struttura e integrita, non la correttezza di questa revisione.
 
 Ogni finestra di HISTORY conserva la transizione e lo STATE prodotto, rendendo
@@ -211,7 +191,7 @@ Le seguenti fixture sono documentali e interamente sintetiche; i riferimenti E
 valgono solo dentro ciascun caso. Non sono valutazioni eseguite da un modello.
 La colonna revisione indica il criterio atteso, non l'esito di un test semantico.
 
-| Caso                           | STATE precedente                                                                                                        | Eventi nuovi (fonte sintetica)                                                                                                      | STATE successivo atteso                                                                                                 | Revisione del principale                                                                                                                                                           |
+| Caso                           | STATE precedente                                                                                                        | Eventi nuovi (fonte sintetica)                                                                                                      | STATE successivo atteso                                                                                                 | Revisione manuale                                                                                                                                                                  |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A — Omissione recente          | Collaudo funzionale su Windows ancora necessario prima del rilascio; ambiente di prova non disponibile, blocker aperto. | E301 tratta soltanto la documentazione; non contiene risultati del collaudo o rimozione del vincolo.                                | Mantenere collaudo, prerequisito e blocker aperti, anche se il tema recente e diverso.                                  | Rifiutare un candidato che li omette: nessun evento giustifica completamento, supersession o cancellazione.                                                                        |
 | B — Completamento dimostrato   | Eseguire il collaudo funzionale concordato prima del rilascio.                                                          | E302 contiene il risultato sintetico del collaudo completo nell'ambiente richiesto, con tutte le condizioni concordate soddisfatte. | L'attivita puo uscire dalle azioni aperte; riportare concisamente il risultato pertinente e la sua fonte.               | Accettare la rimozione dell'attivita aperta per completamento supportato da E302, senza estendere il risultato ad altri test o prerequisiti. Lo STATE precedente resta in HISTORY. |
@@ -219,7 +199,7 @@ La colonna revisione indica il criterio atteso, non l'esito di un test semantico
 | D — Risultato tecnico parziale | Prima del rilascio verificare il ripristino funzionale end-to-end; esito ancora ignoto.                                 | E304 documenta soltanto la correzione tecnica del percorso e il successo della build; nessuna prova end-to-end e stata eseguita.    | Conservare il prerequisito funzionale aperto, annotando il progresso tecnico senza dichiarare il ripristino verificato. | Rifiutare la chiusura: build e fix del percorso non soddisfano la condizione di verifica end-to-end. Un dettaglio in Knowledge non sostituisce l'attivita nello STATE.             |
 
 I controlli deterministici verificano forma, presenza e riferimenti delle fixture
-e coerenza delle istruzioni con il workflow. La capacita di Sol/Terra di rilevare
+e coerenza delle istruzioni con il workflow. La capacita di un modello di rilevare
 perdite semantiche richiede ancora una conversazione reale; non e dimostrata qui.
 
 ## Diagnostica e limiti

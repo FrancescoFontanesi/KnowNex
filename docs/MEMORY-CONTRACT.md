@@ -187,10 +187,10 @@ invece conservati, anche in messaggi misti. Nessun filtro per parole chiave.
 Il risparmio di contesto deriva dalla consultazione selettiva, non dalla perdita
 di informazioni sostanziali o dal rinvio sistematico al feed.
 
-Il principale decide quando materializzare: avanzamento significativo, cambio di
+Il principale suggerisce quando materializzare (l'utente avvia il comando): avanzamento significativo, cambio di
 focus, handoff, compattazione se il trigger è disponibile, o invocazione esplicita.
-Il principale coordina una sola delega economica senza analizzare o sintetizzare
-integralmente le sorgenti prima della delega. Puo aggiungere brevi priorita.
+Il comando `knownex checkpoint` avvia una sola sessione del provider senza analizzare
+o sintetizzare le sorgenti. Si possono aggiungere brevi priorita.
 
 Nel flusso --autonomous, prepare congela il batch e la base corrente; inputs.json
 fornisce percorsi, hash, identita, titoli e intestazioni delle Knowledge. Il packet
@@ -198,7 +198,7 @@ contiene STATE e gli eventi autorizzati, non i corpi delle note. Il Curator legg
 autonomamente tutto il batch e sceglie il contesto storico e tematico necessario;
 legge integralmente le note prima di aggiornarle, conservandone il contenuto valido.
 Non pre-carica tutte le Knowledge. Sorgenti essenziali mancanti richiedono arresto,
-non duplicazione o ampliamento implicito del batch. Nessuna seconda delega.
+non duplicazione o ampliamento implicito del batch. Nessuna seconda sessione.
 
 I batch legacy senza manifest restano compatibili: --context seleziona note
 esplicite; non si cambia modalita in un batch pendente. Il nuovo workflow non
@@ -238,19 +238,18 @@ Una proposta senza cambiamento effettivo è rifiutata: usare `{"action":"noop"}`
 
 `validate` genera il candidato e il segmento storico, verifica identità Knowledge,
 provenienza, link, confini di scrittura e sorgente congelata, senza modificare la
-memoria confermata. Nel percorso ordinario Sol esegue prepare, delega a Terra la sola curatela del batch congelato e completa `curate native --stage complete --run RUN` dopo la consegna del Curator. La primitiva legge proposta e review dal run,
+memoria confermata. Nel percorso ordinario `knownex checkpoint` esegue prepare, avvia la sessione che cura il batch congelato e, dopo la consegna con `curate write`, esegue complete (`curate complete --run RUN`). La primitiva legge proposta e review dal run,
 valida e invoca apply con il sigillo del batch congelato. Il trigger e il comando
 prepare esplicito, non un messaggio o un permesso ricavato dal feed.
 Qualsiasi voce in uncertainties o anomalies blocca l'apply automatico. Il checkpoint
 avanza soltanto dopo le scritture. Il confronto storico, la continuita critica e
 la verifica preliminare della copertura spettano al Curator; non esiste review
-semantica indipendente di Sol nel controller. Questo compromesso e segnalato dal
+semantica indipendente nel controller. Questo compromesso e segnalato dal
 warning CURATOR_SEMANTIC_SELF_REVIEW_ONLY: la validazione non prova completezza
-o pertinenza semantica. La review mirata e apply --confirm del principale restano
+o pertinenza semantica. La review mirata e apply --confirm restano
 un percorso manuale esplicito per eccezioni e legacy, non un passo ordinario.
-La delega nativa trasmette solo workspace, operazione e riferimento all'invocazione
-acquisita. La preparazione risolve tale riferimento sotto l'autorita del feed;
-sequenza/checksum sono congelati nel run e nella ricevuta controller nativa.
+Il comando passa alla sessione solo il compito del run. Sequenza/checksum del feed
+sono congelati nel run e nella ricevuta del controller.
 Complete richiede solo il medesimo run, senza nuove autorizzazioni. Prima della consegna
 di proposta e review restituisce CURATOR_WORKER_OUTPUT_INCOMPLETE e lascia il run
 prepared; con write in corso restituisce DESTINATION_BUSY, anch'esso ripetibile.
@@ -325,7 +324,7 @@ Il writer canonico produce solo la versione 3.
 Validate verifica forma, corrispondenza dei documenti, citazioni e hash degli input.
 Il sigillo lega anche l'hash del rapporto; apply ricontrolla gli input e rifiuta
 alterazioni. Una recovery gia autorizzata non richiede rapporto, revisione o
-delega nuovi. Questi controlli non provano lettura effettiva, completezza
+sessione nuovi. Questi controlli non provano lettura effettiva, completezza
 semantica o veridicita del rapporto.
 
 ## Integrità e recovery

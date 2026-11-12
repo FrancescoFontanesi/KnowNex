@@ -1,5 +1,6 @@
 import { transportJson } from './artifact-io.ts';
 import { nativePreflight } from './native-preflight.ts';
+import { launchCheckpoint } from './checkpoint-launcher.ts';
 import { workspaceLayout } from './layout.ts';
 import { stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -12,6 +13,7 @@ import {
   memoryRead,
   memoryCategory,
   memoryHistory,
+  memoryEvent,
 } from './navigator.ts';
 import type { MemoryScope } from './navigator.ts';
 import { initWorkspace } from './bootstrap.ts';
@@ -28,18 +30,23 @@ const memoryUsage = [
   '       knownex memory read <id[@revision]|reference>[#section] [--at <checkpoint-sequence|H-ID>] [--memory <directory>]',
   '       knownex memory category <key> [--limit <1..20> --cursor <token>] [--memory <directory>]',
   '       knownex memory history [--last <1..50>] [--before <H-ID>] [--memory <directory>]',
+  '       knownex memory event <E017|E015..E016|E015–E016> (max 20 events) [--memory <directory>]',
 ].join('\n');
 const initUsage = 'Usage: knownex init [--workspace <directory>]';
+const checkpointUsage =
+  'Usage: knownex checkpoint (--codex | --claude) [-m <model>] [-r <effort>] [--workspace <directory>]';
 const usage =
   syncUsage +
   '\n' +
   initUsage +
+  '\n' +
+  checkpointUsage +
   '\nUsage: knownex runtime [--summary]' +
   '\nUsage: knownex preflight [--workspace <directory>] (read-only native hook approval)' +
   '\nUsage: knownex pending [--workspace <directory>] [--from <sequence> --through <sequence> | --cursor <token>] [--limit <1..20>] [--include-administrative]' +
   '\n' +
   memoryUsage +
-  '\n       knownex curate <native|init|prepare|validate|apply|abandon|read|write|complete> [options]' +
+  '\n       knownex curate <init|prepare|validate|apply|abandon|read|write|complete> [options]' +
   '\n       knownex taxonomy <prepare|validate|apply|rebuild> [options]';
 
 class UsageError extends Error {}
@@ -76,7 +83,9 @@ async function main(args: string[]) {
     args.length === 0 ||
     (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) ||
     (args.length === 2 &&
-      ['sync', 'memory', 'init', 'pending', 'preflight'].includes(args[0]!) &&
+      ['sync', 'memory', 'init', 'pending', 'preflight', 'checkpoint'].includes(
+        args[0]!,
+      ) &&
       args[1] === '--help') ||
     (args.length === 3 &&
       args[0] === 'memory' &&
@@ -90,8 +99,51 @@ async function main(args: string[]) {
           ? memoryUsage
           : args[0] === 'init'
             ? initUsage
-            : usage,
+            : args[0] === 'checkpoint'
+              ? checkpointUsage
+              : usage,
     );
+    return;
+  }
+  if (args[0] === 'checkpoint') {
+    let values;
+    try {
+      const parsed = parseArgs({
+        args: args.slice(1),
+        tokens: true,
+        options: {
+          codex: { type: 'boolean' },
+          claude: { type: 'boolean' },
+          model: { type: 'string', short: 'm' },
+          effort: { type: 'string', short: 'r' },
+          workspace: { type: 'string' },
+        },
+      });
+      const names = parsed.tokens
+        .filter((t) => t.kind === 'option')
+        .map((t) => t.name);
+      values = parsed.values;
+      if (
+        new Set(names).size !== names.length ||
+        values.codex === values.claude ||
+        [values.model, values.effort, values.workspace].some(
+          (v) => v !== undefined && (!v.trim() || v.includes('\0')),
+        )
+      )
+        throw new UsageError();
+    } catch {
+      throw new UsageError();
+    }
+    const result = await launchCheckpoint(
+      values.workspace ?? workspaceDirectory(),
+      {
+        provider: values.codex ? 'codex' : 'claude',
+        ...(values.model ? { model: values.model } : {}),
+        ...(values.effort ? { effort: values.effort } : {}),
+      },
+    );
+    console.log(transportJson(result));
+    if (result.status !== 'SUCCESS') process.exitCode = 1;
     return;
   }
   if (args[0] === 'pending') {
@@ -215,6 +267,13 @@ async function main(args: string[]) {
           ...(await memoryRead(memory, command.value!, { at: command.at })),
         }),
       );
+    else if (command.operation === 'event')
+      console.log(
+        transportJson({
+          status: 'ok',
+          events: await memoryEvent(memory, command.value!),
+        }),
+      );
     else if (command.operation === 'history')
       console.log(
         transportJson({
@@ -274,7 +333,9 @@ function parseMemoryCommand(args: string[]) {
     const [operation, ...rest] = args;
     if (
       !operation ||
-      !['state', 'find', 'read', 'category', 'history'].includes(operation)
+      !['state', 'find', 'read', 'category', 'history', 'event'].includes(
+        operation,
+      )
     )
       throw new UsageError();
     const { values, positionals, tokens } = parseArgs({

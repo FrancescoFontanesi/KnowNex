@@ -327,6 +327,11 @@ async function feedRows(file: string): Promise<Row[]> {
   return result;
 }
 
+/** Verified feed events, regardless of any checkpoint cutoff. */
+export async function readFeedEvents(feed: string): Promise<FeedEvent[]> {
+  return (await feedRows(feed)).map((r) => r.event);
+}
+
 function validExclusions(value: unknown, through: number) {
   return (
     value === undefined ||

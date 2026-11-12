@@ -151,146 +151,107 @@ test(
     assert.match(initialized.nextSteps.join(' '), /approva esplicitamente/);
     assert.match(initialized.nextSteps.join(' '), /SessionStart/);
     assert.ok(initialized.created.includes('.codex/hooks.json'));
-    assert.ok(initialized.created.includes('.codex/config.toml'));
-    assert.ok(
-      initialized.created.includes('.codex/agents/knownex_curator.toml'),
-    );
-    const nativeRole = await readFile(
-      join(project, '.codex/agents/knownex_curator.toml'),
-      'utf8',
-    );
-    assert.match(nativeRole, /model = "gpt-6\.1-terra"/);
-    assert.match(nativeRole, /model_reasoning_effort = "medium"/);
-    assert.match(nativeRole, /modalita materialize-only/);
-    assert.match(
-      nativeRole,
-      /Non eseguire prepare, validate, apply, curate native/,
-    );
-    assert.ok(
-      initialized.created.includes('.codex/agents/knownex_recaller.toml'),
-    );
-    const recallRole = await readFile(
-      join(project, '.codex/agents/knownex_recaller.toml'),
-      'utf8',
-    );
-    assert.equal(
-      recallRole,
-      await readFile(
-        join(installed, '.codex/agents/knownex_recaller.toml'),
-        'utf8',
-      ),
-    );
-    assert.match(recallRole, /name = "knownex_recaller"/);
-    for (const role of [nativeRole, recallRole]) {
-      assert.match(role, /model = "gpt-6\.1-terra"/);
-      assert.match(role, /model_reasoning_effort = "medium"/);
+    // Curation runs through `knownex checkpoint`: no Codex roles, agent config or delegation skill.
+    const retiredNames = [
+      '.codex/config.toml',
+      '.codex/agents/knownex_curator.toml',
+      '.codex/agents/knownex_recaller.toml',
+      '.agents/skills/knownex-checkpoint/SKILL.md',
+    ];
+    for (const name of retiredNames) {
+      assert.ok(!initialized.created.includes(name), name);
+      await assert.rejects(stat(join(project, name)), { code: 'ENOENT' });
     }
-    assert.match(recallRole, /knownex-recall\/SKILL\.md/);
-    assert.match(recallRole, /Non delegare/);
-    assert.doesNotMatch(recallRole, /^sandbox_mode\s*=/m);
-    assert.match(agents, /knownex_recaller/);
-    assert.match(agents, /fork_turns="none"/);
+    assert.match(agents, /knownex checkpoint --codex/);
+    assert.match(agents, /subagente/);
+    assert.match(agents, /knownex-recall/);
+    assert.doesNotMatch(
+      agents,
+      /knownex_recaller|knownex_curator|curate native|\$knownex-checkpoint/,
+    );
+    // A note linked from STATE costs one read: no delegation for it.
+    assert.match(
+      agents,
+      /nota già linkata da STATE leggila direttamente con `npm exec --offline -- knownex memory read`/,
+    );
+    assert.match(agents, /anche dopo compact/);
     const recallSkill = await readFile(
       join(project, '.agents/skills/knownex-recall/SKILL.md'),
       'utf8',
     );
-    assert.match(recallSkill, /knownex_recaller/);
+    assert.doesNotMatch(recallSkill, /knownex_recaller/);
     assert.match(recallSkill, /Nessun fallback automatico/);
     assert.match(
       recallSkill,
       /istruzioni di delega del principale non si applicano/,
     );
-    assert.match(recallRole, /permessi effettivi.*ereditati/);
-    assert.match(agents, /non naviga STATE, Knowledge, HISTORY o pending/);
-    // A known reference costs one read: no delegation for it.
-    assert.match(
-      agents,
-      /riferimento già noto[^\n]*`npm exec --offline -- knownex memory read`/,
-    );
-    assert.match(agents, /anche dopo compact/);
-    // Upgrade an owned installation without the new role; data and other roles stay intact.
-    const recallPath = '.codex/agents/knownex_recaller.toml';
+    // Upgrade from an install that still owned roles, agent config and the delegation skill.
     const installPath = join(project, '.knownex/internal/install.json');
-    const previousInstall = JSON.parse(await readFile(installPath, 'utf8'));
-    delete previousInstall.files[recallPath];
-    await writeFile(
-      installPath,
-      JSON.stringify(previousInstall, null, 2) + '\n',
-    );
-    await rm(join(project, recallPath));
-    const roleUpgrade = cli(['init']);
-    assert.deepEqual(roleUpgrade.created, [recallPath]);
-    assert.deepEqual(roleUpgrade.updated, ['.knownex/internal/install.json']);
-    assert.equal(await readFile(join(project, recallPath), 'utf8'), recallRole);
-    assert.equal(
-      await readFile(
-        join(project, '.codex/agents/knownex_curator.toml'),
-        'utf8',
-      ),
-      nativeRole,
-    );
-    // A user-modified role blocks init before any managed resources are changed.
+    const owned: Record<string, string> = {
+      '.codex/config.toml':
+        '[agents]\ndefault_subagent_model = "gpt-6.1-terra"\n',
+      '.codex/agents/knownex_curator.toml': 'name = "knownex_curator"\n',
+      '.codex/agents/knownex_recaller.toml': 'name = "knownex_recaller"\n',
+      '.agents/skills/knownex-checkpoint/SKILL.md':
+        '---\nname: knownex-checkpoint\n---\n',
+    };
+    const manifestBeforeUpgrade = await readFile(installPath, 'utf8');
+    const oldInstall = JSON.parse(manifestBeforeUpgrade);
+    for (const [name, text] of Object.entries(owned)) {
+      oldInstall.files[name] = createHash('sha256').update(text).digest('hex');
+      await mkdir(dirname(join(project, name)), { recursive: true });
+      await writeFile(join(project, name), text);
+    }
+    await writeFile(installPath, JSON.stringify(oldInstall, null, 2) + '\n');
+    // A user-modified retired file blocks init before anything changes.
     const guardedNames = [
       'AGENTS.md',
-      '.codex/config.toml',
       '.codex/hooks.json',
       '.knownex/internal/install.json',
       '.knownex/memory/STATE.md',
       '.knownex/memory/HISTORY.md',
       '.knownex/internal/feed/project.jsonl',
+      ...retiredNames,
     ];
+    const recallPath = '.codex/agents/knownex_recaller.toml';
+    await writeFile(join(project, recallPath), owned[recallPath] + '# mine\n');
     const guarded = await Promise.all(
       guardedNames.map(
         async (name) => [name, await readFile(join(project, name))] as const,
       ),
     );
-    const personalRole = recallRole + '\n# Personal role customization\n';
-    await writeFile(join(project, recallPath), personalRole);
     const roleConflict = node([entry, 'init']);
     assert.equal(roleConflict.status, 1);
     assert.equal(JSON.parse(roleConflict.stderr).code, 'BOOTSTRAP_CONFLICT');
     assert.equal(JSON.parse(roleConflict.stderr).file, recallPath);
-    assert.equal(
-      await readFile(join(project, recallPath), 'utf8'),
-      personalRole,
-    );
     for (const [name, bytes] of guarded)
       assert.deepEqual(await readFile(join(project, name)), bytes, name);
-    await writeFile(join(project, recallPath), recallRole);
-    const checkpointSkill = await readFile(
-      join(project, '.agents/skills/knownex-checkpoint/SKILL.md'),
-      'utf8',
+    await writeFile(join(project, recallPath), owned[recallPath]!);
+    const upgrade = cli(['init']);
+    assert.deepEqual([...upgrade.removed].sort(), [...retiredNames].sort());
+    for (const name of retiredNames)
+      await assert.rejects(stat(join(project, name)), { code: 'ENOENT' });
+    await assert.rejects(stat(join(project, '.codex/agents')), {
+      code: 'ENOENT',
+    });
+    assert.equal(await readFile(installPath, 'utf8'), manifestBeforeUpgrade);
+    // A project's own Codex config, never installed by KnowNex, is left alone.
+    const ownConfig = 'model = "personal"\n';
+    await writeFile(join(project, '.codex/config.toml'), ownConfig);
+    assert.deepEqual(cli(['init']).removed, []);
+    assert.equal(
+      await readFile(join(project, '.codex/config.toml'), 'utf8'),
+      ownConfig,
     );
-    assert.match(checkpointSkill, /curate native --stage prepare/);
-    assert.match(checkpointSkill, /curate native --stage complete/);
-    assert.match(checkpointSkill, /"workerMode": "materialize-only"/);
-    assert.ok(!nativeRole.includes('native-owner'));
-    // Execute the installed runtime directly: no registry/cache or npm fallback.
-    const nativeDenied = node([
-      entry,
-      'curate',
-      'native',
-      '--stage',
-      'prepare',
-      '--work',
-      '.knownex/internal/curator',
-    ]);
-    assert.equal(nativeDenied.status, 0);
-    assert.equal(JSON.parse(nativeDenied.stdout).action, 'noop');
+    await rm(join(project, '.codex/config.toml'));
+    // The installed launcher runs directly; with nothing to curate it starts no session.
+    const launched = node([entry, 'checkpoint', '--codex']);
+    assert.equal(launched.status, 0, launched.stderr + launched.stdout);
+    assert.equal(JSON.parse(launched.stdout).action, 'noop');
     await assert.rejects(
       stat(join(project, '.agents/skills/knownex-handoff/SKILL.md')),
       { code: 'ENOENT' },
     );
-    const agentConfig = await readFile(
-      join(project, '.codex/config.toml'),
-      'utf8',
-    );
-    assert.equal(
-      agentConfig,
-      await readFile(join(installed, '.codex/config.toml'), 'utf8'),
-    );
-    assert.match(agentConfig, /default_subagent_model = "gpt-6\.1-terra"/);
-    assert.match(agentConfig, /default_subagent_reasoning_effort = "medium"/);
     assert.ok(!initialized.created.some((p: string) => /graft/i.test(p)));
     await assert.rejects(stat(join(project, 'graft')), { code: 'ENOENT' });
     const configText = await readFile(
@@ -316,7 +277,6 @@ test(
       assert.ok(!text.toLowerCase().includes(repository.toLowerCase()), p);
     }
     for (const name of [
-      'knownex-checkpoint',
       'knownex-curator',
       'knownex-recall',
       'knownex-taxonomy',
@@ -772,7 +732,6 @@ test(
     const preservePaths = [
       ...paths,
       'AGENTS.md',
-      '.codex/config.toml',
       '.gitignore',
       '.knownex/internal/feed/project.jsonl',
       '.knownex/internal/captures/' + hash + '.jsonl',
@@ -1195,21 +1154,6 @@ test(
     await assert.rejects(stat(join(project, oldSkill)), { code: 'ENOENT' });
     assert.equal(await readFile(extra, 'utf8'), 'Preserve this user resource.');
     assert.deepEqual(cli(['init']).removed, []);
-    const ownConfig = agentConfig + '\n# User custom configuration\n';
-    const configSnapshot = await readFile(join(project, 'AGENTS.md'));
-    await writeFile(join(project, '.codex/config.toml'), ownConfig);
-    const configConflict = node([entry, 'init']);
-    assert.equal(configConflict.status, 1);
-    assert.equal(JSON.parse(configConflict.stderr).file, '.codex/config.toml');
-    assert.equal(
-      await readFile(join(project, '.codex/config.toml'), 'utf8'),
-      ownConfig,
-    );
-    assert.deepEqual(
-      await readFile(join(project, 'AGENTS.md')),
-      configSnapshot,
-    );
-    await writeFile(join(project, '.codex/config.toml'), agentConfig);
     const legacy = join(
       project,
       '.knownex/internal/feed',

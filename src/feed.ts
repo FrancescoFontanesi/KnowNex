@@ -157,19 +157,24 @@ function recover(bytes: Buffer, sessionId?: string) {
   return { events, previous, confirmed, sequence };
 }
 
+// Well inside the 10 s hook timeout.
+const FEED_LOCK_WAIT_MS = 3000;
+
 /**
  * Append under sha256(sessionId).jsonl, or project.jsonl in explicit project mode.
  * Native identity is type/session/turn; commentary also requires messageId.
  * Identical text for that identity is a no-op; changed text conflicts.
  * LF commits the whole checksummed frame. Recovery discards only an incomplete
  * final frame, after validating committed data and the incoming event.
- * The shared process lock fails explicitly when occupied; there is no polling.
+ * The shared process lock is retried for a short bounded wait (curation may
+ * hold it briefly), then fails with DESTINATION_BUSY.
  * OS flush is requested, without a power-loss or forced-termination guarantee.
  */
 export async function appendFeedEvent(
   directory: string,
   input: FeedInput,
   project = false,
+  lockWaitMs = FEED_LOCK_WAIT_MS,
 ) {
   if (!isFeedInput(input)) throw new FeedError('FEED_INVALID_EVENT');
   // Copy the contract before awaiting: the caller cannot mutate the pending write.
@@ -191,7 +196,22 @@ export async function appendFeedEvent(
     await realpath(directory),
     project ? 'project.jsonl' : hash(value.sessionId) + '.jsonl',
   );
-  const release = await acquireJournalLock(destination + '.lock');
+  const deadline = Date.now() + lockWaitMs;
+  let release;
+  for (;;) {
+    try {
+      release = await acquireJournalLock(destination + '.lock');
+      break;
+    } catch (error) {
+      if (
+        !(error instanceof Error && 'code' in error) ||
+        error.code !== 'DESTINATION_BUSY' ||
+        Date.now() >= deadline
+      )
+        throw error;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
   let file;
   try {
     file = await open(destination, constants.O_RDWR | constants.O_CREAT, 0o600);

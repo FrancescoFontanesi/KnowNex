@@ -41,7 +41,8 @@ in ingresso; un replay di un commit già completo non lo duplica. Il writer rich
 `FileHandle.sync()`, senza dimostrare durabilità fisica contro perdita di corrente.
 
 Il writer riutilizza `acquireJournalLock()`: un processo vivo concorrente causa
-`DESTINATION_BUSY`, senza polling o retry automatici. L’errore è osservabile e
+`DESTINATION_BUSY` dopo un’attesa limitata (retry ogni 25 ms, fino a 3 s,
+entro il timeout degli hook). L’errore è osservabile e
 richiede un successivo replay; non è promessa l’acquisizione eventuale di eventi
 falliti. Valgono i limiti del lock S1 per PID riutilizzati, hard link e recovery
 interrotta. Non accedere allo stesso registro tramite alias hard link o symlink.

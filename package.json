@@ -9,13 +9,9 @@
   },
   "files": [
     "dist/",
-    ".codex/config.toml",
-    ".codex/agents/knownex_curator.toml",
-    ".codex/agents/knownex_recaller.toml",
     ".codex/hooks/stop.cjs",
     ".codex/hooks/feed.cjs",
     ".codex/hooks/session.cjs",
-    ".agents/skills/knownex-checkpoint/SKILL.md",
     ".agents/skills/knownex-curator/SKILL.md",
     ".agents/skills/knownex-recall/SKILL.md",
     ".agents/skills/knownex-taxonomy/SKILL.md",

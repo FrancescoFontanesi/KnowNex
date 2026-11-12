@@ -1,3 +1,5 @@
+// Sessione curatore effimera: nessuna acquisizione né contesto.
+if (process.env.KNOWNEX_CAPTURE === '0') process.exit(0);
 const { appendFileSync, existsSync, mkdirSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');

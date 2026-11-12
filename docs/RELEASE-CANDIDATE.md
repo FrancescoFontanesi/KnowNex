@@ -3,8 +3,9 @@
 ## Contratto corrente
 
 Il feed acquisito dagli hook e la fonte conversazionale del checkpoint.
-Sol esegue prepare, Terra materializza, Sol esegue complete. Il percorso non
-richiede history Codex, App Server annidati o review semantica di Sol.
+Il comando `knownex checkpoint` esegue prepare, una sessione effimera del provider
+materializza, il comando esegue complete. Il percorso non richiede history Codex
+o App Server annidati.
 Preparazione esplicita, cutoff, hash, ricevute, revisioni e recovery rimangono
 obbligatori. La compatibilita dei dati legacy fa parte della versione corrente.
 
@@ -26,7 +27,7 @@ $env:KNOWNEX_INSTALL_ARCHIVE = "C:\pacchetti\knownex-0.1.0-rc.11.tgz"
 node --test tests/bootstrap.test.ts
 ```
 
-La suite verifica CLI locale, skill e ruolo nativo, hook, emissione di STATE,
+La suite verifica CLI locale, skill, hook, emissione di STATE,
 preservazione dei dati, autorizzazioni, cutoff, apply e recovery sintetici.
 La prova dell'originale fixture S3 e opzionale: un caso saltato non dimostra
 compatibilita con quella specifica installazione storica.

@@ -192,7 +192,7 @@ test('il lock condiviso rifiuta uno scrittore concorrente senza modificare dati'
   const release = await acquireJournalLock(file + '.lock');
   try {
     await assert.rejects(
-      appendFeedEvent(directory, { ...input, turnId: 'next' }),
+      appendFeedEvent(directory, { ...input, turnId: 'next' }, false, 150),
       { code: 'DESTINATION_BUSY' },
     );
     assert.deepEqual(await readFile(file), before);
@@ -203,4 +203,49 @@ test('il lock condiviso rifiuta uno scrittore concorrente senza modificare dati'
     (await appendFeedEvent(directory, { ...input, turnId: 'next' })).appended,
     1,
   );
+});
+
+test('append attende un lock occupato brevemente e scrive una sola volta', async (t) => {
+  const { directory, file } = await fixture(t);
+  await appendFeedEvent(directory, input);
+  const release = await acquireJournalLock(file + '.lock');
+  const pending = appendFeedEvent(directory, { ...input, turnId: 'next' });
+  await new Promise((r) => setTimeout(r, 300));
+  await release();
+  assert.equal((await pending).appended, 1);
+  const events = verified(await readFile(file));
+  assert.equal(events.filter((e) => e.turnId === 'next').length, 1);
+  assert.equal(events.length, 2);
+});
+
+test('oltre il limite di attesa fallisce con DESTINATION_BUSY e il registro resta invariato', async (t) => {
+  const { directory, file } = await fixture(t);
+  await appendFeedEvent(directory, input);
+  const before = await readFile(file);
+  const release = await acquireJournalLock(file + '.lock');
+  try {
+    const start = Date.now();
+    await assert.rejects(
+      appendFeedEvent(directory, { ...input, turnId: 'next' }, false, 200),
+      { code: 'DESTINATION_BUSY' },
+    );
+    assert.ok(Date.now() - start >= 200);
+    assert.deepEqual(await readFile(file), before);
+  } finally {
+    await release();
+  }
+});
+
+test('due append concorrenti di eventi diversi ottengono sequenze consecutive', async (t) => {
+  const { directory, file } = await fixture(t);
+  await Promise.all([
+    appendFeedEvent(directory, { ...input, turnId: 'a' }),
+    appendFeedEvent(directory, { ...input, turnId: 'b' }),
+  ]);
+  const events = verified(await readFile(file));
+  assert.deepEqual(
+    events.map((e) => e.sequence),
+    [1, 2],
+  );
+  assert.deepEqual(events.map((e) => e.turnId).sort(), ['a', 'b']);
 });

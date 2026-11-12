@@ -1,29 +1,25 @@
 # Navigatore deterministico
 
-## Recall tramite agente nativo
+## Recall tramite subagente generico
 
 Il principale riusa STATE e la conversazione corrente. Un riferimento già noto
 (nota o finestra linkata da STATE, ID `H…`) lo legge direttamente con `memory read`:
-una lettura costa meno di una delega. Solo per una ricerca delega il quesito a
-`knownex_recaller`, con contesto
-indipendente (`fork_turns="none"` dove supportato), workspace e riferimenti noti.
-Il Recaller usa la skill `knownex-recall` e i comandi sotto; restituisce fatti
-pertinenti, riferimenti, provenienza e limiti, non i documenti o il log delle
-letture. Il principale attende senza navigazione duplicata. Se il ruolo non e
-disponibile, segnala il limite senza fallback automatico a ricerche dirette.
+una lettura costa meno di una delega. Storia (HISTORY, finestre, revisioni, eventi),
+tassonomia e ricerche le delega a un subagente generico dell'harness che segue la
+skill `knownex-recall` e i comandi sotto; restituisce fatti pertinenti, riferimenti,
+provenienza e limiti, non i documenti o il log delle letture. Non esiste un ruolo
+Recaller dedicato. Il principale attende senza navigazione duplicata.
 
-`knownex_recaller` e `knownex_curator` sono ruoli distinti con modello
-`gpt-6.1-terra` e reasoning `medium`: Recall non materializza memoria e non delega.
 I vincoli di sola consultazione sono comportamentali, non permessi read-only
-separati: il ruolo eredita la sandbox del principale. Le primitive correnti
+separati: il subagente eredita la sandbox del principale. Le primitive correnti
 possono acquisire lock interni e completare recovery gia autorizzate durante una
-lettura; la nuova delega non introduce una garanzia tecnica di assenza di scritture.
+lettura; non c'e una garanzia tecnica di assenza di scritture.
 
 STATE resta l'handoff automatico tra nuove sessioni, non un refresh per turno.
 L'hook corrente emette STATE anche dopo compact; questo comportamento non viene
 modificato e la consegna effettiva resta dipendente dall'harness.
 
-## Comandi del Recaller
+## Comandi di consultazione
 
 ```powershell
 npm run build
@@ -31,6 +27,8 @@ npm start -- memory state --memory .knownex/memory
 npm start -- memory find "identita ordinamento" --type knowledge --memory .knownex/memory
 npm start -- memory history --last 10 --memory .knownex/memory
 npm start -- memory read H000003 --memory .knownex/memory
+npm start -- memory event E017 --memory .knownex/memory
+npm start -- memory event E015..E016 --memory .knownex/memory
 npm start -- memory read kn-ID-DELLA-NOTA --memory .knownex/memory
 npm start -- memory read "knowledge/storage.md#flush-locale" --memory .knownex/memory
 # Copiare un riferimento immutabile effettivo da STATE o da read/find:

@@ -1,6 +1,6 @@
 ---
 name: knownex-recall
-description: Recupera dalla memoria KnowNex (Knowledge, HISTORY, revisioni, eventi pending) il minimo contesto mancante per rispondere, con provenienza. Usala quando STATE e il contesto già disponibili non bastano e serve una ricerca. Il principale la delega a knownex_recaller, che la esegue in sola lettura; un riferimento già noto il principale lo legge da sé. Non usarla per checkpoint, curatela o modifiche alla memoria.
+description: Recupera dalla memoria KnowNex (Knowledge, HISTORY, revisioni, eventi pending) il minimo contesto mancante per rispondere, con provenienza. Usala quando STATE e il contesto già disponibili non bastano e serve una ricerca. La esegue un subagente in sola lettura, a cui il principale delega storia, tassonomia e ricerche; STATE e le note linkate il principale le legge da sé. Non usarla per checkpoint, curatela o modifiche alla memoria.
 ---
 
 # KnowNex Recall
@@ -9,8 +9,8 @@ Obiettivo: recuperare il minimo contesto sufficiente a rispondere correttamente,
 
 ## Chi fa cosa
 
-- **Principale.** Se STATE e il contesto bastano, rispondi senza Recall. Un riferimento già noto (nota o finestra linkata da STATE, ID `H…`) leggilo tu con `memory read`: una lettura costa meno di una delega. Per una ricerca delega una domanda precisa a `knownex_recaller` con `fork_turns="none"` dove supportato. Passa il workspace, i riferimenti o i cutoff già noti e il minimo contesto necessario, non documenti o l'intera conversazione. Attendi il risultato senza navigare tu. Se la delega non è disponibile, segnala il limite. Nessun fallback automatico a ricerche dirette, altri ruoli o launcher esterni.
-- **knownex_recaller.** Le istruzioni di delega del principale non si applicano a questo ruolo: esegui tu la navigazione descritta sotto, senza delegare. Restituisci le informazioni pertinenti, i riferimenti, la provenienza e i limiti della ricerca, non documenti integrali o il log delle letture. Non modificare memoria, feed o configurazione e non eseguire checkpoint, curatela o riparazioni. Il vincolo di sola lettura è comportamentale: i permessi effettivi sono quelli dell'harness.
+- **Principale.** Se STATE e il contesto bastano, rispondi senza Recall. Una nota linkata da STATE leggila tu con `memory read`: una lettura costa meno di una delega. Storia (HISTORY, finestre, revisioni, eventi), tassonomia e ricerche di riferimenti ignoti delegale a un subagente con contesto indipendente e questa skill. Passa una domanda precisa, il workspace, i riferimenti o i cutoff già noti, non documenti o l'intera conversazione. Se l'harness non offre subagenti, segnala il limite. Nessun fallback automatico a ricerche dirette o altri ruoli.
+- **Subagente.** Le istruzioni di delega del principale non si applicano a te: esegui la navigazione descritta sotto, senza delegare. Restituisci le informazioni pertinenti, i riferimenti, la provenienza e i limiti della ricerca, non documenti integrali o il log delle letture. Non modificare memoria, feed o configurazione e non eseguire checkpoint, curatela o riparazioni. Il vincolo di sola lettura è comportamentale: i permessi effettivi sono quelli dell'harness.
 
 ## Dove cercare
 
@@ -35,6 +35,7 @@ Dalla radice del workspace, con `K` = `npm exec --offline -- knownex`:
 | Revisione precisa                              | `K memory read "kn-…@REV"`                                                                              |
 | Nota al checkpoint N o a uno STATE archiviato  | `K memory read "kn-…" --at N` oppure `--at H000003`                                                     |
 | Revisioni di una categoria                     | `K memory category CHIAVE` (`--limit`, `--cursor`)                                                      |
+| Evento citato come `[E017]` (anche già curato) | `K memory event E017` oppure `E015..E016` (max 20 eventi; solo in un workspace con feed)                |
 | Eventi pending                                 | `K pending`                                                                                             |
 
 La memoria è in `.knownex/memory` (legacy: `.knownex/curator/memory` o `.knownex/seed`). Per una copia esterna usa `--memory PERCORSO`. I link relativi si risolvono dal documento di origine; `memory read` non apre artefatti esterni.

@@ -2,7 +2,7 @@
 
 ## Comando e input ordinari
 
-La skill e `$knownex-checkpoint`. `prepare --work .knownex/internal/curator` riceve STATE
+Il checkpoint e il comando `knownex checkpoint` ([dettagli](CURATION-WORKFLOW.md#comando-knownex-checkpoint)); `$knownex-checkpoint` e rimosso. `prepare --work .knownex/internal/curator` riceve STATE
 ed eventi senza richiedere una direttiva o creare `.knownex/directive.md`.
 Indicazioni aggiuntive sono facoltative e non sostituiscono le fonti.
 Il vecchio nome `$knownex-handoff` non autorizza nuovi batch; resta leggibile per
@@ -149,8 +149,8 @@ Il principale usa STATE e le pagine pertinenti per aggiornare solo il proprio
 contesto temporaneo. Distingue direttive autorevoli, dichiarazioni, ipotesi e
 verifiche; conserva elementi critici finche non esistono giustificazioni pertinenti.
 Con STATE non consegnato integralmente o pending esaminato solo in parte dichiara il limite.
-Non crea WORKING.md, non delega a Terra e non richiede Si/No per leggere. Una futura
-materializzazione permanente richiede una invocazione utente di `$knownex-checkpoint`.
+Non crea WORKING.md, non richiede Si/No per leggere. Una futura
+materializzazione permanente richiede l'avvio utente di `knownex checkpoint`.
 
 Le fixture sintetiche verificano disponibilita di completamento/supersession da A
 in B, recupero dopo No, limiti di STATE e pagine Unicode, append durante lettura,
@@ -162,8 +162,8 @@ semantica del modello; quella resta da validare nella simulazione reale.
 
 Il principale riconosce semanticamente decisioni/supersession, avanzamenti
 verificati, cambio di focus, handoff e compattazione imminente significativa.
-Segue `knownex-checkpoint`: suggerimento del comando, invocazione utente acquisita,
-prepare, una delega a `knownex_curator`, `curate write` del Curator e complete;
+Segue il comando `knownex checkpoint`: suggerimento, avvio utente,
+prepare, sessione effimera del provider, `curate write` del Curator e complete;
 validate e apply con sigillo restano il percorso manuale. Il workflow editoriale e le
 verifiche restano invariati. Nessun checkpoint per turno o per tempo trascorso.
 
@@ -210,8 +210,8 @@ blocco legacy e rifiuto di memoria alterata. Le suite esistenti verificano gli
 altri confini di acquisizione e recovery. Sono payload sintetici, senza LLM.
 
 In una futura chat reale: approvare gli hook; verificare contesto SessionStart,
-milestone riconosciuto senza nominarlo, disponibilita del curator economico e
-una sola delega valida; chiudere A con pending e riprendere in B; verificare
+milestone riconosciuto senza nominarlo, esecuzione del comando di checkpoint e
+un solo batch valido; chiudere A con pending e riprendere in B; verificare
 anche la ripresa dopo compact. Non eseguire questi controlli come parte di S4.
 La selezione effettiva delle skill e il comportamento semantico dell'agente
 non sono dimostrati dai test offline. La durabilita fisica resta soggetta ai
@@ -219,7 +219,7 @@ limiti gia documentati in [Storage](STORAGE-DURABILITY.md).
 
 ## Turni amministrativi
 
-I turni del comando puro `$knownex-checkpoint` sono esclusi dalla vista operativa:
+I turni del vecchio comando puro `$knownex-checkpoint` (rimosso) sono esclusi dalla vista operativa:
 comando, passaggi intermedi e finale nello stesso sessionId/turnId. Il feed rimane
 integrale; pendingRaw e administrativePending espongono i conteggi originali.
 Pending e packet non includono questi turni, senza avanzare il checkpoint.

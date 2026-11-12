@@ -1,5 +1,5 @@
 import { transportJson, decodeUtf8, utf8Bytes } from './artifact-io.ts';
-import { preparedCheckpoint, delegationResult } from './native-checkpoint.ts';
+import { preparedCheckpoint } from './native-checkpoint.ts';
 import { readCurationInput, writeCurationDraft } from './curation-io.ts';
 import {
   canonicalWork,
@@ -25,13 +25,11 @@ function integer(value: string) {
     fail('CURATOR_ARGUMENT_INVALID');
   return n;
 }
-let nativeCommand = false;
 try {
   const [command, ...args] = process.argv.slice(2);
-  nativeCommand = command === 'native';
   if (!command || command === '--help') {
     console.log(
-      'Usage: knownex curate <native|init|prepare|validate|apply|abandon> --work <directory> [native: --stage prepare | --stage complete --run ID] [--memory <source> --feed <jsonl> --through <n>] [--autonomous --directive <file> --through <n> --context <note,note> --artifacts <path,path>] [--confirm <seal>] [--run <id>]\nPortable: knownex curate read --run <directory> --input <name> [--offset <byte> --limit <bytes> --sha256 <hash>]\n          knownex curate write --run <directory>   (assembles <run>/draft)\n          knownex curate complete --run <directory>',
+      'Usage: knownex curate <init|prepare|validate|apply|abandon> --work <directory> [--memory <source> --feed <jsonl> --through <n>] [--autonomous --directive <file> --through <n> --context <note,note> --artifacts <path,path>] [--confirm <seal>] [--run <id>]\nPortable: knownex curate read --run <directory> --input <name> [--offset <byte> --limit <bytes> --sha256 <hash>]\n          knownex curate write --run <directory>   (assembles <run>/draft)\n          knownex curate complete --run <directory>',
     );
   } else {
     const options =
@@ -41,19 +39,17 @@ try {
           ? ['run']
           : command === 'complete'
             ? ['run']
-            : command === 'native'
-              ? ['work', 'stage', 'run']
-              : command === 'init'
-                ? ['work', 'memory', 'feed', 'through']
-                : command === 'abandon'
-                  ? ['work', 'run']
-                  : command === 'prepare'
-                    ? ['work', 'directive', 'through', 'context', 'artifacts']
-                    : command === 'apply'
-                      ? ['work', 'confirm']
-                      : command === 'validate'
-                        ? ['work']
-                        : [];
+            : command === 'init'
+              ? ['work', 'memory', 'feed', 'through']
+              : command === 'abandon'
+                ? ['work', 'run']
+                : command === 'prepare'
+                  ? ['work', 'directive', 'through', 'context', 'artifacts']
+                  : command === 'apply'
+                    ? ['work', 'confirm']
+                    : command === 'validate'
+                      ? ['work']
+                      : [];
     if (!options.length)
       throw Object.assign(new Error(), { code: 'CURATOR_ARGUMENT_INVALID' });
     const { values: parsed, tokens } = parseArgs({
@@ -161,18 +157,6 @@ try {
           if (result.status !== 'SUCCESS') process.exitCode = 1;
         }
       }
-    } else if (command === 'native') {
-      if (
-        !['prepare', 'complete'].includes(values.stage ?? '') ||
-        (values.stage === 'prepare' && values.run) ||
-        (values.stage === 'complete' && !values.run)
-      )
-        throw Object.assign(new Error(), { code: 'CURATOR_ARGUMENT_INVALID' });
-      result = await preparedCheckpoint(values.work, {
-        stage: values.stage as 'prepare' | 'complete',
-        run: values.run,
-      });
-      if (!['SUCCESS', 'READY'].includes(result.status)) process.exitCode = 1;
     } else if (command === 'init') {
       if (!values.memory || !values.feed || !values.through)
         throw Object.assign(new Error(), { code: 'CURATOR_ARGUMENT_INVALID' });
@@ -215,17 +199,6 @@ try {
     typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)
       ? value
       : 'CURATOR_FAILED';
-  console.error(
-    transportJson(
-      nativeCommand
-        ? delegationResult({
-            status: 'error',
-            through: null,
-            code,
-            phase: 'arguments',
-          })
-        : { status: 'error', code },
-    ),
-  );
+  console.error(transportJson({ status: 'error', code }));
   process.exitCode = 1;
 }

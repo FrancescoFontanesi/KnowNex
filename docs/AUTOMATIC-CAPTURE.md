@@ -13,6 +13,8 @@ L’uso dell’entry point TypeScript evita una build JavaScript obsoleta durant
 sviluppo; richiede il runtime Node documentato nel README. La logica di lettura,
 checkpoint, commit e recovery rimane in `syncSession()`.
 
+Con `KNOWNEX_CAPTURE=0` nell'ambiente (impostata per le sessioni effimere del curatore) ogni hook (`feed.cjs`, `stop.cjs`, `session.cjs`) esce con codice 0 senza scrivere feed o log e senza iniettare STATE.
+
 ## Coda finale: SessionEnd (S1.6)
 
 `SessionEnd` richiama lo stesso comando di `Stop`, con lo stesso payload di

@@ -284,57 +284,30 @@ test('native prepare works without any invocation in the feed', async (t) => {
   assert.equal(result.status, 'SUCCESS');
 });
 
-test('native CLI argument errors use the final diagnostic contract without launching a model', () => {
-  const result = spawnSync(
-    process.execPath,
-    [
-      'src/index.ts',
-      'curate',
-      'native',
-      '--work',
-      '.knownex/internal/curator',
-      '--stage',
-      'invalid',
-    ],
-    { encoding: 'utf8' },
-  );
-  assert.equal(result.status, 1);
-  assert.deepEqual(JSON.parse(result.stderr), {
-    status: 'ERROR',
-    through: null,
-    code: 'CURATOR_ARGUMENT_INVALID',
-    phase: 'arguments',
-  });
-});
-
-test('native CLI prepare and complete expose only compact coordination results', async (t) => {
+test('prepare and CLI complete expose only compact coordination results', async (t) => {
   const f = await fixture(t);
   const cli = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      ['src/index.ts', 'curate', 'native', '--work', f.work, ...args],
+      ['src/index.ts', 'curate', 'complete', ...args],
       { encoding: 'utf8', windowsHide: true },
     );
-  const prepared = cli('--stage', 'prepare');
-  assert.equal(prepared.status, 0, prepared.stderr + prepared.stdout);
-  const p = JSON.parse(prepared.stdout);
-  assert.equal(p.status, 'READY');
+  const p = await begin(f.work);
+  const prepared = { stdout: JSON.stringify(p) };
   assert.equal(typeof p.requestFile, 'string');
   assert.ok(!('request' in p));
   const receipts = await produce(p.run);
   // The removed hash arguments are rejected before the run is touched.
   const legacy = cli(
-    '--stage',
-    'complete',
     '--run',
-    p.runId,
+    p.run,
     '--proposal-sha256',
     receipts.proposal.sha256,
   );
   assert.equal(legacy.status, 1);
   assert.equal(JSON.parse(legacy.stderr).code, 'ERR_PARSE_ARGS_UNKNOWN_OPTION');
   assert.equal(await controllerStatus(p.run), 'prepared');
-  const completed = cli('--stage', 'complete', '--run', p.runId);
+  const completed = cli('--run', p.run);
   assert.equal(completed.status, 0, completed.stderr + completed.stdout);
   assert.equal(JSON.parse(completed.stdout).status, 'SUCCESS');
   for (const output of [prepared.stdout, completed.stdout]) {
@@ -569,7 +542,7 @@ test('a rewrite racing complete never loses the batch and publishes exactly the 
   }
 });
 
-test('a corrupt feed stops native prepare before any run or delegation, through API and CLI', async (t) => {
+test('a corrupt feed stops prepare before any run or session, through API and the checkpoint command', async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.feed, 'project.jsonl'), 'corrupt\n');
   const result = await preparedCheckpoint(f.work, { stage: 'prepare' });
@@ -578,18 +551,15 @@ test('a corrupt feed stops native prepare before any run or delegation, through 
   assert.ok(!('requestFile' in result));
   await assert.rejects(readdir(join(f.work, 'runs')), { code: 'ENOENT' });
   await assertMemoryUnchanged(f.memory);
+  // The launcher stops at prepare: no provider session is started.
   const cli = spawnSync(
     process.execPath,
-    [
-      'src/index.ts',
-      'curate',
-      'native',
-      '--stage',
-      'prepare',
-      '--work',
-      f.work,
-    ],
-    { encoding: 'utf8', windowsHide: true },
+    ['src/index.ts', 'checkpoint', '--codex', '--workspace', f.root],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+      env: { ...process.env, PATH: '' },
+    },
   );
   assert.equal(cli.status, 1);
   const output = JSON.parse(cli.stdout);
@@ -598,14 +568,19 @@ test('a corrupt feed stops native prepare before any run or delegation, through 
   assert.ok(cli.stdout.length < 1000);
 });
 
-test('the removed provider-specific launcher is not a command and starts nothing', async (t) => {
+test('removed curate commands (old launcher, native delegation) start nothing', async (t) => {
   const f = await fixture(t);
-  const result = spawnSync(
-    process.execPath,
-    ['src/index.ts', 'curate', 'checkpoint', '--work', f.work],
-    { encoding: 'utf8', windowsHide: true },
-  );
-  assert.equal(result.status, 1);
-  assert.equal(JSON.parse(result.stderr).code, 'CURATOR_ARGUMENT_INVALID');
+  for (const command of [
+    ['checkpoint', '--work', f.work],
+    ['native', '--stage', 'prepare', '--work', f.work],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['src/index.ts', 'curate', ...command],
+      { encoding: 'utf8', windowsHide: true },
+    );
+    assert.equal(result.status, 1, command[0]);
+    assert.equal(JSON.parse(result.stderr).code, 'CURATOR_ARGUMENT_INVALID');
+  }
   await assert.rejects(readdir(join(f.work, 'runs')), { code: 'ENOENT' });
 });

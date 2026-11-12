@@ -1,11 +1,19 @@
 import { decodeUtf8 } from './artifact-io.ts';
-import { canonicalWork, workFromMemory } from './layout.ts';
+import { canonicalWork, workFromMemory, workspaceLayout } from './layout.ts';
 import type { KnowledgeVersions } from './knowledge-revisions.ts';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { historySegments } from './history.ts';
 import { parseNoteIdentity } from './memory-contract.ts';
-import { withConfirmedMemory } from './curator.ts';
+import { withConfirmedMemory, readFeedEvents } from './curator.ts';
 import {
   archivePath,
   readKnowledgeRevision,
@@ -169,6 +177,48 @@ async function historyEntries(root: string): Promise<Entry[]> {
       };
     }),
   );
+}
+
+/** Re-read curated feed events cited as provenance (`E017`, `E015..E016`, `E015–E016`). */
+export async function memoryEvent(directory: string, label: string) {
+  // Same label forms the provenance validator accepts in notes.
+  const m = /^E(\d{3,})(?:(?:\.\.|[–-])E(\d{3,}))?$/.exec(label);
+  const from = Number(m?.[1]),
+    through = Number(m?.[2] ?? m?.[1]);
+  const canonical = (n: number, raw?: string) =>
+    raw === undefined || String(n).padStart(3, '0') === raw;
+  if (
+    !m ||
+    !canonical(from, m[1]) ||
+    !canonical(through, m[2]) ||
+    from < 1 ||
+    through < from ||
+    through - from >= 20
+  )
+    fail('MEMORY_INVALID_ID');
+  const root = await memoryRoot(directory);
+  const parent = dirname(root);
+  if (basename(parent) !== '.knownex') fail('MEMORY_FEED_UNAVAILABLE');
+  const feed = join(workspaceLayout(dirname(parent)).feed, 'project.jsonl');
+  return withConfirmedMemory(root, async () => {
+    let events;
+    try {
+      events = await readFeedEvents(feed);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+        fail('MEMORY_FEED_UNAVAILABLE');
+      throw error;
+    }
+    if (through > events.length) fail('MEMORY_NOT_FOUND');
+    return events.slice(from - 1, through).map((e) => ({
+      sequence: e.sequence,
+      type: e.type,
+      sessionId: e.sessionId,
+      turnId: e.turnId,
+      capturedAt: e.capturedAt,
+      text: e.text,
+    }));
+  });
 }
 
 /** Chronological HISTORY index, newest first, without window bodies: pick windows to open. */

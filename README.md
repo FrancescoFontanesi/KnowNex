@@ -13,15 +13,17 @@ Versione corrente: **0.1.0-rc.11**. Provider supportato oggi: Codex.
 1. **Acquisizione.** Gli hook registrano messaggi utente e risposte finali
    dell'assistente in un feed JSONL locale, senza consumare token. Il feed è la
    fonte autorevole e conserva tutto.
-2. **Checkpoint esplicito.** Solo l'utente lo avvia, con `$knownex-checkpoint`.
-   Il runtime congela il batch di eventi; un agente Curator lo legge e scrive una
-   bozza (nuovo STATE, note Knowledge, rapporto). `curate write` la valida subito,
-   così il Curator corregge gli errori mentre lavora; `complete` la pubblica in
-   modo transazionale. Il lavoro può proseguire in parallelo: gli eventi successivi
-   vanno al checkpoint dopo.
+2. **Checkpoint esplicito.** Solo l'utente lo avvia, per esempio con
+   `npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-terra -r medium`
+   (oppure `--claude`). Il comando congela il batch di eventi, avvia una sessione
+   effimera del provider che non viene registrata nel feed, e il Curator legge il
+   batch e scrive una bozza (nuovo STATE, note Knowledge, rapporto). `curate write`
+   la valida subito, così il Curator corregge gli errori mentre lavora; al termine
+   il comando la pubblica in modo transazionale e restituisce solo l'esito. Il
+   lavoro può proseguire in parallelo: gli eventi successivi vanno al checkpoint dopo.
 3. **Ripresa.** All'avvio di una sessione STATE entra nel contesto. Il resto si
    apre solo quando serve: un riferimento noto si legge direttamente, una ricerca
-   si delega al Recaller.
+   si delega a un subagente che segue la skill `knownex-recall`.
 
 ## La memoria
 
@@ -45,7 +47,7 @@ Obsidian:
   `memory read H000012` apre solo quello che serve.
 - **Provenienza.** Ogni affermazione cita gli eventi da cui viene, come `[E017]`:
   la sequenza dell'evento nel feed. `pending` legge solo gli eventi non ancora
-  curati; un comando per rileggere un evento già curato non esiste ancora.
+  curati; `memory event E017` (o `E015..E016`, al massimo 20 eventi) rilegge un evento già curato.
 
 Feed, run, journal e ricevute stanno in `.knownex/internal/`, fuori dal vault.
 
@@ -92,8 +94,8 @@ Il codice usa ESM e import relativi `.ts`; la build produce JavaScript in `dist/
 - `src/`: CLI, acquisizione, feed, curatela, navigatore, bootstrap.
 - `tests/`: verifiche deterministiche con dati sintetici.
 - `evaluation/`: fixture isolati per retrieval e ripartenza a freddo.
-- `.agents/skills/`: skill di checkpoint, curator, recall e taxonomy distribuite dal package.
-- `.codex/`: hook e ruoli degli agenti Codex.
+- `.agents/skills/`: skill curator, recall e taxonomy distribuite dal package.
+- `.codex/`: hook Codex.
 - `docs/`: contratti e procedure correnti.
 
 `.knownex/`, `.local/`, `node_modules/`, `dist/` e la cache `graft/` sono esclusi da Git.

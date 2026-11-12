@@ -2,19 +2,19 @@
 
 ## Trigger operativo
 
-L'invocazione esplicita del comando prepare, da una skill o da un chiamante
+L'invocazione esplicita del comando prepare, dal comando `knownex checkpoint` o da un chiamante
 autorizzato nell'ambiente di esecuzione, prepara il batch. Il runtime non cerca
-un permesso nel feed: non richiede $knownex-checkpoint, un messaggio utente
+un permesso nel feed: non richiede un messaggio utente
 come ultimo evento, un finale assistant o un hook specifico di Codex.
-La skill nativa mantiene il proprio ingresso esplicito dell'utente e non avvia
-checkpoint automaticamente. Non esiste un token di consenso sostitutivo.
+Solo l'utente (o il principale su sua richiesta esplicita) avvia `knownex checkpoint`;
+nessun checkpoint parte automaticamente. Non esiste un token di consenso sostitutivo.
 
 ## Congelamento
 
 Prepare legge il registro verificato sotto il lock del Curator e fissa il cutoff
 prima di produrre gli input. Per default usa l'ultimo evento acquisito non
 amministrativo; un cutoff esplicito deve essere entro il prefisso gia acquisito
-e non puo precedere il checkpoint confermato. Le invocazioni pure della skill
+e non puo precedere il checkpoint confermato. Le vecchie invocazioni `$knownex-checkpoint`
 e i relativi turni amministrativi restano nel feed, ma non sono conoscenza.
 Le richieste con contenuto aggiuntivo non vengono nascoste come amministrazione.
 
@@ -24,7 +24,7 @@ il run conserva l'hash del manifest. Anche un batch senza review autonoma
 riceve il manifest e viene verificato prima della pubblicazione.
 
 Il risultato identifica run, cutoff e percorsi. Un prepare ripetuto restituisce
-lo stesso batch attivo e gli stessi input, non una nuova autorizzazione a delegare.
+lo stesso batch attivo e gli stessi input, non una nuova autorizzazione.
 Richieste concorrenti sono serializzate o rifiutate dai lock esistenti; il binding
 del feed impedisce a un secondo workspace Curator di utilizzarlo indipendentemente.
 Un batch vuoto non richiede curatela. Una preparazione fallita non consuma un
@@ -58,7 +58,7 @@ certificano autenticita contro un processo che controlla l'intero workspace.
 
 ## Perimetro della prima milestone
 
-La preparazione e indipendente da provider e orchestratore. Il percorso nativo
-mantiene ancora la skill Codex, la delega knownex_curator, le ricevute canoniche
-e il controller prepare/complete; il launcher esterno Codex e stato rimosso.
+La preparazione e indipendente da provider e orchestratore. Il checkpoint
+e il comando `knownex checkpoint` (vedi CURATION-WORKFLOW.md), che mantiene le ricevute
+canoniche e il controller prepare/complete.
 Non sono introdotti nuovi worker, provider, adapter, daemon o installer.

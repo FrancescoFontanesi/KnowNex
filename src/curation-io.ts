@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, readdir, rm } from 'node:fs/promises';
 import { parseNoteIdentity } from './memory-contract.ts';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
@@ -19,11 +19,12 @@ function fail(code: string): never {
 const object = (x: unknown): x is Record<string, unknown> =>
   x !== null && typeof x === 'object' && !Array.isArray(x);
 export async function readCurationRun(run: string) {
-  if (
-    (await realpath(run)) !== resolve(run) ||
-    (await lstat(run)).isSymbolicLink()
-  )
-    fail('CURATOR_IO_UNSAFE_RUN');
+  // Refuse a run reached through a symlink or junction anywhere on its path. Checked per
+  // component, not by comparing with realpath, which also expands Windows short names (FRANCE~1).
+  for (let p = resolve(run); ; p = dirname(p)) {
+    if ((await lstat(p)).isSymbolicLink()) fail('CURATOR_IO_UNSAFE_RUN');
+    if (dirname(p) === p) break;
+  }
   const record = JSON.parse((await readArtifact(join(run, 'run.json'))).text);
   if (
     record.id !== basename(run) ||

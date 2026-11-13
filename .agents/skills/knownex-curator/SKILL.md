@@ -81,13 +81,15 @@ Prima di scriverlo confronta i nuclei durevoli del batch con la loro destinazion
 
 - `sources`: sequenze reali del batch.
 - `changes`: una voce per `STATE.md` e una per ogni nota scritta; `[]` su noop. Nella voce di `STATE.md` indica le decisioni, i blocker o i prerequisiti chiusi o rimossi e su quale evidenza. `proposalSha256` lo aggiunge la CLI.
-- `uncertainties` e `anomalies`: contraddizioni, lacune, identità dubbie, limiti di accesso. Qualsiasi voce blocca la pubblicazione automatica, ed è l'esito corretto quando il rischio è reale: non nasconderle per ottenere la pubblicazione.
+- `uncertainties` e `anomalies`: contraddizioni, lacune, identità dubbie, limiti di accesso. Qualsiasi voce blocca la pubblicazione automatica, ed è l'esito corretto quando il rischio è reale: non nasconderle per ottenere la pubblicazione. Non serve bloccare per un'incoerenza che STATE o una nota registrano già come problema aperto, con le sue fonti: pubblicarla non rende la memoria scorretta.
 
 Tieni sintetici i campi testuali e non ricopiarci documenti o eventi.
 
 ## 5. Consegna
 
-Esegui `<CLI> curate write --run RUN`. La CLI assembla la bozza, applica gli stessi controlli della pubblicazione e, solo se passano, sostituisce la consegna precedente. Su errore non scrive nulla: leggi il codice, correggi la bozza e riesegui.
+Se l'incarico chiede una risposta JSON unica (comando `knownex checkpoint`), non scrivere file e non eseguire `curate write`: rispondi soltanto con quel JSON, che contiene gli stessi contenuti della bozza (proposta, STATE, note, rapporto). Il comando scrive la bozza, la valida e, se viene rifiutata, ti ripropone l'incarico con il codice d'errore della tabella sotto.
+
+Altrimenti esegui `<CLI> curate write --run RUN`. La CLI assembla la bozza, applica gli stessi controlli della pubblicazione e, solo se passano, sostituisce la consegna precedente. Su errore non scrive nulla: leggi il codice, correggi la bozza e riesegui.
 
 | Codice                                               | Correzione tipica                                                                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |

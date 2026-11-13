@@ -3,16 +3,36 @@
 ## Comando `knownex checkpoint`
 
 ```powershell
-npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-terra -r medium
+npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium
 npm exec --offline -- knownex checkpoint --claude -m claude-opus-5-5 -r high
 ```
 
 Il comando esegue prepare, avvia una sessione non interattiva e non persistita del
-provider (`codex exec --ephemeral` o `claude -p --no-session-persistence`) con
-`KNOWNEX_CAPTURE=0`, cosi la curatela non entra nel feed, e passa su stdin il
-compito del run (`request.txt`). La sessione cura il batch e consegna con
-`curate write`; a processo terminato il comando esegue complete e stampa solo
-l'esito (`SUCCESS`, `BLOCKED`, `ERROR` con codice). Modello e reasoning sono
+provider (`codex exec --ephemeral -s read-only` o `claude -p --no-session-persistence`)
+con `KNOWNEX_CAPTURE=0`, cosi la curatela non entra nel feed. La sessione ha un
+contesto minimo: istruzioni di sistema del provider sostituite da una riga, niente
+AGENTS.md o CLAUDE.md del progetto, skill, plugin, server MCP, multi-agent o
+strumenti oltre alla shell (Codex con override `-c`, Claude con `--safe-mode`,
+`--strict-mcp-config`, `--system-prompt` e `--tools Bash`). Il contesto fisso scende
+da circa 22k a 4k token con Codex e da 47k a 3k con Claude; resta solo
+l'eventuale `~/.codex/AGENTS.md` globale, che Codex carica dalla sua home. Su stdin passa
+l'intero compito in un solo messaggio: skill, WINDOW.md, STATE congelato, catalogo
+delle note e le note di base (tutte se piccole, altrimenti quelle citate da STATE;
+le altre restano leggibili con `curate read`). Il modello risponde con un unico
+JSON (proposta, STATE, note, rapporto) in una sola chiamata, invece di una
+chiamata per ogni passo con strumenti: ogni chiamata ripaga il contesto fisso del
+provider. Il comando scrive la bozza e la valida come `curate write`; se viene
+rifiutata ripropone l'incarico una volta con il codice d'errore. Se invece la bozza
+e valida ma il rapporto dichiara incertezze o anomalie, la seconda chiamata chiede
+al modello di rivederle: toglie solo quelle risolte dalle fonti o gia registrate in
+memoria come problema aperto. Le chiamate restano al massimo due. Il messaggio finale e il consumo si leggono dall'output strutturato del
+provider (`codex exec --json`, `claude -p --output-format json`); la risposta grezza
+resta in `session.log` nel run. Poi esegue complete e stampa solo l'esito
+(`SUCCESS`, `BLOCKED`, `ERROR` con codice) con `tokens`: input (cache compresa),
+cached, output e reasoning di tutti i tentativi. Con `BLOCKED` l'esito riporta i
+punti che bloccano (`blocking`), il rapporto da leggere (`review`) e due comandi pronti in `next`: `curate apply
+--confirm <sigillo>` per pubblicare la proposta cosi com'e, `curate abandon` per
+scartarla e riportare gli eventi nel pending. Modello e reasoning sono
 passati invariati al provider. Un secondo avvio mentre uno e in corso restituisce
 `CHECKPOINT_BUSY`; una sessione fallita senza consegna restituisce
 `CHECKPOINT_PROVIDER_FAILED` e lascia il batch ripetibile.

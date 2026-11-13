@@ -13,6 +13,14 @@ L’uso dell’entry point TypeScript evita una build JavaScript obsoleta durant
 sviluppo; richiede il runtime Node documentato nel README. La logica di lettura,
 checkpoint, commit e recovery rimane in `syncSession()`.
 
+Gli stessi script servono Claude Code: i wrapper in `.claude/hooks/` impostano
+`KNOWNEX_PROVIDER=claude` e il turno e il `prompt_id`. Allo Stop i messaggi
+intermedi del turno vengono letti dal transcript Claude (record `assistant` con
+testo che non chiudono il turno, identita dal loro `uuid`); il thread nativo
+Codex non viene cercato, i record dei subagenti (`isSidechain`, `agent_id`) sono
+ignorati e i log vanno in `.claude/hooks/`. Ogni evento porta `provider`
+(`codex` o `claude`); gli eventi acquisiti prima non lo hanno.
+
 Con `KNOWNEX_CAPTURE=0` nell'ambiente (impostata per le sessioni effimere del curatore) ogni hook (`feed.cjs`, `stop.cjs`, `session.cjs`) esce con codice 0 senza scrivere feed o log e senza iniettare STATE.
 
 ## Coda finale: SessionEnd (S1.6)

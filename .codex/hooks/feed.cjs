@@ -4,6 +4,8 @@ const { appendFileSync, existsSync } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { join, resolve } = require('node:path');
 const runtime = resolve(__dirname, '../..');
+// Claude Code wrappers set this; its payload has prompt_id instead of turn_id.
+const claude = process.env.KNOWNEX_PROVIDER === 'claude';
 const root = process.env.KNOWNEX_WORKSPACE
   ? resolve(process.env.KNOWNEX_WORKSPACE)
   : runtime;
@@ -86,6 +88,15 @@ function capture(input) {
         throw Object.assign(new Error(), { code: 'HOOK_PAYLOAD_TOO_LARGE' });
     }
     const value = JSON.parse(input);
+    // A subagent's own turns are not the conversation being remembered.
+    if (claude && value?.agent_id !== undefined) {
+      process.stdout.write('{}\n');
+      return;
+    }
+    if (claude && value && typeof value === 'object') {
+      value.turn_id = value.prompt_id;
+      input = JSON.stringify(value);
+    }
     if (
       !['UserPromptSubmit', 'Stop'].includes(value?.hook_event_name) ||
       typeof value.session_id !== 'string' ||
@@ -104,7 +115,11 @@ function capture(input) {
   }
   try {
     appendFileSync(
-      join(root, '.codex/hooks/feed-events.jsonl'),
+      join(
+        root,
+        claude ? '.claude/hooks' : '.codex/hooks',
+        'feed-events.jsonl',
+      ),
       JSON.stringify({
         session_id: payload?.session_id ?? null,
         turn_id: payload?.turn_id ?? null,

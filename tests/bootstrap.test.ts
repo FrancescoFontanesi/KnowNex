@@ -1154,6 +1154,85 @@ test(
     await assert.rejects(stat(join(project, oldSkill)), { code: 'ENOENT' });
     assert.equal(await readFile(extra, 'utf8'), 'Preserve this user resource.');
     assert.deepEqual(cli(['init']).removed, []);
+    // Claude Code: the same package hooks through .claude wrappers, merged settings and CLAUDE.md.
+    const ownSettings = {
+      permissions: { allow: ['Bash(ls:*)'] },
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo mine' }] }] },
+    };
+    await mkdir(join(project, '.claude'), { recursive: true });
+    await writeFile(
+      join(project, '.claude/settings.json'),
+      JSON.stringify(ownSettings),
+    );
+    await writeFile(join(project, 'CLAUDE.md'), '# Mie istruzioni\n');
+    const withClaude = cli(['init', '--provider', 'codex,claude']);
+    for (const name of ['feed', 'stop', 'session'])
+      assert.ok(
+        withClaude.created.includes(`.claude/hooks/knownex-${name}.cjs`),
+        name,
+      );
+    assert.ok(withClaude.updated.includes('.claude/settings.json'));
+    const settings = JSON.parse(
+      await readFile(join(project, '.claude/settings.json'), 'utf8'),
+    );
+    assert.deepEqual(settings.permissions, ownSettings.permissions);
+    assert.equal(settings.hooks.Stop[0].hooks[0].command, 'echo mine');
+    for (const event of [
+      'SessionStart',
+      'UserPromptSubmit',
+      'Stop',
+      'SessionEnd',
+    ])
+      assert.match(
+        JSON.stringify(settings.hooks[event]),
+        /\$CLAUDE_PROJECT_DIR\/\.claude\/hooks\/knownex-/,
+        event,
+      );
+    const claudeMd = await readFile(join(project, 'CLAUDE.md'), 'utf8');
+    assert.ok(claudeMd.startsWith('# Mie istruzioni\n'));
+    assert.match(claudeMd, /knownex checkpoint --codex/);
+    assert.match(
+      await readFile(join(project, '.claude/hooks/knownex-feed.cjs'), 'utf8'),
+      /KNOWNEX_PROVIDER = 'claude'/,
+    );
+    assert.match(
+      await readFile(join(project, '.gitignore'), 'utf8'),
+      /\.claude\/hooks\/feed-events\.jsonl/,
+    );
+    // Without --provider, init keeps both installed providers and changes nothing.
+    const kept = cli(['init']);
+    assert.deepEqual([kept.created, kept.updated, kept.removed], [[], [], []]);
+    // A Claude turn through the installed wrapper lands in the shared project feed.
+    const claudeTurn = node([join(project, '.claude/hooks/knownex-feed.cjs')], {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'claude-session',
+      prompt_id: 'prompt-1',
+      prompt: 'Messaggio da Claude',
+      transcript_path: join(project, 'claude-transcript.jsonl'),
+      cwd: project,
+    });
+    assert.equal(claudeTurn.status, 0, claudeTurn.stderr);
+    assert.equal(claudeTurn.stdout.trim(), '{}');
+    const lastEvent = JSON.parse(
+      (await readFile(feed, 'utf8')).trim().split('\n').at(-1)!,
+    ).block.event;
+    assert.equal(lastEvent.provider, 'claude');
+    assert.equal(lastEvent.turnId, 'prompt-1');
+    assert.equal(lastEvent.text, 'Messaggio da Claude');
+    combined = await readFile(feed);
+    // Unparseable Claude settings stop init before anything changes.
+    await writeFile(join(project, '.claude/settings.json'), '{ not json');
+    const badSettings = node([entry, 'init']);
+    assert.equal(badSettings.status, 1);
+    assert.equal(
+      JSON.parse(badSettings.stderr).code,
+      'BOOTSTRAP_CLAUDE_SETTINGS_INVALID',
+    );
+    await writeFile(
+      join(project, '.claude/settings.json'),
+      JSON.stringify(settings, null, 2) + '\n',
+    );
+    assert.deepEqual(cli(['init']).updated, []);
     const legacy = join(
       project,
       '.knownex/internal/feed',

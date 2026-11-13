@@ -15,6 +15,8 @@ try {
       throw Object.assign(new Error(), { code: 'HOOK_PAYLOAD_TOO_LARGE' });
   }
   const payload = JSON.parse(input);
+  // Transcript-derived data (native thread, commentary) is Codex-specific.
+  const codex = process.env.KNOWNEX_PROVIDER !== 'claude';
   const user = payload?.hook_event_name === 'UserPromptSubmit';
   if (!user && payload?.hook_event_name !== 'Stop')
     throw Object.assign(new Error(), { code: 'INVALID_HOOK_PAYLOAD' });
@@ -35,7 +37,11 @@ try {
     turnId: payload.turn_id,
     text,
     hook: payload.hook_event_name,
-    ...(typeof payload.transcript_path === 'string'
+    ...(process.env.KNOWNEX_PROVIDER === 'claude' ||
+    process.env.KNOWNEX_PROVIDER === 'codex'
+      ? { provider: process.env.KNOWNEX_PROVIDER }
+      : {}),
+    ...(codex && typeof payload.transcript_path === 'string'
       ? {
           nativeThreadId: await nativeThread(
             payload.transcript_path,
@@ -54,6 +60,11 @@ try {
         payload.session_id,
         payload.turn_id,
         process.env.KNOWNEX_PROJECT_FEED === '1',
+        codex
+          ? process.env.KNOWNEX_PROVIDER === 'codex'
+            ? 'codex'
+            : undefined
+          : 'claude',
       );
   const result = await appendFeedEvent(
     directory,

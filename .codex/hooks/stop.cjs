@@ -13,7 +13,10 @@ const root = process.env.KNOWNEX_WORKSPACE
 const entry = existsSync(join(runtime, 'dist/index.js'))
   ? join(runtime, 'dist/index.js')
   : join(runtime, 'src/index.ts');
-const logFolder = join(root, '.codex/hooks');
+const logFolder = join(
+  root,
+  process.env.KNOWNEX_PROVIDER === 'claude' ? '.claude/hooks' : '.codex/hooks',
+);
 const safeCode = (value) =>
   typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)
     ? value

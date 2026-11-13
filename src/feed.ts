@@ -11,6 +11,8 @@ export interface FeedInput {
   turnId: string;
   text: string;
   hook: string;
+  /** Harness that produced the event; absent in events captured before providers. */
+  provider?: 'codex' | 'claude';
   nativeThreadId?: string | null;
   messageId?: string;
   source?: {
@@ -49,6 +51,13 @@ const identifier = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 256;
 
 export function isFeedInput(value: unknown): value is FeedInput {
+  if (
+    object(value) &&
+    value.provider !== undefined &&
+    value.provider !== 'codex' &&
+    value.provider !== 'claude'
+  )
+    return false;
   if (
     object(value) &&
     value.nativeThreadId !== undefined &&
@@ -184,6 +193,7 @@ export async function appendFeedEvent(
     turnId: input.turnId,
     text: input.text,
     hook: input.hook,
+    ...(input.provider !== undefined ? { provider: input.provider } : {}),
     ...(input.nativeThreadId !== undefined
       ? { nativeThreadId: input.nativeThreadId }
       : {}),

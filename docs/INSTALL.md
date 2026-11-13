@@ -24,6 +24,25 @@ Codex, autorizzarla esplicitamente se richiesto e approvare gli hook con
 cartella contenitore non prova il trust dei singoli workspace figli. Init
 non scrive nel `config.toml` globale e non approva gli hook.
 
+### Claude Code
+
+```powershell
+npm exec --offline -- knownex init --provider codex,claude
+```
+
+`--provider` sceglie quali harness registrare (`codex`, `claude` o entrambi);
+senza opzione init mantiene i provider gia installati, Codex per un progetto
+nuovo. Per Claude Code init crea `.claude/hooks/knownex-*.cjs`, aggiunge i propri
+hook SessionStart, UserPromptSubmit, Stop e SessionEnd a `.claude/settings.json`
+conservando impostazioni e hook esistenti, e inserisce lo stesso blocco di
+istruzioni in `CLAUDE.md`. Gli eventi entrano nello stesso feed di progetto con
+`provider: "claude"`; il turno e il `prompt_id` di Claude, i turni dei subagenti
+non vengono registrati. Un `.claude/settings.json` non leggibile come JSON produce
+`BOOTSTRAP_CLAUDE_SETTINGS_INVALID`. Aprire il progetto in Claude Code, accettare
+il trust del workspace e verificare gli hook con `/hooks`. Claude Code inietta al
+massimo 10.000 caratteri di contesto: uno STATE piu lungo arriva come file con
+un'anteprima.
+
 Gli hook globali di altri strumenti, come Graft, restano separati e non vengono
 modificati. Un `.codex/hooks.json` locale preesistente e non gestito produce
 `BOOTSTRAP_CONFLICT`: confrontare e integrare esplicitamente i file, senza

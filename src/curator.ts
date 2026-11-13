@@ -1783,7 +1783,8 @@ export async function prepareCurator(
       '\n' +
       ordered
         .map((r) => {
-          const key = `Sessione: ${r.event.sessionId}; turno: ${r.event.turnId}.\n\n`,
+          const via = r.event.provider ? ` (${r.event.provider})` : '';
+          const key = `Sessione: ${r.event.sessionId}${via}; turno: ${r.event.turnId}.\n\n`,
             heading = key === turn ? '' : key;
           turn = key;
           return (

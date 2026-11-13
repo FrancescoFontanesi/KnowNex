@@ -258,6 +258,33 @@ test('CLI completion recovers a killed transactional apply with a grown feed and
   );
 });
 
+test('a run reached through a junction is refused; a Windows short name for the same run is not', async (t) => {
+  const f = await fixture(t);
+  const { symlink, realpath: real } = await import('node:fs/promises');
+  const { realpathSync } = await import('node:fs');
+  const runs = join(f.run, '..');
+  const link = join(runs, '..', 'linked-runs');
+  await symlink(runs, link, 'junction');
+  const through = join(link, f.run.split(/[\\/]/).at(-1)!);
+  const refused = command(['read', '--run', through, '--input', 'WINDOW.md']);
+  assert.equal(refused.status, 1);
+  assert.equal(JSON.parse(refused.stderr).code, 'CURATOR_IO_UNSAFE_RUN');
+  assert.equal(
+    cli(['read', '--run', f.run, '--input', 'WINDOW.md']).input,
+    'WINDOW.md',
+  );
+  // Short (8.3) names only exist on some Windows volumes: check them where the system has one.
+  const short = realpathSync(tmpdir()),
+    long = await real(tmpdir());
+  if (short === long) return t.diagnostic('no 8.3 short temp path here');
+  const shortRun = f.run.replace(long, short);
+  assert.notEqual(shortRun, f.run);
+  assert.equal(
+    cli(['read', '--run', shortRun, '--input', 'WINDOW.md']).input,
+    'WINDOW.md',
+  );
+});
+
 test('CLI rejects unauthorized input, changed snapshots and unverifiable or invalid ranges', async (t) => {
   const f = await fixture(t);
   const cases = [

@@ -158,6 +158,62 @@ export async function readCommentary(
   return { events, issues: [...issues] };
 }
 
+/**
+ * Claude Code transcript: user records carry the turn's promptId; the assistant text records of
+ * that turn that did not end it (stop_reason tool_use, ...) are its intermediate messages. The
+ * final one (end_turn) arrives with Stop; subagent (sidechain) records are skipped.
+ */
+export async function readClaudeCommentary(
+  path: string,
+  sessionId: string,
+  turnId: string,
+) {
+  if (!id(sessionId) || !id(turnId)) fail('INVALID_HOOK_PAYLOAD');
+  const transcriptPath = await realpath(path);
+  const { records, cursor } = await readJsonl(transcriptPath);
+  const events: FeedInput[] = [];
+  let inTurn = false,
+    offset = 0;
+  for (const record of records) {
+    const r = record.value,
+      bytes = Buffer.byteLength(record.raw) + 1,
+      at = offset;
+    offset += bytes;
+    if (!object(r) || r.isSidechain === true) continue;
+    if (r.sessionId !== undefined && r.sessionId !== sessionId) continue;
+    if (r.type === 'user' && id(r.promptId)) inTurn = r.promptId === turnId;
+    if (r.type !== 'assistant' || !inTurn || !object(r.message)) continue;
+    const content = r.message.content;
+    if (r.message.stop_reason === 'end_turn' || !Array.isArray(content))
+      continue;
+    const text = content
+      .filter(
+        (c) => object(c) && c.type === 'text' && typeof c.text === 'string',
+      )
+      .map((c) => (c as { text: string }).text)
+      .join('');
+    if (!text.trim() || !id(r.uuid)) continue;
+    events.push({
+      type: 'assistant_commentary',
+      sessionId,
+      turnId,
+      messageId: r.uuid,
+      text,
+      hook: 'Stop',
+      source: {
+        transcriptPath,
+        fileId: cursor.fileId,
+        snapshotHash: cursor.prefixHash,
+        recordOffset: at,
+        recordBytes: bytes,
+        recordHash: sha(record.raw),
+        turnSource: 'turn_context',
+      },
+    });
+  }
+  return { events, issues: [] as string[] };
+}
+
 /** Diagnostics never include message content; native final capture remains independent. */
 export async function captureCommentary(
   directory: string,
@@ -165,6 +221,7 @@ export async function captureCommentary(
   sessionId: string,
   turnId: string,
   project = false,
+  provider?: 'codex' | 'claude',
 ) {
   let appended = 0,
     matched = 0;
@@ -172,12 +229,20 @@ export async function captureCommentary(
   try {
     if (typeof path !== 'string' || !path.trim())
       fail('MISSING_TRANSCRIPT_PATH');
-    const selected = await readCommentary(path as string, sessionId, turnId);
+    const selected = await (
+      provider === 'claude' ? readClaudeCommentary : readCommentary
+    )(path as string, sessionId, turnId);
     for (const code of selected.issues) issues.add(code);
     matched = selected.events.length;
     for (const event of selected.events) {
       try {
-        appended += (await appendFeedEvent(directory, event, project)).appended;
+        appended += (
+          await appendFeedEvent(
+            directory,
+            provider ? { ...event, provider } : event,
+            project,
+          )
+        ).appended;
       } catch (error) {
         issues.add(safeCode(error));
       }

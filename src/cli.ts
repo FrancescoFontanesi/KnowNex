@@ -16,7 +16,7 @@ import {
   memoryEvent,
 } from './navigator.ts';
 import type { MemoryScope } from './navigator.ts';
-import { initWorkspace } from './bootstrap.ts';
+import { initWorkspace, type Provider } from './bootstrap.ts';
 import {
   runtimeStatus,
   workspaceDirectory,
@@ -32,7 +32,8 @@ const memoryUsage = [
   '       knownex memory history [--last <1..50>] [--before <H-ID>] [--memory <directory>]',
   '       knownex memory event <E017|E015..E016|E015–E016> (max 20 events) [--memory <directory>]',
 ].join('\n');
-const initUsage = 'Usage: knownex init [--workspace <directory>]';
+const initUsage =
+  'Usage: knownex init [--workspace <directory>] [--provider codex|claude|codex,claude]';
 const checkpointUsage =
   'Usage: knownex checkpoint (--codex | --claude) [-m <model>] [-r <effort>] [--workspace <directory>]';
 const usage =
@@ -208,28 +209,42 @@ async function main(args: string[]) {
   }
   if (args[0] === 'init' || args[0] === 'preflight') {
     let workspace: string;
+    let providers: Provider[] | undefined;
     try {
       const { values, tokens } = parseArgs({
         args: args.slice(1),
-        options: { workspace: { type: 'string' } },
+        options: {
+          workspace: { type: 'string' },
+          ...(args[0] === 'init'
+            ? { provider: { type: 'string' as const } }
+            : {}),
+        },
         strict: true,
         allowPositionals: false,
         tokens: true,
       });
+      const names = tokens.map((t) => (t.kind === 'option' ? t.name : ''));
+      const provider = (values as { provider?: string }).provider;
       if (
-        tokens.length > 1 ||
+        new Set(names).size !== names.length ||
         (values.workspace !== undefined &&
-          (!values.workspace.trim() || values.workspace.includes('\0')))
+          (!values.workspace.trim() || values.workspace.includes('\0'))) ||
+        (provider !== undefined &&
+          !/^(codex|claude)(,(codex|claude))?$/.test(provider))
       )
         throw new UsageError();
       workspace = resolve(values.workspace ?? '.');
+      providers =
+        provider === undefined
+          ? undefined
+          : ([...new Set(provider.split(','))] as Provider[]);
     } catch {
       throw new UsageError();
     }
     const result =
       args[0] === 'preflight'
         ? await nativePreflight(workspace)
-        : await initWorkspace(workspace);
+        : await initWorkspace(workspace, providers);
     console.log(transportJson(result));
     if (result.status === 'blocked') process.exitCode = 1;
     return;

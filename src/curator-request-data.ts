@@ -10,6 +10,15 @@ Write plain files in the draft directory, then run curate write --run <run>; on 
 When curate write succeeds you are done: reply with one status line. Unresolved uncertainties/anomalies block automatic publication; never suppress them.
 INPUT_REFERENCES_JSON
 `;
+// CLI and programmatic clients use the same compiled runtime.
+const ioModule = new URL(
+  import.meta.url.endsWith('.ts')
+    ? '../dist/curation-io.js'
+    : './curation-io.js',
+  import.meta.url,
+);
+export const cliPath = fileURLToPath(new URL('./index.js', ioModule));
+
 export async function curatorRequest(run: string) {
   const bytes = await readFile(join(run, 'packet.json'));
   const packetText = decodeUtf8(bytes, true);
@@ -21,13 +30,6 @@ export async function curatorRequest(run: string) {
     typeof packet.directive !== 'string'
   )
     throw new Error('CURATOR_REQUEST_INVALID');
-  // CLI and programmatic clients use the same compiled runtime.
-  const ioModule = new URL(
-    import.meta.url.endsWith('.ts')
-      ? '../dist/curation-io.js'
-      : './curation-io.js',
-    import.meta.url,
-  );
   const input = {
     workerMode: 'materialize-only',
     run: resolve(run),
@@ -36,7 +38,7 @@ export async function curatorRequest(run: string) {
     window: join(resolve(run), 'WINDOW.md'),
     io: {
       module: ioModule.href,
-      cli: fileURLToPath(new URL('./index.js', ioModule)),
+      cli: cliPath,
     },
     manifest: {
       path: join(resolve(run), 'inputs.json'),

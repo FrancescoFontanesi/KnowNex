@@ -10,6 +10,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +29,7 @@ La conversazione viene acquisita automaticamente dagli hook. Non chiedere all'ut
 - **STATE** è l'handoff automatico all'avvio di una nuova sessione nello stesso workspace: riusalo con il contesto conversazionale, senza reiniezioni per turno o consultazioni periodiche. Gli hook attuali lo emettono anche dopo compact; questo intervento non ne cambia il comportamento.
 - STATE rappresenta lo stato del progetto fino all'ultimo checkpoint confermato. Eventi successivi possono averlo modificato.
 - Se il contesto disponibile è sufficiente, prosegui senza Recall. Una nota già linkata da STATE leggila direttamente con \`npm exec --offline -- knownex memory read\`: è una sola lettura.
-- Storia (HISTORY, finestre, revisioni ed eventi), tassonomia e ricerche di riferimenti ignoti delegale a un subagente con contesto indipendente, che segue la skill \`knownex-recall\` in sola consultazione e restituisce fatti, riferimenti, provenienza e limiti. Passa una richiesta precisa e i riferimenti già noti, non la conversazione completa. Se l'harness non offre subagenti, segnala il limite.
+- Storia (HISTORY, finestre, revisioni ed eventi), tassonomia e ricerche di riferimenti ignoti delegale a un subagente con contesto indipendente, che segue la skill \`knownex-recall\` (\`.agents/skills/knownex-recall/SKILL.md\`) in sola consultazione e restituisce fatti, riferimenti, provenienza e limiti. Passa una richiesta precisa e i riferimenti già noti, non la conversazione completa. Se l'harness non offre subagenti, segnala il limite.
 - STATE contiene il presente, Knowledge i dettagli tematici, HISTORY le transizioni. Non esplorare interi archivi senza necessità.
 - Riutilizza informazioni e documenti già recuperati durante il turno. Non ripetere letture per semplice conferma.
 - Se il contesto è incompleto, il pending è parziale o un'informazione manca, dichiarane i limiti senza inventare fatti.
@@ -37,7 +38,7 @@ La conversazione viene acquisita automaticamente dagli hook. Non chiedere all'ut
 
 Mantieni naturale la conversazione. Esplicita decisioni, risultati, evidenze e problemi aperti quando pertinenti al task, senza template o sezioni obbligatorie.
 
-Ai milestone significativi (decisioni sostituite, risultati verificati, cambi di focus, handoff o compattazioni rilevanti) suggerisci in una riga di eseguire il checkpoint, per esempio \`npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-terra -r medium\`, e continua il lavoro. Il checkpoint lo decide l'utente: eseguilo solo su sua richiesta esplicita, come comando in background, e riporta soltanto l'esito. La curatela avviene in una sessione separata: non leggere né modificare tu la memoria per curarla.
+Ai milestone significativi (decisioni sostituite, risultati verificati, cambi di focus, handoff o compattazioni rilevanti) suggerisci in una riga di eseguire il checkpoint, per esempio \`npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium\`, e continua il lavoro. Il checkpoint lo decide l'utente: eseguilo solo su sua richiesta esplicita, come comando in background, e riporta soltanto l'esito. La curatela avviene in una sessione separata: non leggere né modificare tu la memoria per curarla.
 <!-- knownex:end -->
 `;
 
@@ -119,10 +120,64 @@ async function safePath(root: string, name: string) {
   }
 }
 
+export type Provider = 'codex' | 'claude';
+const claudeSettingsName = '.claude/settings.json';
+/** Adds KnowNex hook groups to a project's Claude settings, keeping every other setting and hook. */
+function claudeSettings(current: string) {
+  let settings: Record<string, unknown> | undefined;
+  try {
+    settings = JSON.parse(current || '{}');
+  } catch {
+    fail('BOOTSTRAP_CLAUDE_SETTINGS_INVALID', claudeSettingsName);
+  }
+  const object = (x: unknown): x is Record<string, unknown> =>
+    !!x && typeof x === 'object' && !Array.isArray(x);
+  if (
+    !object(settings) ||
+    (settings.hooks !== undefined && !object(settings.hooks))
+  )
+    fail('BOOTSTRAP_CLAUDE_SETTINGS_INVALID', claudeSettingsName);
+  const hook = (name: string, timeout: number) => ({
+    type: 'command',
+    command: `node "$CLAUDE_PROJECT_DIR/.claude/hooks/knownex-${name}.cjs"`,
+    timeout,
+  });
+  const ours: Record<string, unknown[]> = {
+    SessionStart: [{ hooks: [hook('session', 10)] }],
+    UserPromptSubmit: [{ hooks: [hook('feed', 10)] }],
+    Stop: [{ hooks: [hook('stop', 10), hook('feed', 10)] }],
+    SessionEnd: [{ hooks: [hook('stop', 3)] }],
+  };
+  const hooks: Record<string, unknown> = { ...(settings.hooks as object) };
+  for (const [event, groups] of Object.entries(ours)) {
+    const existing = hooks[event] ?? [];
+    if (!Array.isArray(existing))
+      fail('BOOTSTRAP_CLAUDE_SETTINGS_INVALID', claudeSettingsName);
+    // Replace earlier KnowNex groups, keep the user's own hooks for the same event.
+    hooks[event] = [
+      ...existing.filter(
+        (g) => !JSON.stringify(g).includes('.claude/hooks/knownex-'),
+      ),
+      ...groups,
+    ];
+  }
+  return JSON.stringify({ ...settings, hooks }, null, 2) + '\n';
+}
+
 /** Project-only bootstrap: preflight conflicts, then create missing files exclusively. */
-export async function initWorkspace(directory: string) {
+export async function initWorkspace(directory: string, requested?: Provider[]) {
   await mkdir(resolve(directory), { recursive: true });
   const root = await realpath(directory);
+  // Without an explicit choice keep the providers already installed (Codex for new workspaces).
+  const detected = (['codex', 'claude'] as const).filter((p) =>
+    existsSync(join(root, `.${p}/hooks/knownex-feed.cjs`)),
+  );
+  const providers = requested ?? (detected.length ? detected : ['codex']);
+  if (
+    !providers.length ||
+    providers.some((p) => p !== 'codex' && p !== 'claude')
+  )
+    fail('BOOTSTRAP_PROVIDER_INVALID');
   const installed = join(root, 'node_modules/knownex');
   try {
     if (
@@ -170,38 +225,48 @@ export async function initWorkspace(directory: string) {
       'utf8',
     ),
   );
-  for (const name of ['stop', 'feed', 'session']) {
-    files.set(
-      `.codex/hooks/knownex-${name}.cjs`,
-      "const { resolve, join } = require('node:path');\n" +
-        "const root = resolve(__dirname, '../..');\n" +
-        'process.env.KNOWNEX_WORKSPACE = root;\n' +
-        "process.env.KNOWNEX_PROJECT_FEED = '1';\n" +
-        `require(join(root, 'node_modules/knownex/.codex/hooks/${name}.cjs'));\n`,
-    );
-  }
+  // Same package hooks for every provider; the wrapper names the provider.
+  for (const provider of providers)
+    for (const name of ['stop', 'feed', 'session'])
+      files.set(
+        `.${provider}/hooks/knownex-${name}.cjs`,
+        "const { resolve, join } = require('node:path');\n" +
+          "const root = resolve(__dirname, '../..');\n" +
+          'process.env.KNOWNEX_WORKSPACE = root;\n' +
+          "process.env.KNOWNEX_PROJECT_FEED = '1';\n" +
+          `process.env.KNOWNEX_PROVIDER = '${provider}';\n` +
+          `require(join(root, 'node_modules/knownex/.codex/hooks/${name}.cjs'));\n`,
+      );
   const hook = (name: string, timeout: number) => ({
     type: 'command',
     command: `node ".codex/hooks/knownex-${name}.cjs"`,
     timeout,
   });
-  files.set(
-    '.codex/hooks.json',
-    JSON.stringify(
-      {
-        hooks: {
-          SessionStart: [
-            { hooks: [{ ...hook('session', 10), additionalContextLimit: 0 }] },
-          ],
-          UserPromptSubmit: [{ hooks: [hook('feed', 10)] }],
-          Stop: [{ hooks: [hook('stop', 10), hook('feed', 10)] }],
-          SessionEnd: [{ hooks: [hook('stop', 3)] }],
+  if (providers.includes('codex'))
+    files.set(
+      '.codex/hooks.json',
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                hooks: [{ ...hook('session', 10), additionalContextLimit: 0 }],
+              },
+            ],
+            UserPromptSubmit: [{ hooks: [hook('feed', 10)] }],
+            Stop: [{ hooks: [hook('stop', 10), hook('feed', 10)] }],
+            SessionEnd: [{ hooks: [hook('stop', 3)] }],
+          },
         },
-      },
-      null,
-      2,
-    ) + '\n',
-  );
+        null,
+        2,
+      ) + '\n',
+    );
+  if (providers.includes('claude')) {
+    files.set(claudeSettingsName, claudeSettings(''));
+    // Claude Code reads CLAUDE.md, not AGENTS.md: same marked policy block.
+    files.set('CLAUDE.md', policy);
+  }
   files.set(
     '.knownex/START.md',
     '# KnowNex runtime\n\n' +
@@ -224,7 +289,10 @@ export async function initWorkspace(directory: string) {
   files.set('AGENTS.md', policy);
   files.set(
     '.gitignore',
-    'node_modules/\n.knownex/\n.codex/hooks/events.jsonl\n.codex/hooks/feed-events.jsonl\n',
+    'node_modules/\n.knownex/\n' +
+      providers
+        .map((p) => `.${p}/hooks/events.jsonl\n.${p}/hooks/feed-events.jsonl\n`)
+        .join(''),
   );
   const layout = workspaceLayout(root);
   if (!layout.legacy) {
@@ -290,7 +358,12 @@ export async function initWorkspace(directory: string) {
     await safePath(root, name);
     try {
       const current = await readFile(join(root, name), 'utf8');
-      if (name === 'AGENTS.md') {
+      if (name === claudeSettingsName) {
+        const next = claudeSettings(current);
+        if (next !== current)
+          updates.set(name, { before: current, after: next });
+        else preserved.push(name);
+      } else if (name === 'AGENTS.md' || name === 'CLAUDE.md') {
         const next = instructions(current);
         if (next !== current)
           updates.set(name, { before: current, after: next });
@@ -398,7 +471,11 @@ export async function initWorkspace(directory: string) {
         packageVersion: version,
         files: Object.fromEntries(
           [...files]
-            .filter(([name]) => !editable.has(name) && name !== 'AGENTS.md')
+            .filter(
+              ([name]) =>
+                !editable.has(name) &&
+                !['AGENTS.md', 'CLAUDE.md', claudeSettingsName].includes(name),
+            )
             .map(([name, content]) => [name, hash(content)]),
         ),
       },

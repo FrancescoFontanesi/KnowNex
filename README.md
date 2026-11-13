@@ -6,7 +6,7 @@ KnowNex registra la conversazione e la cura in una memoria Markdown esplorabile,
 così una nuova sessione (o un'altra persona) riparte dall'ultimo stato operativo
 senza rileggere tutti i documenti o ricostruire il progetto dal codice.
 
-Versione corrente: **0.1.0-rc.11**. Provider supportato oggi: Codex.
+Versione corrente: **0.1.0-rc.11**. Provider acquisiti: Codex e Claude Code (`knownex init --provider codex,claude`).
 
 ## Come funziona
 
@@ -14,7 +14,7 @@ Versione corrente: **0.1.0-rc.11**. Provider supportato oggi: Codex.
    dell'assistente in un feed JSONL locale, senza consumare token. Il feed è la
    fonte autorevole e conserva tutto.
 2. **Checkpoint esplicito.** Solo l'utente lo avvia, per esempio con
-   `npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-terra -r medium`
+   `npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium`
    (oppure `--claude`). Il comando congela il batch di eventi, avvia una sessione
    effimera del provider che non viene registrata nel feed, e il Curator legge il
    batch e scrive una bozza (nuovo STATE, note Knowledge, rapporto). `curate write`
@@ -95,7 +95,7 @@ Il codice usa ESM e import relativi `.ts`; la build produce JavaScript in `dist/
 - `tests/`: verifiche deterministiche con dati sintetici.
 - `evaluation/`: fixture isolati per retrieval e ripartenza a freddo.
 - `.agents/skills/`: skill curator, recall e taxonomy distribuite dal package.
-- `.codex/`: hook Codex.
+- `.codex/`: hook (gli stessi script servono anche Claude Code).
 - `docs/`: contratti e procedure correnti.
 
 `.knownex/`, `.local/`, `node_modules/`, `dist/` e la cache `graft/` sono esclusi da Git.

@@ -17,7 +17,7 @@ import { curatorRequest } from '../scripts/curator-request.ts';
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
 
-test('autonomous curation freezes references, binds targeted review and preserves immutable updates', async (t) => {
+test('autonomous curation freezes references, binds targeted review and adds notes without touching existing ones', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'knownex-autonomous-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, '.knownex/memory');
@@ -52,13 +52,24 @@ test('autonomous curation freezes references, binds targeted review and preserve
     const request = await curatorRequest(run);
     assert.ok(!request.text.includes('SOURCE_SENTINEL'));
     if (n > 1) {
-      assert.equal(manifest.knowledge.length, 1);
-      previous = await readFile(join(run, manifest.knowledge[0].path), 'utf8');
+      assert.equal(manifest.knowledge.length, n - 1);
+      previous = await readFile(
+        join(
+          run,
+          manifest.knowledge.find((k: { path: string }) =>
+            k.path.endsWith('detail.md'),
+          ).path,
+        ),
+        'utf8',
+      );
       assert.ok(previous.includes('Original detail'));
       assert.ok(!request.text.includes('Original detail'));
     }
+    // A new note is filed under its checkpoint's HISTORY id: detail.md under H000001.
     const state =
-      '# Project\n\n[Detail](knowledge/detail.md) [E00' +
+      `# Project\n\n[Detail](knowledge/${n > 1 ? 'H000001/' : ''}detail.md) ` +
+      (n > 1 ? '[Addition](knowledge/addition.md) ' : '') +
+      '[E00' +
       n +
       '](' +
       packet.feed +
@@ -68,7 +79,10 @@ test('autonomous curation freezes references, binds targeted review and preserve
         ? '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n# Specification\n\nOriginal detail [E001](../' +
           packet.feed +
           ')\n'
-        : previous + '\nAdditional detail [E002](../' + packet.feed + ')\n';
+        : '---\nid: kn-00000000-0000-4000-8000-000000000002\ntype: knowledge\n---\n# Addition\n\nAdditional detail [E002](../' +
+          packet.feed +
+          ')\n';
+    const key = n === 1 ? 'knowledge/detail.md' : 'knowledge/addition.md';
     const proposal =
       n === 3
         ? { action: 'noop' }
@@ -80,23 +94,24 @@ test('autonomous curation freezes references, binds targeted review and preserve
               topics: ['Specification'],
               transition: 'Updated specification.',
             },
-            knowledge: { 'knowledge/detail.md': note },
+            knowledge: { [key]: note },
           };
     const bytes = JSON.stringify(proposal);
     await writeFile(prepared.proposal!, bytes);
     await assert.rejects(validateCurator(work), /CURATOR_REVIEW_REQUIRED/);
     const review = {
-      version: 3,
+      version: 4,
       proposalSha256: hash(bytes),
       summary: 'Change with evidence',
       sources: [n],
+      ignored: [] as number[],
       changes:
         n === 3
           ? []
           : [
               { path: 'STATE.md', summary: 'Operational root', sources: [n] },
               {
-                path: 'knowledge/detail.md',
+                path: key,
                 summary: 'Specification',
                 sources: [n],
               },
@@ -133,9 +148,10 @@ test('autonomous curation freezes references, binds targeted review and preserve
     assert.equal(checkpoint.sequence, n);
     if (n === 3)
       assert.deepEqual(
-        checkpoint.knowledgeVersions.heads['knowledge/detail.md'],
+        checkpoint.knowledgeVersions.heads['knowledge/H000001/detail.md'],
         priorHead,
       );
-    priorHead = checkpoint.knowledgeVersions.heads['knowledge/detail.md'];
+    priorHead =
+      checkpoint.knowledgeVersions.heads['knowledge/H000001/detail.md'];
   }
 });

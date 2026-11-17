@@ -174,7 +174,7 @@ test(
       agents,
       /nota già linkata da STATE leggila direttamente con `npm exec --offline -- knownex memory read`/,
     );
-    assert.match(agents, /anche dopo compact/);
+    assert.match(agents, /Dopo un compact STATE non viene riemesso/);
     const recallSkill = await readFile(
       join(project, '.agents/skills/knownex-recall/SKILL.md'),
       'utf8',
@@ -559,7 +559,9 @@ test(
     );
     const publicationFile =
       '.knownex/memory/knowledge/' +
-      initialCheckpoint.knowledgeVersions.heads['knowledge/bootstrap.md'].file;
+      initialCheckpoint.knowledgeVersions.heads[
+        'knowledge/H000001/bootstrap.md'
+      ].file;
     const record = JSON.parse(
       await readFile(join(work, 'apply.json'), 'utf8'),
     ).record;
@@ -591,7 +593,7 @@ test(
       ).length,
       1,
     );
-    const resumed = hooks('SessionStart', { source: 'compact' })
+    const resumed = hooks('SessionStart', { source: 'resume' })
       .hookSpecificOutput.additionalContext;
     assert.match(resumed, /Synthetic A\+B state/);
     assert.match(resumed, /0 eventi pendenti/);

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, readdir, rm } from 'node:fs/promises';
-import { parseNoteIdentity } from './memory-contract.ts';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
   jsonText,
@@ -38,7 +37,7 @@ export async function readCurationRun(run: string) {
 export async function readCurationInput(run: string, name: string) {
   const record = await readCurationRun(run);
   if (
-    !/^(inputs\.json|packet\.json|WINDOW\.md|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/[a-z0-9-]+\.md))$/.test(
+    !/^(inputs\.json|packet\.json|WINDOW\.md|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/(H\d{6,}\/)?[a-z0-9-]+\.md))$/.test(
       name,
     )
   ) {
@@ -85,21 +84,12 @@ function uncite(text: string) {
   );
 }
 /**
- * New notes get identity frontmatter here, so the Curator never mints UUIDs: an existing note
- * keeps the id frozen in base, a new one gets a v4. Frontmatter already written is left as is.
+ * Notes get identity frontmatter here, so the Curator never mints UUIDs. A curation only writes
+ * new notes, so each gets a fresh v4. Frontmatter already written is left as is.
  */
-async function withIdentity(run: string, key: string, text: string) {
+function withIdentity(text: string) {
   if (text.startsWith('---')) return text;
-  let id: string;
-  try {
-    id = parseNoteIdentity(
-      (await readArtifact(join(run, 'base', key))).text,
-    ).id;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-    id = 'kn-' + randomUUID();
-  }
-  return `---\nid: ${id}\ntype: knowledge\n---\n\n` + text;
+  return `---\nid: kn-${randomUUID()}\ntype: knowledge\n---\n\n` + text;
 }
 /**
  * Assembles proposal and review from plain files the Curator wrote in run/draft with its
@@ -132,7 +122,12 @@ export async function writeCurationDraft(run: string) {
     const knowledge: Record<string, string> = {};
     for (const name of names.sort()) {
       const key = 'knowledge/' + name;
-      knowledge[key] = uncite(await withIdentity(run, key, await text(key)));
+      // A note is written as if beside the others in knowledge/: a link copied from STATE
+      // (knowledge/<name>.md, knowledge/H000003/…) works here too once reduced.
+      knowledge[key] = uncite(withIdentity(await text(key))).replace(
+        /\]\(knowledge\//g,
+        '](',
+      );
     }
     proposal = {
       ...meta,
@@ -210,7 +205,7 @@ async function curationEntries(
   if (record.autonomous && !object(review)) fail('CURATOR_REVIEW_REQUIRED');
   const entries: { path: string; text: string }[] = [];
   if (review !== undefined) {
-    if (!object(review) || review.version !== 3) fail('CURATOR_REVIEW_INVALID');
+    if (!object(review) || review.version !== 4) fail('CURATOR_REVIEW_INVALID');
     if (
       review.proposalSha256 !== undefined &&
       review.proposalSha256 !== proposalSha256

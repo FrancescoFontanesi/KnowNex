@@ -1,15 +1,30 @@
 # Revisioni immutabili delle Knowledge
 
-`kn-UUID` resta l'identità logica. La revisione è `r-<run-id>` per un aggiornamento
-o `b-<run-id>` per una baseline: si riusa il run, senza nuovi contatori. L'identità
+Nota: ogni checkpoint scrive note nuove e non riscrive quelle esistenti, in qualsiasi
+percorso (draft, `curate validate`/`apply` con proposal.json manuale). La proposta nomina
+una nota nuova `knowledge/<nome>.md`; il runtime le assegna la chiave logica
+`knowledge/H000NNN/<nome>.md` (id HISTORY del checkpoint), quindi non coincide mai con
+quella di una nota esistente e il nome può ripetersi tra checkpoint. Le note pubblicate
+prima mantengono la chiave piatta `knowledge/<nome>.md`, senza migrazione. Una proposta
+che riusa l'identità (`kn-UUID`) di una nota esistente è rifiutata con
+`CURATOR_NOTE_ID_DUPLICATE`, una chiave con cartella `H000NNN/` con `CURATOR_UNSAFE_PATH`.
+Un file d'archivio (`…kn-UUID--REV.md`) non è mai una chiave logica, anche nella
+stessa cartella. Di conseguenza il
+codice scrive soltanto revisioni senza predecessore (`previous: null`) e non esiste più
+l'aggiornamento di una testa. Restano invece intatti formato e lettura delle catene di
+più revisioni, pubblicate prima di questa regola (`previous`, `--at`, `id@REV`,
+tassonomia retroattiva): le memorie esistenti si leggono e si verificano come prima.
+
+`kn-UUID` resta l'identità logica. La revisione è `r-<run-id>` per una nota nuova
+(o, in memorie precedenti, per un aggiornamento) o `b-<run-id>` per una baseline: si riusa il run, senza nuovi contatori. L'identità
 completa è `kn-UUID@REV`; SHA-256 controlla l'integrità ed è distinto dall'ID.
 
 ```text
 .knownex/memory/STATE.md
 .knownex/memory/HISTORY.md
 .knownex/memory/history/H000004.md
-.knownex/memory/knowledge/checkpoint-0004/nome--kn-UUID--REV.md
-.knownex/memory/knowledge/checkpoint-0004/experiments/nome--kn-UUID--REV.md
+.knownex/memory/knowledge/H000004/nome--kn-UUID--REV.md
+.knownex/memory/knowledge/H000004/experiments/nome--kn-UUID--REV.md
 .knownex/memory/taxonomy.json
 .knownex/internal/curator/checkpoint.json
 .knownex/internal/curator/revisions/c-SEQUENCE.json
@@ -36,7 +51,7 @@ valide. Non sono introdotti cancellazioni, rinomine o rami.
 ## Checkpoint e categorie facoltative
 
 Una nuova promozione pubblica soltanto note nuove o realmente cambiate sotto
-checkpoint-NNNN/, eventualmente in una sottocartella tematica. Le note invariate
+H000NNN/, dove H000NNN è l'id della voce di HISTORY dello stesso checkpoint (accanto a history/H000NNN.md), eventualmente in una sottocartella tematica. Le memorie pubblicate prima di questa regola contengono cartelle `checkpoint-NNNN` (NNNN = ultimo evento del batch): restano valide e leggibili senza migrazione, anche accanto alle cartelle H000NNN; la baseline conserva la forma `checkpoint-NNNN`. Un noop non ha voce di HISTORY e non crea cartella. Le note invariate
 mantengono il riferimento precedente. Un noop aggiunge soltanto c-SEQUENCE.json:
 non crea una cartella di Knowledge vuota ne un nuovo snapshot. La baseline dei
 workspace non ancora versionati conserva una sola volta le note precedenti sotto
@@ -84,7 +99,7 @@ knownex memory read kn-UUID --at H000002 --memory .knownex/memory
 Usare gli ID effettivi restituiti da find/read. La ricerca resta corrente, con lo
 stesso ranking e limite; aggiunge `revision` e `versionReference` nei workspace v3.
 Per il nuovo layout aggiunge category, se presente, e checkpoint. Find puo cercare
-chiavi come experiments o il nome esatto checkpoint-0004 nei metadati derivati
+chiavi come experiments o il nome esatto H000004 nei metadati derivati
 dal percorso corrente, senza indice persistente o scansione delle vecchie revisioni.
 La lettura logica mantiene il contenuto corrente. La lettura qualificata restituisce
 il testo della revisione senza commento tecnico, il riferimento fisico, SHA-256

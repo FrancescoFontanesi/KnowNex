@@ -11,10 +11,10 @@ legacy mantengono la loro disposizione senza migrazione automatica.
     STATE.md
     HISTORY.md
     knowledge/
-      checkpoint-0004/
+      checkpoint-0004/            # forma precedente, ancora leggibile
         [categoria/]
           kn-UUID--REV.md
-      checkpoint-0009/
+      H000009/                    # id della voce di HISTORY del checkpoint
         kn-UUID--REV.md
     taxonomy.json                 # facoltativo
     taxonomy-associations.json    # facoltativo
@@ -44,14 +44,18 @@ I riferimenti a feed e artifact esterni alla vault richiedono un lettore che
 consenta accesso fuori dalla sua radice; non vengono duplicati dentro la memoria.
 
 Una cartella checkpoint contiene soltanto le Knowledge pubblicate in quella
-promozione. Una nota invariata resta dove si trova; STATE può quindi collegare
-più checkpoint. HISTORY conserva gli STATE precedenti e i relativi link
+promozione. Le note sono voci di diario: un checkpoint aggiunge note nuove e non
+riscrive quelle esistenti, che restano dove si trovano. STATE collega le note,
+anche di checkpoint diversi, che contengono la verità attuale; quelle superate
+mostrano l'evoluzione. HISTORY conserva gli STATE precedenti e i relativi link
 immutabili. Il nome della cartella indica il cutoff, non un ID HISTORY o la
 validità semantica di una decisione. Un noop avanza la ricevuta senza duplicare
 note, STATE o cartelle Knowledge.
 
-Gli ID logici, il formato delle revisioni e i loro hash non cambiano. I nomi
-`knowledge/tema.md` restano chiavi logiche nel packet/proposal e alias CLI;
+Gli ID logici, il formato delle revisioni e i loro hash non cambiano. Le chiavi
+logiche sono `knowledge/H000NNN/tema.md` per le note nuove (il runtime aggiunge la
+cartella del checkpoint al nome `knowledge/tema.md` della proposta) e
+`knowledge/tema.md` per quelle pubblicate prima; valgono come alias CLI e
 non rappresentano una seconda copia fisica. Il navigatore risolve i HEAD già
 registrati nel checkpoint e cerca soltanto le note correnti. Restano disponibili
 ID, ID@REV, `--at`, percorsi fisici, sezioni e lookup HISTORY. Nessun indice nuovo.

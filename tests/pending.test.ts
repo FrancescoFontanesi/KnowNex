@@ -97,7 +97,7 @@ async function fixture(t: TestContext, largeState: boolean | number = false) {
   return { root, work, feed, event, read, snapshot };
 }
 
-test('SessionStart ordinary and compact emit complete confirmed STATE regardless of the former threshold', async (t) => {
+test('SessionStart emits complete confirmed STATE regardless of the former threshold and stays silent after compact', async (t) => {
   for (const size of [
     6143,
     6144,
@@ -121,6 +121,10 @@ test('SessionStart ordinary and compact emit complete confirmed STATE regardless
           maxBuffer: 8 * 1024 * 1024,
         });
         assert.equal(r.status, 0, r.stderr);
+        if (source === 'compact') {
+          assert.equal(r.stdout, '');
+          continue;
+        }
         const context = JSON.parse(r.stdout).hookSpecificOutput
           .additionalContext;
         assert.ok(context.endsWith(state));

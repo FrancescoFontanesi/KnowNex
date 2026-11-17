@@ -22,10 +22,19 @@ const diagnostic = (code) =>
 async function context() {
   const chunks = [];
   let failure;
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) input += chunk;
+  // After a compact the conversation summary already holds the context: stay silent.
+  try {
+    if (JSON.parse(input)?.source === 'compact') return null;
+  } catch {}
   const child = spawn(process.execPath, [entry], {
-    stdio: ['inherit', 'pipe', 'ignore'],
+    stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true,
   });
+  child.stdin.on('error', () => {});
+  child.stdin.end(input);
   const timer = setTimeout(() => {
     failure = 'SESSION_TIMEOUT';
     child.kill('SIGKILL');
@@ -75,7 +84,7 @@ async function context() {
 }
 
 context().then(
-  (output) => process.stdout.write(output),
+  (output) => output && process.stdout.write(output),
   (error) =>
     process.stdout.write(
       diagnostic(

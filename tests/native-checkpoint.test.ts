@@ -95,9 +95,12 @@ async function produce(run: string, kind = 'valid') {
           },
         },
     {
-      version: 3,
+      version: 4,
       summary: 'REVIEW_SENTINEL',
-      sources: [2],
+      sources: kind === 'noop' ? [] : [2],
+      ignored: p.events
+        .map((e: { sequence: number }) => e.sequence)
+        .filter((n: number) => kind === 'noop' || n !== 2),
       changes:
         kind === 'noop' || kind === 'invalid-review'
           ? []
@@ -391,9 +394,12 @@ async function draft(run: string, source = 2, sentinel = 'MEMORY_SENTINEL') {
   await writeFile(
     join(dir, 'review.json'),
     JSON.stringify({
-      version: 3,
+      version: 4,
       summary: 'REVIEW_SENTINEL',
       sources: [source],
+      ignored: p.events
+        .map((e: { sequence: number }) => e.sequence)
+        .filter((n: number) => n !== source),
       changes: [{ path: 'STATE.md', summary: 'Native update.', sources: [2] }],
       uncertainties: [],
       anomalies: [],

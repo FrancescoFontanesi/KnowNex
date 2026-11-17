@@ -56,10 +56,11 @@ async function fixture(t: test.TestContext) {
   const bytes = JSON.stringify(proposal);
   await writeFile(prepared.proposal!, bytes);
   const review = {
-    version: 3,
+    version: 4,
     proposalSha256: hash(bytes),
     summary: 'Open prerequisite preserved.',
     sources: [1],
+    ignored: [] as number[],
     changes: [
       { path: 'STATE.md', summary: 'Added open prerequisite.', sources: [1] },
     ],

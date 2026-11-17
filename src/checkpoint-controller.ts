@@ -11,7 +11,6 @@ export interface CheckpointResult {
   action?: string;
   evidence?: string;
   knowledge?: { created: number; updated: number };
-  warnings?: string[];
   replayed?: boolean;
 }
 function fail(code: string): never {
@@ -39,7 +38,6 @@ function applied(record: any, replayed = false): CheckpointResult {
     status: 'applied',
     through: record.after.sequence,
     ...(countsAvailable ? { knowledge: { created, updated } } : {}),
-    warnings: ['CURATOR_SEMANTIC_SELF_REVIEW_ONLY'],
     ...(replayed ? { replayed: true } : {}),
   };
 }

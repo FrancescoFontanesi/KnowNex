@@ -198,9 +198,10 @@ function artifacts(
       knowledge: {},
     },
     review: {
-      version: 3,
+      version: 4,
       summary: 'Unicode update.',
       sources: [sequence],
+      ignored: [sequence + 1],
       changes: [
         { path: 'STATE.md', summary: 'Unicode state.', sources: [sequence] },
       ],
@@ -210,7 +211,7 @@ function artifacts(
   };
 }
 
-test('production writer creates v3 artifacts on consecutive checkpoints, binds actual hashes and preserves consecutive confirmed states', async (t) => {
+test('production writer creates v4 artifacts on consecutive checkpoints, binds actual hashes and preserves consecutive confirmed states', async (t) => {
   const f = await fixture(t);
   for (const version of [1, 2]) {
     const p = await f.prepare(version),

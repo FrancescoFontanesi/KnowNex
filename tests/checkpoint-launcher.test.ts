@@ -15,15 +15,16 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   launchCheckpoint,
+  mcpOff,
   providerCommand,
   readReply,
   spawnProvider,
   type RunProvider,
 } from '../src/checkpoint-launcher.ts';
 import { writeCurationDraft } from '../src/curation-io.ts';
-import { cliPath } from '../src/curator-request-data.ts';
 import { emptyMemory } from '../src/curator.ts';
 import { appendFeedEvent } from '../src/feed.ts';
+import { memoryFind, memoryRead } from '../src/navigator.ts';
 import { nativeFixture } from './native-fixture.ts';
 
 async function fixture(t: test.TestContext) {
@@ -61,7 +62,7 @@ async function fixture(t: test.TestContext) {
   return { root, memory };
 }
 
-const answer = (sources = [1]) =>
+const answer = (sources = [1], ignored = [2]) =>
   JSON.stringify({
     proposal: {
       action: 'update',
@@ -69,9 +70,10 @@ const answer = (sources = [1]) =>
     },
     state: '# Stato\n\nLAUNCHED è [E001]\n',
     review: {
-      version: 3,
+      version: 4,
       summary: 'Curato.',
       sources,
+      ignored,
       changes: [{ path: 'STATE.md', summary: 'Stato.', sources: [1] }],
       uncertainties: [],
       anomalies: [],
@@ -176,15 +178,16 @@ test('provider argv is non-interactive, unpersisted and minimal-context, and rej
     'model_reasoning_effort="medium"',
     '-',
   ]);
-  // Codex's own system prompt, AGENTS.md, skills, plugins and MCP stay out of the curator session.
+  // Codex's own system prompt, AGENTS.md, skills, plugins and tools stay out of the curator session.
   const overrides = args.filter((_, i) => args[i - 1] === '-c');
   for (const c of [
     'project_doc_max_bytes=0',
     'skills.include_instructions=false',
     'agents.enabled=false',
-    'mcp_servers={}',
     'features.plugins=false',
     'features.multi_agent=false',
+    'features.shell_tool=false',
+    'features.unified_exec=false',
   ])
     assert.ok(overrides.includes(c), c);
   assert.match(overrides[0]!, /^instructions="Sei il Curator di KnowNex\./);
@@ -207,9 +210,7 @@ test('provider argv is non-interactive, unpersisted and minimal-context, and rej
         '--system-prompt',
         "Sei il Curator di KnowNex. Il messaggio dell'utente contiene l'incarico completo e il formato della risposta.",
         '--tools',
-        'Bash',
-        '--allowedTools',
-        'Bash(node:*)',
+        '',
         '--model',
         'claude-opus-5-5',
         '--effort',
@@ -291,7 +292,7 @@ test('a failed session publishes nothing, names the provider error and the same 
   );
 });
 
-test('the prompt carries the whole task so one call suffices: skill, events, STATE, catalog and notes', async (t) => {
+test('the prompt carries the whole task so one call suffices: skill, events and STATE', async (t) => {
   const f = await fixture(t),
     calls: string[] = [],
     prompts: string[] = [];
@@ -307,16 +308,22 @@ test('the prompt carries the whole task so one call suffices: skill, events, STA
     '===== WINDOW.md',
     'SOURCE_SENTINEL: persist confirmed facts.',
     '===== base/STATE.md =====',
-    '===== Catalogo delle note',
+    'per superarne una copia il suo link dallo STATE',
     'Rispondi con un unico oggetto JSON',
     'qui sei il Curator e segui solo questo incarico',
-    `node "${cliPath}" curate read --run`,
+    'non hai strumenti',
     '## 2. Decidi cosa conservare',
     '## 5. Consegna',
   ])
     assert.ok(prompt!.includes(part), part);
   // Already inline, so not resent: skill frontmatter and the steps to read the batch with tools.
-  for (const part of ['name: knownex-curator', '## 1. Leggi il batch'])
+  // The session has no tools, so nothing invites it to read files.
+  for (const part of [
+    'name: knownex-curator',
+    '## 1. Leggi il batch',
+    'curate read',
+    'Catalogo',
+  ])
     assert.ok(!prompt!.includes(part), part);
   assert.deepEqual(calls, ['codex']);
 });
@@ -331,12 +338,13 @@ test('the answer is found among text around it, braces included', async (t) => {
   assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
 });
 
-test('notes from earlier checkpoints are in the next prompt, so updating them needs no extra call', async (t) => {
+test('a new note reuses an earlier name under its own checkpoint and supersedes the old one by the link copied from STATE', async (t) => {
   const f = await fixture(t),
     prompts: string[] = [];
-  // First checkpoint creates a note.
+  // First checkpoint creates a note linked from STATE.
   const withNote: RunProvider = async () => {
     const a = JSON.parse(answer());
+    a.state = '# Stato\n\n[Nota](knowledge/nota.md) LAUNCHED [E001]\n';
     a.knowledge = { 'knowledge/nota.md': '# Nota\n\nNOTA_SENTINEL [E001]\n' };
     a.review.changes.push({
       path: 'knowledge/nota.md',
@@ -361,13 +369,89 @@ test('notes from earlier checkpoints are in the next prompt, so updating them ne
     },
     true,
   );
-  await launchCheckpoint(
+  // The next checkpoint writes notes with the same name and a new sibling: the old note's
+  // link is copied from the frozen STATE, into the new STATE and into the new note.
+  const supersede: RunProvider = async (_c, _a, _w, input) => {
+    prompts.push(input);
+    const old = /\[Nota\]\((knowledge\/H000001\/nota--kn-[^)]+)\)/.exec(
+      input,
+    )![1];
+    const a = JSON.parse(answer([3], []));
+    a.proposal.history.transition = 'Nuova [Nota](knowledge/nota.md).';
+    a.state =
+      `# Stato\n\n[Nota](knowledge/nota.md) [Extra](knowledge/extra.md) ` +
+      `[Nota superata](${old}) [E003]\n`;
+    a.review.changes = [
+      { path: 'STATE.md', summary: 'Stato.', sources: [3] },
+      { path: 'knowledge/nota.md', summary: 'Nota.', sources: [3] },
+      { path: 'knowledge/extra.md', summary: 'Extra.', sources: [3] },
+    ];
+    a.knowledge = {
+      'knowledge/nota.md':
+        `# Nota\n\nNUOVA supera [la precedente](${old}), ` +
+        `vedi [Extra](knowledge/extra.md) [E003]\n`,
+      'knowledge/extra.md': '# Extra\n\nEXTRA [E003]\n',
+    };
+    return { exitCode: 0, output: JSON.stringify(a) };
+  };
+  const outcome = await launchCheckpoint(
     f.root,
     { provider: 'codex' },
-    curator([], 'deliver', prompts),
+    supersede,
   );
-  assert.ok(prompts[0]!.includes('===== base/knowledge/nota.md ====='));
-  assert.ok(prompts[0]!.includes('NOTA_SENTINEL'));
+  assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
+  assert.equal(prompts.length, 1, 'accepted at the first answer');
+  // No catalog and no note text: the old note is reachable only through STATE's link,
+  // relative to the memory root, never through the run folder.
+  assert.ok(!prompts[0]!.includes('NOTA_SENTINEL'), 'note text stays out');
+  assert.ok(!prompts[0]!.includes('Catalogo'));
+  assert.ok(!prompts[0]!.includes('../memory'), 'no path out of the run');
+  const heads = JSON.parse(
+    await readFile(
+      join(f.root, '.knownex/internal/curator/checkpoint.json'),
+      'utf8',
+    ),
+  ).knowledgeVersions.heads;
+  assert.deepEqual(Object.keys(heads).sort(), [
+    'knowledge/H000001/nota.md',
+    'knowledge/H000002/extra.md',
+    'knowledge/H000002/nota.md',
+  ]);
+  const archived = (key: string) =>
+    readFile(join(f.memory, 'knowledge', heads[key].file), 'utf8');
+  const state = await readFile(join(f.memory, 'STATE.md'), 'utf8');
+  for (const key of Object.keys(heads))
+    assert.ok(state.includes(`](knowledge/${heads[key].file})`), key);
+  assert.ok(
+    (await readFile(join(f.memory, 'history/H000002.md'), 'utf8')).includes(
+      `- Transizione: Nuova [Nota](../knowledge/${heads['knowledge/H000002/nota.md'].file}).`,
+    ),
+  );
+  // Inside the new note: the old note one folder up, the sibling in the same folder.
+  const note = await archived('knowledge/H000002/nota.md');
+  assert.ok(
+    note.includes(`](../${heads['knowledge/H000001/nota.md'].file})`),
+    note,
+  );
+  assert.ok(
+    note.includes(`](${heads['knowledge/H000002/extra.md'].file.slice(8)})`),
+    note,
+  );
+  assert.match(
+    await archived('knowledge/H000001/nota.md'),
+    /NOTA_SENTINEL/,
+    'the old note is untouched',
+  );
+  // Both notes named nota.md stay readable by their logical paths and are found by recall.
+  assert.match(
+    (await memoryRead(f.memory, 'knowledge/H000001/nota.md')).content,
+    /NOTA_SENTINEL/,
+  );
+  assert.match(
+    (await memoryRead(f.memory, 'knowledge/H000002/nota.md')).content,
+    /NUOVA/,
+  );
+  assert.equal((await memoryFind(f.memory, 'nota', 'knowledge')).length, 2);
 });
 
 test('a rejected answer gets exactly one retry with its error code, and the fix publishes', async (t) => {
@@ -450,15 +534,100 @@ test('a BLOCKED batch comes with its report and two ready commands that really a
   );
 });
 
-test('what blocks publication goes back to the model once, and its revision publishes', async (t) => {
+/** First answer blocks with `point`; the second call gets `revision(first answer)` as its reply. */
+async function revise(
+  t: test.TestContext,
+  point: string,
+  revision: (first: any) => string,
+) {
   const f = await fixture(t),
     prompts: string[] = [];
   const reviser: RunProvider = async (_c, _a, _w, input) => {
     prompts.push(input);
     const a = JSON.parse(answer());
-    if (prompts.length === 1)
-      a.review.uncertainties = ['Conteggio dei test discordante.'];
-    return { exitCode: 0, output: JSON.stringify(a) };
+    if (prompts.length === 1) {
+      a.review.uncertainties = [point];
+      a.state = '# Stato\n\nPRIMO_STATO [E001]\n';
+      return { exitCode: 0, output: JSON.stringify(a) };
+    }
+    return { exitCode: 0, output: revision(a) };
+  };
+  const outcome = await launchCheckpoint(
+    f.root,
+    { provider: 'codex' },
+    reviser,
+  );
+  return { f, prompts, outcome };
+}
+
+test('the revision of what blocks gets only the blocking points, the cited events and the previous answer, and its partial reply publishes', async (t) => {
+  const { f, prompts, outcome } = await revise(
+    t,
+    'Conteggio discordante in [E001].',
+    () => JSON.stringify({ review: JSON.parse(answer()).review }),
+  );
+  assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
+  assert.equal(prompts.length, 2);
+  assert.ok(!prompts[0]!.includes('Conteggio discordante'));
+  const second = prompts[1]!;
+  assert.match(second, /\n- Conteggio discordante in \[E001\]\.\n/);
+  assert.ok(second.includes('SOURCE_SENTINEL'), 'the cited event');
+  assert.ok(second.includes('PRIMO_STATO'), 'the previous answer');
+  assert.ok(!second.includes('===== SKILL ====='));
+  assert.ok(!second.includes('===== base/STATE.md'));
+  assert.ok(!second.includes('## E002 —'), 'an uncited event stays out');
+  assert.ok(!second.includes('Confirmed.'));
+  // The merge keeps the STATE of the first answer.
+  assert.match(
+    await readFile(join(f.memory, 'STATE.md'), 'utf8'),
+    /PRIMO_STATO/,
+  );
+});
+
+test('a ranged citation brings every event of the range', async (t) => {
+  const { prompts } = await revise(t, 'Dubbio tra E001–E002.', () => answer());
+  assert.ok(
+    prompts[1]!.includes('## E001 —') && prompts[1]!.includes('## E002 —'),
+  );
+});
+
+test('without cited events the revision carries the whole window', async (t) => {
+  const { prompts, outcome } = await revise(t, 'Dubbio generico.', () =>
+    answer(),
+  );
+  assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
+  assert.ok(prompts[1]!.includes('SOURCE_SENTINEL'));
+  assert.ok(prompts[1]!.includes('## E002 —'));
+  assert.ok(!prompts[1]!.includes('===== SKILL ====='));
+});
+
+test('a partial revision merges notes by name over the previous answer', async (t) => {
+  const note = (n: string) => `# ${n}\n\n${n} [E001]\n`;
+  const f = await fixture(t);
+  let calls = 0;
+  const reviser: RunProvider = async () => {
+    const a = JSON.parse(answer());
+    if (calls++ === 0) {
+      a.review.uncertainties = ['Dubbio [E001].'];
+      a.knowledge = { 'knowledge/nota-a.md': note('Nota A') };
+      a.review.changes.push({
+        path: 'knowledge/nota-a.md',
+        summary: 'A.',
+        sources: [1],
+      });
+      return { exitCode: 0, output: JSON.stringify(a) };
+    }
+    a.review.changes.push(
+      { path: 'knowledge/nota-a.md', summary: 'A.', sources: [1] },
+      { path: 'knowledge/nota-b.md', summary: 'B.', sources: [1] },
+    );
+    return {
+      exitCode: 0,
+      output: JSON.stringify({
+        knowledge: { 'knowledge/nota-b.md': note('Nota B') },
+        review: a.review,
+      }),
+    };
   };
   const outcome = await launchCheckpoint(
     f.root,
@@ -466,12 +635,33 @@ test('what blocks publication goes back to the model once, and its revision publ
     reviser,
   );
   assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
-  assert.equal(prompts.length, 2);
-  assert.match(
-    prompts[1]!,
-    /REVISIONE DEI PUNTI BLOCCANTI =====\n[^\n]*\n- Conteggio dei test discordante\.\n/,
-  );
-  assert.ok(!prompts[0]!.includes('REVISIONE DEI PUNTI BLOCCANTI'));
+  const files = await readdir(join(f.memory, 'knowledge'), {
+    recursive: true,
+  });
+  assert.ok(files.some((n) => n.includes('nota-a')));
+  assert.ok(files.some((n) => n.includes('nota-b')));
+});
+
+test('an invalid revision leaves the first delivery BLOCKED with its original points', async (t) => {
+  for (const reply of [
+    'non è JSON',
+    JSON.stringify({ review: { version: 99 } }),
+  ]) {
+    const { f, prompts, outcome } = await revise(
+      t,
+      'Punto originale [E001].',
+      () => reply,
+    );
+    assert.equal(prompts.length, 2, 'never a third call');
+    assert.equal(outcome.status, 'BLOCKED', JSON.stringify(outcome));
+    assert.deepEqual(outcome.blocking, ['Punto originale [E001].']);
+    assert.match(await readFile(outcome.review!, 'utf8'), /Punto originale/);
+    // The delivered proposal is still the first one: its STATE is unpublished but kept.
+    assert.equal(
+      await readFile(join(f.memory, 'STATE.md'), 'utf8'),
+      emptyMemory['STATE.md'],
+    );
+  }
 });
 
 test('note names chosen by the model never write outside the draft', async (t) => {
@@ -481,6 +671,9 @@ test('note names chosen by the model never write outside the draft', async (t) =
     'knowledge/sub/evil.md',
     'knowledge/Evil.md',
     'knowledge/evil.txt',
+    'knowledge/evil--x.md',
+    'knowledge/-evil.md',
+    'knowledge/evil-.md',
   ]) {
     const f = await fixture(t);
     const hostile: RunProvider = async () => {
@@ -586,6 +779,29 @@ test('outside a KnowNex workspace nothing is created', async (t) => {
   );
   assert.equal(result.code, 'KNOWNEX_WORKSPACE_REQUIRED');
   assert.deepEqual(await readdir(root), []);
+});
+
+test('every active MCP server Codex lists is switched off by name; odd names and bad output add nothing', () => {
+  assert.deepEqual(
+    mcpOff(
+      JSON.stringify([
+        { name: 'node_repl', enabled: true },
+        { name: 'head-room' },
+        // Already off: overriding a server the config does not define fails the Codex launch.
+        { name: 'codex_app', enabled: false },
+        { name: 'x.enabled=true\nmodel' },
+        { enabled: true },
+      ]),
+    ),
+    [
+      '-c',
+      'mcp_servers.node_repl.enabled=false',
+      '-c',
+      'mcp_servers.head-room.enabled=false',
+    ],
+  );
+  for (const bad of ['', 'not json', '{"name":"x"}', 'null'])
+    assert.deepEqual(mcpOff(bad), [], bad);
 });
 
 test('the real spawner disables capture, passes the task on stdin and reports only status and last error', async (t) => {

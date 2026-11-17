@@ -35,14 +35,17 @@ Obsidian:
   STATE.md                       radice: obiettivo, decisioni, blocker, prossime azioni, link
   HISTORY.md                     indice dei checkpoint, una riga ciascuno
   history/H000012.md             finestra di un checkpoint: transizione, note scritte, STATE prodotto
-  knowledge/checkpoint-0145/     note scritte in quel checkpoint, immutabili
+  knowledge/H000012/             note scritte da quel checkpoint (stesso id di HISTORY), immutabili
     storage--kn-UUID--REV.md
 ```
 
 - **STATE** è la radice dell'albero: rimanda alle Knowledge invece di contenerle.
 - **Knowledge** sono note tematiche con testo e riferimenti a codice e artefatti
-  (percorsi dalla radice del workspace). Ogni modifica crea una revisione nuova; le
-  vecchie restano leggibili.
+  (percorsi dalla radice del workspace), scritte come un diario di bordo: ogni
+  checkpoint aggiunge note nuove nella propria cartella e non riscrive le esistenti,
+  quindi lo stesso nome può tornare in checkpoint diversi. Se una decisione
+  cambia, la nota nuova linka quella che supera; STATE linka le note con la verità
+  attuale, le precedenti mostrano l'evoluzione.
 - **HISTORY** si legge a finestre: `memory history` elenca i checkpoint senza aprirli,
   `memory read H000012` apre solo quello che serve.
 - **Provenienza.** Ogni affermazione cita gli eventi da cui viene, come `[E017]`:

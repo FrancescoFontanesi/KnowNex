@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "feed": "C:\\Users\\Francesco\\AppData\\Local\\Temp\\knownex-versions-Fdk43P\\feed\\043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89.jsonl",
+  "sessionId": "s",
+  "sequence": 6,
+  "checksum": "069347508e49fd8604b87f35b098488c1d8f0cc17df6c38833323106525653a0",
+  "memoryHash": "4e56caade6987298487cecc109fb86fe8ba995156fc1195596a3f56ea508a5c9",
+  "knowledgeVersions": {
+    "baseline": 1,
+    "heads": {
+      "knowledge/topic.md": {
+        "id": "kn-00000000-0000-4000-8000-000000000001",
+        "revision": "r-5-6-c7cbf994-b337-4fea-ae42-261839ae89d2",
+        "hash": "1a859138c2c24733588398b2c521f8e3c543e751d85e898b3e9309ede451ae25",
+        "file": "H000003/topic--kn-00000000-0000-4000-8000-000000000001--r-5-6-c7cbf994-b337-4fea-ae42-261839ae89d2.md"
+      },
+      "knowledge/second.md": {
+        "id": "kn-00000000-0000-4000-8000-000000000002",
+        "revision": "r-2-2-f48fc1fb-01d6-4d13-9772-81686024e840",
+        "hash": "924507053c8df2635fdca46a8121bca4ed8600e0b413b0e886ff14e25c53e38c",
+        "file": "H000001/second--kn-00000000-0000-4000-8000-000000000002--r-2-2-f48fc1fb-01d6-4d13-9772-81686024e840.md"
+      }
+    },
+    "checkpoint": {
+      "through": 6,
+      "hash": "c07a6d91238df7570cbc3aefb4238add42883a3fd8fe858c35eee4d576bdc74f"
+    }
+  }
+}

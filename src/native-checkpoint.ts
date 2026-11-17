@@ -38,7 +38,6 @@ export function delegationResult(result: CheckpointResult): DelegationResult {
     ...(result.action ? { action: result.action } : {}),
     ...(result.evidence ? { evidence: result.evidence } : {}),
     ...(result.knowledge ? { knowledge: result.knowledge } : {}),
-    ...(result.warnings ? { warnings: result.warnings } : {}),
     ...(result.replayed ? { replayed: true } : {}),
   };
 }
@@ -173,7 +172,6 @@ export async function preparedCheckpoint(
         status: 'applied',
         through,
         replayed: true,
-        warnings: ['CURATOR_SEMANTIC_SELF_REVIEW_ONLY'],
       });
     if (resolve(status.activeRun ?? '') !== run) fail('CURATOR_RUN_REQUIRED');
     if (saved.status !== 'prepared') fail('CURATOR_CHECKPOINT_RETRY_FORBIDDEN');
@@ -228,7 +226,6 @@ export async function preparedCheckpoint(
             status: 'applied',
             through,
             replayed: true,
-            warnings: ['CURATOR_SEMANTIC_SELF_REVIEW_ONLY'],
           });
       }
     } catch {

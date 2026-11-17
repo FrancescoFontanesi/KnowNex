@@ -70,6 +70,10 @@ test('SessionStart wrapper preserves exact UTF-8 bytes across 64 KiB and multi-m
         });
         assert.ifError(result.error);
         assert.equal(result.status, 0, result.stderr.toString());
+        if (source === 'compact') {
+          assert.equal(result.stdout.length, 0);
+          continue;
+        }
         assert.deepEqual(result.stdout, expected);
         assert.deepEqual(
           Buffer.from(

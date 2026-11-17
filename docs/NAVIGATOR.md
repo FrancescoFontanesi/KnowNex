@@ -16,8 +16,8 @@ possono acquisire lock interni e completare recovery gia autorizzate durante una
 lettura; non c'e una garanzia tecnica di assenza di scritture.
 
 STATE resta l'handoff automatico tra nuove sessioni, non un refresh per turno.
-L'hook corrente emette STATE anche dopo compact; questo comportamento non viene
-modificato e la consegna effettiva resta dipendente dall'harness.
+Dopo un compact (`source=compact`) l'hook non riemette STATE: il riassunto lo
+contiene già. La consegna effettiva resta dipendente dall'harness.
 
 ## Comandi di consultazione
 
@@ -32,7 +32,7 @@ npm start -- memory event E015..E016 --memory .knownex/memory
 npm start -- memory read kn-ID-DELLA-NOTA --memory .knownex/memory
 npm start -- memory read "knowledge/storage.md#flush-locale" --memory .knownex/memory
 # Copiare un riferimento immutabile effettivo da STATE o da read/find:
-npm start -- memory read "knowledge/checkpoint-0004/nome--kn-UUID--REV.md#policy" --memory .knownex/memory
+npm start -- memory read "knowledge/H000004/nome--kn-UUID--REV.md#policy" --memory .knownex/memory
 ```
 
 Il binario `knownex` espone gli stessi argomenti. `--memory` indica la directory
@@ -64,7 +64,7 @@ disponibile con il contratto precedente.
 ## Dal contesto al dettaglio
 
 SessionStart tenta di includere lo STATE completo, cutoff e avvisi sul pending,
-anche con STATE estesi e dopo compact. Non impone una soglia dimensionale interna.
+anche con STATE estesi, ma non dopo compact. Non impone una soglia dimensionale interna.
 Emissione di KnowNex e consegna effettiva nell'harness sono confini distinti:
 vedere i limiti e la configurazione nel [runtime](RUNTIME.md).
 Riutilizzare
@@ -72,17 +72,18 @@ STATE e istruzioni recall gia presenti; non eseguire un cold start a ogni domand
 Se STATE basta non servono chiamate. Con un documento identificato, leggere il
 riferimento diretto; usare find quando manca il documento o serve un altro tema.
 
-`read` accetta ID, l'alias logico `knowledge/<nome>.md`, `HISTORY.md#h000003`,
+`read` accetta ID, l'alias logico `knowledge/H000NNN/<nome>.md` (o `knowledge/<nome>.md`
+per le note pubblicate prima delle cartelle per checkpoint), `HISTORY.md#h000003`,
 `history/H000003.md` e il percorso fisico
-`knowledge/checkpoint-NNNN/[categoria]/nome--kn-UUID--REV.md`. Il prefisso `nome--`
+`knowledge/H000NNN/[categoria]/nome--kn-UUID--REV.md` (o la forma precedente `knowledge/checkpoint-NNNN/...`). Il prefisso `nome--`
 serve a chi sfoglia il vault; le revisioni precedenti senza prefisso restano valide. I vecchi
 riferimenti `../revisions/...` restano supportati. Sono forme ristrette risolte dal navigatore,
 non accesso a percorsi arbitrari. I riferimenti sono relativi alla radice memory:
 un link dentro una nota va risolto rispetto al `path` di quella nota. Non si passa
 l'intera sintassi `[etichetta](destinazione)` e non si aprono feed o artifact con read.
 Nessun link viene seguito automaticamente; si approfondisce solo quello necessario.
-Per le nuove revisioni il riferimento canonico include checkpoint ed eventuale
-categoria: `knowledge/checkpoint-0004/experiments/kn-UUID--REV.md`. I nomi piatti
+Per le nuove revisioni il riferimento canonico include la cartella del checkpoint ed eventuale
+categoria: `knowledge/H000004/experiments/kn-UUID--REV.md`. I nomi piatti
 precedenti restano validi. Un percorso richiesto deve coincidere con quello
 autenticato della revisione; non si risolve un altro file con lo stesso basename.
 
@@ -117,7 +118,7 @@ Dettagli e compatibilità: [Knowledge versionate](KNOWLEDGE-REVISIONS.md).
 
 La ricerca è AND su parole Unicode, senza distinzione di maiuscole o accenti;
 per le note correnti i nuovi percorsi forniscono anche metadati di categoria e
-checkpoint. Query come `experiments` o `checkpoint-0004` li trovano senza un
+checkpoint. Query come `experiments` o `H000004` li trovano senza un
 indice secondario. Nei risultati category e checkpoint descrivono collocazione e
 provenienza, non validita semantica. Le revisioni storiche non entrano nella
 ricerca corrente e restano leggibili con ID qualificati o riferimenti storici.

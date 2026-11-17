@@ -500,7 +500,7 @@ test('dedicated HISTORY event ranges remain structural, canonical and bounded', 
   }
 });
 
-test('selective packet and two authored updates preserve linked details and unselected notes', async (t) => {
+test('selective packet and two authored updates add linked detail notes and leave existing notes untouched', async (t) => {
   // Authored expectations exercise transport/integrity, not LLM semantic selection.
   const f = await fixture(t, true);
   const untouched = await readFile(join(f.memory, 'knowledge/second.md'));
@@ -555,13 +555,16 @@ test('selective packet and two authored updates preserve linked details and unse
     '\n## Diagnosi e limiti\n\nPercorso risolto dal cwd errato, correzione applicata. Build dichiarata verde; collaudo funzionale non eseguito.\n\n' +
     '## Formato\n\nR-31 e e\u0301 senza normalizzazione.\n\n' +
     '## Decisione e qualificazioni\n\nB sostituisce A solo per export locale, su direttiva utente. Nessun errore osservato sui file locali; rete non provata.\n\n' +
-    `[E006-E008](../${packet.feed})\n\n[Altro dettaglio](second.md)\n`;
+    `[E006-E008](../${packet.feed})\n\n[Altro dettaglio](second.md)\n[Nota di partenza](topic.md)\n`;
+  const detailsNote =
+    '---\nid: kn-00000000-0000-4000-8000-000000000003\ntype: knowledge\n---\n\n# Dettagli tecnici\n' +
+    details;
   const proposal = {
     action: 'update',
     state:
       '# Export\n\nObiettivo: completare export. Decisione attiva: B per export locale. Vincolo: preservare il formato.\n\n' +
       'Open: preserve task. Blocker: rete non provata; collaudo funzionale ancora aperto. Prossima azione: verificare export su rete.\n\n' +
-      `[Dettagli tecnici](knowledge/topic.md) [E008](${packet.feed})\n`,
+      `[Dettagli tecnici](knowledge/details.md) [E008](${packet.feed})\n`,
     history: {
       summary: 'Export locale',
       topics: ['Export'],
@@ -569,7 +572,7 @@ test('selective packet and two authored updates preserve linked details and unse
         'Correzione del percorso; resta aperta la verifica funzionale.',
     },
     knowledge: {
-      'knowledge/topic.md': packet.context['knowledge/topic.md'] + details,
+      'knowledge/details.md': detailsNote,
     },
   };
   await writeFile(prepared.proposal!, JSON.stringify(proposal));
@@ -581,11 +584,10 @@ test('selective packet and two authored updates preserve linked details and unse
   const archived = await readFile(resolve(f.memory, destination), 'utf8');
   const current = await memoryRead(
     f.memory,
-    'kn-00000000-0000-4000-8000-000000000001',
+    'kn-00000000-0000-4000-8000-000000000003',
   );
   const exact = await memoryRead(f.memory, current.id + '@' + current.revision);
   for (const text of [
-    'Technical detail.',
     'R-31',
     'e\u0301',
     'solo per export locale',
@@ -594,17 +596,35 @@ test('selective packet and two authored updates preserve linked details and unse
     assert.ok(archived.includes(text), text);
     assert.ok(current.content.includes(text), text);
   }
+  // The new note is filed under its checkpoint: links to the legacy flat notes go one level up.
   const related = /\[Altro dettaglio\]\(([^)]+)\)/.exec(current.content)![1]!;
   assert.ok(
-    (await readFile(resolve(f.memory, 'knowledge', related), 'utf8')).includes(
-      '# Second',
-    ),
+    (
+      await readFile(resolve(f.memory, 'knowledge/H000001', related), 'utf8')
+    ).includes('# Second'),
   );
   assert.deepEqual(
     await readFile(join(f.memory, 'knowledge/second.md')),
     untouched,
   );
-  assert.equal((await readdir(join(f.memory, 'knowledge'))).length, 2);
+  assert.deepEqual((await readdir(join(f.memory, 'knowledge'))).sort(), [
+    'H000001',
+    'second.md',
+    'topic.md',
+  ]);
+  assert.deepEqual(await readdir(join(f.memory, 'knowledge/H000001')), [
+    'details.md',
+  ]);
+  // The reader finds it in its folder, by logical path and by search.
+  assert.match(
+    (await memoryRead(f.memory, 'knowledge/H000001/details.md')).content,
+    /R-31/,
+  );
+  assert.ok(
+    (await memoryFind(f.memory, 'normalizzazione', 'knowledge')).some(
+      (r) => r.id === current.id,
+    ),
+  );
   assert.deepEqual(await readFile(f.feed), feedBefore);
 
   await appendFeedEvent(dirname(f.feed), {
@@ -629,16 +649,18 @@ test('selective packet and two authored updates preserve linked details and unse
         nextPacket.context['STATE.md'] +
         `\nProgresso locale: [E009](${nextPacket.feed}).\n`,
       knowledge: {
-        'knowledge/topic.md':
-          nextPacket.context['knowledge/topic.md'] +
-          `\n## Verifica aggiuntiva\n\nL'utente dichiara: solo export locale verificato; rete ancora non provata. [E009](../${nextPacket.feed})\n`,
+        'knowledge/verification.md':
+          '---\nid: kn-00000000-0000-4000-8000-000000000004\ntype: knowledge\n---\n\n# Verifica aggiuntiva\n\n' +
+          `L'utente dichiara: solo export locale verificato; rete ancora non provata. [E009](../${nextPacket.feed})\n`,
       },
     }),
   );
   const nextValidated = await validateCurator(f.work);
   await applyCurator(f.work, nextValidated.seal);
-  const updated = await memoryRead(f.memory, current.id);
-  assert.ok(updated.content.startsWith(current.content));
+  const updated = await memoryRead(
+    f.memory,
+    'kn-00000000-0000-4000-8000-000000000004',
+  );
   assert.ok(updated.content.includes('solo export locale verificato'));
   assert.equal(
     (await memoryRead(f.memory, current.id, { at: 8 })).content,
@@ -650,7 +672,7 @@ test('selective packet and two authored updates preserve linked details and unse
   );
 });
 
-test('proposal cannot supply HISTORY, escape memory, edit unprovided Knowledge or change note IDs', async (t) => {
+test('proposal cannot supply HISTORY, escape memory, rewrite existing Knowledge or change note IDs', async (t) => {
   const f = await fixture(t),
     p = await f.propose();
   const original = JSON.stringify(p.proposal);
@@ -664,16 +686,22 @@ test('proposal cannot supply HISTORY, escape memory, edit unprovided Knowledge o
       'CURATOR_UNSAFE_PATH',
     ],
     [
+      // Only the runtime files a note under a checkpoint folder.
+      {
+        ...p.proposal,
+        knowledge: { 'knowledge/H000001/topic.md': '# Topic\n' },
+      },
+      'CURATOR_UNSAFE_PATH',
+    ],
+    [
+      // A legacy flat name is reusable, but an existing note's identity is not: no rewrite.
       {
         ...p.proposal,
         knowledge: {
-          'knowledge/topic.md': p.packet.context['knowledge/topic.md'].replace(
-            '000000000001',
-            '000000000002',
-          ),
+          'knowledge/topic.md': p.packet.context['knowledge/topic.md'],
         },
       },
-      'CURATOR_NOTE_ID_CHANGED',
+      'CURATOR_NOTE_ID_DUPLICATE',
     ],
     [
       {
@@ -687,7 +715,7 @@ test('proposal cannot supply HISTORY, escape memory, edit unprovided Knowledge o
     await assert.rejects(validateCurator(f.work), { code });
   }
   await writeFile(p.proposalFile!, original);
-  // A new workspace without selected Knowledge cannot update that note.
+  // Selected or not, an existing note cannot be rewritten.
   const isolated = await fixture(t);
   const work2 = isolated.work;
   const prep = await prepareCurator(work2, isolated.directive, { through: 2 });
@@ -701,8 +729,29 @@ test('proposal cannot supply HISTORY, escape memory, edit unprovided Knowledge o
     }),
   );
   await assert.rejects(validateCurator(work2), {
-    code: 'CURATOR_CONTEXT_INVALID',
+    code: 'CURATOR_NOTE_ID_DUPLICATE',
   });
+  // A note filed under a checkpoint folder cannot be rewritten either, by name or by identity.
+  const note =
+    '---\nid: kn-00000000-0000-4000-8000-000000000005\ntype: knowledge\n---\n\n# New\n\nDetail. [E002]\n';
+  await writeFile(
+    prep.proposal!,
+    JSON.stringify({ ...p.proposal, knowledge: { 'knowledge/new.md': note } }),
+  );
+  await applyCurator(work2, (await validateCurator(work2)).seal);
+  const later = await prepareCurator(work2, isolated.directive, {
+    through: 3,
+  });
+  for (const [knowledge, code] of [
+    [{ 'knowledge/new.md': note }, 'CURATOR_NOTE_ID_DUPLICATE'],
+    [{ 'knowledge/H000001/new.md': note }, 'CURATOR_UNSAFE_PATH'],
+  ] as const) {
+    await writeFile(
+      later.proposal!,
+      JSON.stringify({ ...p.proposal, knowledge }),
+    );
+    await assert.rejects(validateCurator(work2), { code });
+  }
 });
 
 test('links require existing targets and real anchors; original artifacts require explicit authorization', async (t) => {
@@ -825,9 +874,10 @@ async function snapshot(work: string) {
   const tree: Record<string, string> = {};
   const list = async (folder: string) => {
     try {
-      return (await readdir(join(work, 'memory', folder))).map(
-        (n) => folder + '/' + n,
-      );
+      // New notes sit in knowledge/H000001/: list files at any depth.
+      return (await readdir(join(work, 'memory', folder), { recursive: true }))
+        .filter((n) => n.endsWith('.md'))
+        .map((n) => folder + '/' + n.replaceAll('\\', '/'));
     } catch {
       return [];
     }
@@ -966,7 +1016,7 @@ function tracedApply(work: string, seal: string): StorageEvent[] {
     import { relative, join } from 'node:path';
     const [input, seal] = process.argv.slice(1), work = await fs.realpath(input), events = [];
     const rel = p => relative(work, p).replaceAll('\\\\', '/');
-    const watched = p => /^(?:apply.json|checkpoint.json|pending.json|[^/]+.tmp|memory\\/(?:STATE|HISTORY).md|memory\\/(?:knowledge|history)\\/[^/]+.md)$/.test(p) && !p.startsWith('curator.lock');
+    const watched = p => /^(?:apply.json|checkpoint.json|pending.json|[^/]+.tmp|memory\\/(?:STATE|HISTORY).md|memory\\/(?:knowledge\\/(?:H\\d+\\/)?|history\\/)[^/]+.md)$/.test(p) && !p.startsWith('curator.lock');
     const originalOpen = fs.open, originalRename = fs.rename, originalUnlink = fs.unlink;
     fs.open = async (...args) => {
       const handle = await originalOpen(...args), path = rel(args[0]), sync = handle.sync.bind(handle), write = handle.writeFile.bind(handle);
@@ -978,7 +1028,7 @@ function tracedApply(work: string, seal: string): StorageEvent[] {
       handle.sync = async () => {
         await sync();
         if ((await handle.stat()).isDirectory()) {
-          if (!['', 'memory', 'memory/knowledge', 'memory/history'].includes(path)) return;
+          if (!['', 'memory', 'memory/knowledge', 'memory/history'].includes(path) && !/^memory\\/knowledge\\/H\\d+$/.test(path)) return;
           const entries = {};
           for (const name of await fs.readdir(args[0])) {
             const file = join(args[0], name), key = rel(file);
@@ -1012,15 +1062,24 @@ function tracedApply(work: string, seal: string): StorageEvent[] {
   return JSON.parse(child.stdout);
 }
 
+const newNotes = (text: string, feed: string) =>
+  Object.fromEntries(
+    ['a', 'b'].map((n, i) => [
+      `knowledge/detail-${n}.md`,
+      '---\nid: kn-00000000-0000-4000-8000-00000000000' +
+        (5 + i) +
+        '\ntype: knowledge\n---\n\n# Detail ' +
+        n +
+        '\n\n' +
+        text +
+        ` [E002](../${feed})\n`,
+    ]),
+  );
+
 test('flush-order model loses unsynced data and name subsets and survives repeated recovery', async (t) => {
   const f = await fixture(t, true),
     p = await f.propose();
-  p.proposal.knowledge = Object.fromEntries(
-    ['topic', 'second'].map((name) => [
-      `knowledge/${name}.md`,
-      p.packet.context[`knowledge/${name}.md`] + '\nDurable update.\n',
-    ]),
-  );
+  p.proposal.knowledge = newNotes('Durable update.', p.packet.feed);
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal));
   const v = await validateCurator(f.work),
     before = await snapshot(f.work);
@@ -1152,6 +1211,18 @@ test('flush-order model loses unsynced data and name subsets and survives repeat
     assert.deepEqual(await snapshot(f.work), expected);
     assert.equal(historySegments(expected.tree['HISTORY.md']!, 2).length, 1);
   }
+  // Recovery over notes already in place rewrites nothing, yet flushes their folder's names.
+  await writeFile(join(f.work, 'checkpoint.json'), before.checkpoint);
+  const replay = tracedApply(f.work, v.seal);
+  assert.ok(
+    !replay.some((e) => e.kind === 'rename' && e.path.startsWith('memory/')),
+  );
+  assert.ok(
+    replay.some(
+      (e) => e.kind === 'directory' && e.path === 'memory/knowledge/H000001',
+    ),
+  );
+  assert.deepEqual(await snapshot(f.work), expected);
 });
 
 test('a failed journal persistence barrier prevents Markdown promotion until recovery flushes it', async (t) => {
@@ -1177,12 +1248,7 @@ test('process crashes across promotion boundaries recover the authorized generat
   const sample = 'Città, perché — Ελληνικά 日本語 🧠 e\u0301';
   p.proposal.state += sample + '\n';
   p.proposal.history.transition += ' ' + sample;
-  p.proposal.knowledge = Object.fromEntries(
-    ['topic', 'second'].map((name) => [
-      `knowledge/${name}.md`,
-      p.packet.context[`knowledge/${name}.md`] + '\n' + sample + '\n',
-    ]),
-  );
+  p.proposal.knowledge = newNotes(sample, p.packet.feed);
   // File bytes -> JSON parsing -> validation/materialization -> persisted Markdown.
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal), 'utf8');
   assert.deepEqual(
@@ -1200,8 +1266,8 @@ test('process crashes across promotion boundaries recover the authorized generat
   for (const name of [
     'STATE.md',
     window,
-    'knowledge/topic.md',
-    'knowledge/second.md',
+    'knowledge/H000001/detail-a.md',
+    'knowledge/H000001/detail-b.md',
   ])
     assert.ok(expected.tree[name]!.includes(sample), name);
   assert.ok(
@@ -1221,14 +1287,18 @@ test('process crashes across promotion boundaries recover the authorized generat
     'memory/STATE.md',
     'memory/HISTORY.md',
     'memory/' + window,
-    'memory/knowledge/second.md',
-    'memory/knowledge/topic.md',
+    'memory/knowledge/H000001/detail-b.md',
+    'memory/knowledge/H000001/detail-a.md',
     'checkpoint.json',
     'pending.json',
   ]) {
     await t.test(boundary, async () => {
       // Reset only this synthetic workspace to the verified pre-apply generation.
       await rm(join(f.memory, 'history'), { recursive: true, force: true });
+      for (const note of ['a', 'b'])
+        await rm(join(f.memory, `knowledge/H000001/detail-${note}.md`), {
+          force: true,
+        });
       for (const [name, text] of Object.entries(before.tree))
         await writeFile(join(f.memory, name), text);
       await writeFile(join(f.work, 'checkpoint.json'), before.checkpoint);
@@ -1251,7 +1321,7 @@ test('process crashes across promotion boundaries recover the authorized generat
       } else {
         // Recovery itself can crash, then resume without duplicating HISTORY.
         if (boundary === 'memory/HISTORY.md')
-          crashApply(f.work, v.seal, 'memory/knowledge/second.md');
+          crashApply(f.work, v.seal, 'memory/knowledge/H000001/detail-b.md');
         assert.equal(await memoryState(f.memory), expected.tree['STATE.md']);
         assert.deepEqual(await snapshot(f.work), expected);
       }
@@ -1448,16 +1518,17 @@ test('authorized original artifacts and new thematic Knowledge are linked withou
   );
   const v = await validateCurator(f.work);
   crashApply(f.work, v.seal, 'memory/HISTORY.md');
-  await assert.rejects(readFile(join(f.memory, 'knowledge/result.md')), {
-    code: 'ENOENT',
-  });
+  await assert.rejects(
+    readFile(join(f.memory, 'knowledge/H000001/result.md')),
+    { code: 'ENOENT' },
+  );
   await applyCurator(f.work, v.seal);
   assert.deepEqual(
     await readFile(join(f.memory, 'knowledge/topic.md')),
     original,
   );
   assert.match(
-    await readFile(join(f.memory, 'knowledge/result.md'), 'utf8'),
+    await readFile(join(f.memory, 'knowledge/H000001/result.md'), 'utf8'),
     /experiment.csv/,
   );
   assert.equal(await readFile(csv, 'utf8'), 'result\n42\n');

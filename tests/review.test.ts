@@ -17,7 +17,7 @@ import { appendFeedEvent } from '../src/feed.ts';
 const hash = (text: string | Buffer) =>
   createHash('sha256').update(text).digest('hex');
 
-/** A prepared autonomous run with a valid STATE update and a v3 review (not yet saved). */
+/** A prepared autonomous run of two events with a valid STATE update and a v4 review (not yet saved). */
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'knownex-review-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -34,9 +34,16 @@ async function fixture(t: test.TestContext) {
     text: 'Retention: 14 giorni.',
     hook: 'UserPromptSubmit',
   });
+  await appendFeedEvent(feed, {
+    type: 'user_message',
+    sessionId: 's',
+    turnId: '2',
+    text: 'Grazie.',
+    hook: 'UserPromptSubmit',
+  });
   await initCurator(work, memory, join(feed, hash('s') + '.jsonl'), 0);
   const prepared = await prepareCurator(work, undefined, {
-    through: 1,
+    through: 2,
     autonomous: true,
   });
   const dir = prepared.run!;
@@ -50,10 +57,11 @@ async function fixture(t: test.TestContext) {
   const bytes = JSON.stringify(proposal);
   await writeFile(prepared.proposal!, bytes);
   const review: Record<string, unknown> = {
-    version: 3,
+    version: 4,
     proposalSha256: hash(bytes),
     summary: 'Retention registrata',
     sources: [1],
+    ignored: [2],
     changes: [{ path: 'STATE.md', summary: 'Retention', sources: [1] }],
     uncertainties: [],
     anomalies: [],
@@ -63,7 +71,7 @@ async function fixture(t: test.TestContext) {
   return { work, memory, dir, review, save };
 }
 
-test('a v3 review without critical validates and publishes', async (t) => {
+test('a v4 review without critical validates and publishes', async (t) => {
   const f = await fixture(t);
   await f.save();
   await applyCurator(f.work, (await validateCurator(f.work)).seal);
@@ -73,11 +81,12 @@ test('a v3 review without critical validates and publishes', async (t) => {
   );
 });
 
-test('a v3 review rejects critical, unknown versions and v2 without critical', async (t) => {
+test('a v4 review rejects critical, unknown versions, v3 with ignored and v2 without critical', async (t) => {
   const f = await fixture(t);
   for (const change of [
-    { critical: [] }, // v3 has no critical field
-    { version: 4 },
+    { critical: [] }, // v4 has no critical field
+    { version: 5 },
+    { version: 3 }, // v3 predates ignored
     { version: 2 }, // a legacy version must still carry its critical list
     { version: 2, critical: 'none' },
   ]) {
@@ -101,12 +110,64 @@ test('sealed v1/v2 reviews still publish, whatever their critical list says', as
     const f = await fixture(t);
     // Line references that the removed checker would have rejected: they are now inert.
     f.review.version = version;
+    delete f.review.ignored;
     f.review.critical = [
       { before: { startLine: 99, endLine: 1 }, after: 'missing', reason: '' },
     ];
     await f.save();
     await applyCurator(f.work, (await validateCurator(f.work)).seal);
   }
+});
+
+test('a sealed v3 review, without ignored, still publishes', async (t) => {
+  const f = await fixture(t);
+  f.review.version = 3;
+  delete f.review.ignored;
+  await f.save();
+  await applyCurator(f.work, (await validateCurator(f.work)).seal);
+});
+
+test('sources and ignored are disjoint and together cover exactly the batch', async (t) => {
+  const f = await fixture(t);
+  for (const change of [
+    { ignored: [] }, // E002 forgotten
+    { ignored: [1, 2] }, // E001 both used and ignored
+    { ignored: [2, 2] },
+    { ignored: ['2'] },
+    { ignored: undefined },
+  ]) {
+    await writeFile(
+      join(f.dir, 'review.json'),
+      JSON.stringify({ ...f.review, ...change }),
+    );
+    await assert.rejects(
+      validateCurator(f.work),
+      /CURATOR_REVIEW_INVALID/,
+      JSON.stringify(change),
+    );
+  }
+  await f.save();
+  await validateCurator(f.work);
+});
+
+test('a noop puts every event in ignored and may use none', async (t) => {
+  const f = await fixture(t);
+  const bytes = JSON.stringify({ action: 'noop' });
+  await writeFile(join(f.dir, 'proposal.json'), bytes);
+  const noop = {
+    ...f.review,
+    proposalSha256: hash(bytes),
+    sources: [],
+    ignored: [1, 2],
+    changes: [],
+  };
+  await writeFile(
+    join(f.dir, 'review.json'),
+    JSON.stringify({ ...noop, ignored: [1] }),
+  );
+  await assert.rejects(validateCurator(f.work), /CURATOR_REVIEW_INVALID/);
+  await writeFile(join(f.dir, 'review.json'), JSON.stringify(noop));
+  await applyCurator(f.work, (await validateCurator(f.work)).seal);
 });
 
 test('the review stays bound to frozen inputs, proposal bytes and the seal', async (t) => {
@@ -132,21 +193,17 @@ test('the review stays bound to frozen inputs, proposal bytes and the seal', asy
   await applyCurator(f.work, v.seal);
 });
 
-test('the canonical writer only produces v3 reviews', async (t) => {
+test('the canonical writer only produces v4 reviews', async (t) => {
   const f = await fixture(t);
   const proposal = JSON.parse(
     await readFile(join(f.dir, 'proposal.json'), 'utf8'),
   );
   await rm(join(f.dir, 'proposal.json'));
-  const { proposalSha256: _, ...review } = f.review;
+  const { proposalSha256: _, ignored: __, ...review } = f.review;
   await assert.rejects(
-    writeCurationArtifacts(f.dir, proposal, {
-      ...review,
-      version: 2,
-      critical: [],
-    }),
+    writeCurationArtifacts(f.dir, proposal, { ...review, version: 3 }),
     /CURATOR_REVIEW_INVALID/,
   );
-  await writeCurationArtifacts(f.dir, proposal, review);
+  await writeCurationArtifacts(f.dir, proposal, { ...review, ignored: [2] });
   await applyCurator(f.work, (await validateCurator(f.work)).seal);
 });

@@ -43,7 +43,7 @@ Chi avvia il percorso manuale non legge integralmente feed, packet o Knowledge p
 prima della curatela. Il codice congela il batch autorizzato e tutta la base corrente;
 inputs.json espone un catalogo di identita, titoli e intestazioni senza corpi.
 Il Curator sceglie le note pertinenti, legge WINDOW.md (tutti gli eventi del
-batch), base/STATE.md e le note da aggiornare; le altre restano intatte. Non carica tutta la Knowledge
+batch), base/STATE.md e le note da citare o superare; le note esistenti non si riscrivono. Non carica tutta la Knowledge
 per precauzione. Le note necessarie non collegate da STATE sono disponibili nel
 catalogo, senza selezione preliminare del principale.
 
@@ -53,8 +53,15 @@ volta, non ricopiata nel messaggio. --artifacts autorizza sorgenti gia note; --d
 resta facoltativo per priorita brevi, non una sintesi del materiale. Nessun
 file directive.md viene creato automaticamente. La tassonomia approvata rimane
 congelata nel packet; categories assegna solo categorie esistenti alle note
-nuove o cambiate. Il codice pubblica revisioni immutabili sotto
-memory/knowledge/checkpoint-NNNN/[categoria]/; la proposta usa chiavi logiche.
+nuove. La curatela scrive solo note nuove (diario di bordo): STATE è l'unico documento
+riscritto. Il codice pubblica revisioni immutabili sotto
+memory/knowledge/H000NNN/[categoria]/ (stesso id della voce di HISTORY del checkpoint). La proposta
+nomina le note nuove `knowledge/<nome>.md`; il runtime assegna la chiave logica
+`knowledge/H000NNN/<nome>.md`, quindi un nome puo ripetersi tra checkpoint. Le note
+pubblicate prima conservano la chiave piatta `knowledge/<nome>.md`. Una nota con
+l'identita di una nota esistente e una riscrittura ed e rifiutata con
+CURATOR_NOTE_ID_DUPLICATE; una chiave con cartella `H000NNN/` nella proposta con
+CURATOR_UNSAFE_PATH.
 
 Il Curator consegna proposta e review tramite curate write della CLI KnowNex;
 non implementa un writer o un encoder. Il
@@ -120,7 +127,7 @@ non introducono categorie, campi o filtri deterministici nel formato della memor
 | E001: richiesta molto lunga di un rapporto, con molti esempi di stile; vincoli espliciti: italiano, dati locali, nessuna pubblicazione.                                                                           | STATE conserva obiettivo e tre vincoli; la lunghezza e gli esempi non giustificano note separate. Le direttive restano valide finche l'utente non le modifica.                                                                                   |
 | E002–E009: commentary di avanzamento e tentativi risolti; E010: evidenza tecnica di un percorso relativo risolto dal cwd errato; E011: il finale dichiara che il problema e risolto, senza prova di riesecuzione. | Omettere cronaca e correzioni ridondanti. Integrare la causa riutilizzabile e la diagnostica pertinente nella Knowledge dell'argomento; registrare la soluzione come dichiarata e la verifica come ancora aperta, senza inventare test superati. |
 | STATE precedente: scelta A e prerequisito critico P ancora aperto. E012: l'utente sostituisce esplicitamente A con B; E013 non menziona P.                                                                        | STATE rende corrente B e mantiene P aperto; A esce dalle decisioni attive. HISTORY archivia lo STATE precedente mediante il protocollo esistente e conserva la transizione, senza sovrascrivere il presente.                                     |
-| Knowledge esistente `knowledge/percorsi.md`, ID stabile, fornita nel packet. E014 e poi E020 in checkpoint diversi aggiungono una causa e una verifica sullo stesso argomento, con un log autorizzato.            | Aggiornare la stessa nota completa mantenendo ID, dettaglio utile e link verificabile al log; aggiungere provenienze effettive di entrambi i momenti. Nessuna nota per checkpoint, duplicazione o tassonomia obbligatoria.                       |
+| Knowledge esistente `knowledge/percorsi.md`, ID stabile, fornita nel packet. E014 e poi E020 in checkpoint diversi aggiungono una causa e una verifica sullo stesso argomento, con un log autorizzato.            | Diario di bordo: ogni checkpoint scrive una nota nuova; la nota esistente non si riscrive. La nota nuova dice la verità attuale e linka quella che supera; STATE linka le note correnti. Nessuna tassonomia obbligatoria.                        |
 
 In una nuova sessione STATE e l'ultima memoria confermata, non la prova che tutto
 il pending sia gia rappresentato. Nel checkpoint prepare congela il batch pertinente e la sessione riceve

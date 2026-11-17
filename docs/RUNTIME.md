@@ -41,14 +41,14 @@ la materializzazione. Il checkpoint non richiede un eseguibile Codex nel PATH.
 
 | Evento                               | Effetto deterministico                                                                        | LLM     |
 | ------------------------------------ | --------------------------------------------------------------------------------------------- | ------- |
-| SessionStart, incluso source=compact | Verifica memoria, recovery autorizzata, conteggio pending e STATE selettivo                   | Nessuno |
+| SessionStart, escluso source=compact | Verifica memoria, recovery autorizzata, conteggio pending e STATE selettivo                   | Nessuno |
 | UserPromptSubmit                     | Acquisisce prompt nel feed di progetto; nessuna reiniezione STATE                             | Nessuno |
 | Stop                                 | Capture originale, commentary verificabile e finale deduplicato; restituisce `{}` al successo | Nessuno |
 | SessionEnd                           | Solo Capture originale, entro il timeout esistente                                            | Nessuno |
 
 SessionStart emette integralmente lo STATE confermato in additionalContext,
-sia all'avvio sia con source=compact, senza omissioni o troncamenti dimensionali
-di KnowNex. Il prefisso dichiara i byte UTF-8 emessi e distingue emissione da
+all'avvio, resume e clear, senza omissioni o troncamenti dimensionali di KnowNex;
+con source=compact non emette nulla (il riassunto contiene già il contesto). Il prefisso dichiara i byte UTF-8 emessi e distingue emissione da
 consegna al modello. Non carica HISTORY o Knowledge; il pending rimane selettivo.
 La dimensione non vincola prepare, validate, apply, noop o letture legacy.
 Errori d'integrita producono un avviso esplicito, mai uno stato misto confermato.

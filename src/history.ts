@@ -95,6 +95,10 @@ export function historySegments(text: string, through: number) {
   return segments;
 }
 
+/** The HISTORY id the next checkpoint will get; its Knowledge folder uses the same id. */
+export const nextHistoryId = (history: string, through: number) =>
+  identifier(historySegments(history, through).length + 1);
+
 function checkDetails(details: Transition) {
   if (
     !details ||
@@ -125,7 +129,7 @@ export function historyWindow(
   state: string,
 ) {
   checkDetails(details);
-  const id = identifier(historySegments(history, through).length + 1),
+  const id = nextHistoryId(history, through),
     name = `history/${id}.md`,
     range = `${event(from)}..${event(through)}`,
     topics = details.topics.join('; ');

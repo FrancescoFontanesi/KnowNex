@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   mkdir,
@@ -32,6 +32,7 @@ const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const ids = [
   'kn-00000000-0000-4000-8000-000000000001',
   'kn-00000000-0000-4000-8000-000000000002',
+  'kn-00000000-0000-4000-8000-000000000003',
 ];
 test('canonical memory has one physical copy per revision, linked STATE/HISTORY, noop and replay recovery', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'knownex-layout-'));
@@ -75,13 +76,15 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
   async function commit(n: number, mode: 'new' | 'update' | 'noop') {
     const p = await prepareCurator(work, undefined, {
       through: n,
-      context: mode === 'update' ? ['knowledge/a.md'] : [],
+      context: mode === 'update' ? ['knowledge/H000001/a.md'] : [],
     });
     const packet = JSON.parse(
       await readFile(join(p.run!, 'packet.json'), 'utf8'),
     );
+    // The frozen STATE links an archived note from the memory root, not through the run folder.
+    const a = /\[A\]\(([^)]+)\)/.exec(packet.context['STATE.md'] ?? '')?.[1];
     if (mode === 'update')
-      assert.match(packet.context['STATE.md'], /memory|knowledge/);
+      assert.match(a!, /^knowledge\/H000001\/spec\/a--kn-/);
     const proposal =
       mode === 'noop'
         ? { action: 'noop' }
@@ -89,9 +92,11 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
             action: 'update',
             state:
               mode === 'update'
-                ? packet.context['STATE.md']
-                    .replace(/\[A\]\([^)]+\)/, '[A](knowledge/a.md)')
-                    .replace('# Project', '# Updated project')
+                ? // The frozen STATE's links to existing notes work as copied.
+                  packet.context['STATE.md'].replace(
+                    '# Project',
+                    '# Updated project',
+                  ) + '\n[C](knowledge/c.md)\n'
                 : '# Project\n\n[A](knowledge/a.md) [B](knowledge/b.md) [E' +
                   String(n).padStart(3, '0') +
                   '](' +
@@ -116,14 +121,10 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
                     ),
                   }
                 : {
-                    'knowledge/a.md':
-                      packet.context['knowledge/a.md'].replace(
-                        'Original',
-                        'Revised',
-                      ) +
-                      '\n[E002](../' +
-                      packet.feed +
-                      ')\n',
+                    // The same link inside a new note, reduced as curate write does.
+                    'knowledge/c.md':
+                      note(ids[2]!, 'Revised detail.', packet.feed, n) +
+                      `\n[Supera A](${a?.slice('knowledge/'.length)})\n`,
                   },
             categories: mode === 'new' ? { 'knowledge/a.md': 'spec' } : {},
           };
@@ -133,59 +134,71 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
     return cp();
   }
   const first = await commit(1, 'new'),
-    old = first.knowledgeVersions.heads['knowledge/a.md'];
+    old = first.knowledgeVersions.heads['knowledge/H000001/a.md'];
   assert.equal((await readdir(join(memory, 'knowledge'))).length, 1);
-  assert.deepEqual(await readdir(join(memory, 'knowledge')), [
-    'checkpoint-0001',
-  ]);
-  assert.match(await memoryState(memory), /knowledge\/checkpoint-0001\/spec\//);
-  const unchanged = first.knowledgeVersions.heads['knowledge/b.md'];
+  assert.deepEqual(await readdir(join(memory, 'knowledge')), ['H000001']);
+  assert.match(await memoryState(memory), /knowledge\/H000001\/spec\//);
+  const unchanged = first.knowledgeVersions.heads['knowledge/H000001/b.md'];
   const oldBytes = await readFile(archivePath(work, old.file));
   const second = await commit(2, 'update');
-  assert.deepEqual(second.knowledgeVersions.heads['knowledge/b.md'], unchanged);
+  assert.ok(
+    (
+      await readFile(
+        archivePath(
+          work,
+          second.knowledgeVersions.heads['knowledge/H000002/c.md'].file,
+        ),
+        'utf8',
+      )
+    ).includes(`[Supera A](../${old.file})`),
+  );
+  assert.deepEqual(
+    second.knowledgeVersions.heads['knowledge/H000001/b.md'],
+    unchanged,
+  );
   const intent = JSON.parse(
     await readFile(join(work, 'apply.json'), 'utf8'),
   ).record;
   await writeFile(join(work, 'checkpoint.json'), JSON.stringify(intent.before));
   await writeFile(join(memory, 'STATE.md'), intent.previous['STATE.md']);
   await unlink(
-    archivePath(work, second.knowledgeVersions.heads['knowledge/a.md'].file),
+    archivePath(
+      work,
+      second.knowledgeVersions.heads['knowledge/H000002/c.md'].file,
+    ),
   );
   assert.match(await memoryState(memory), /Updated project/);
   assert.deepEqual(await cp(), second);
-  assert.deepEqual(
-    await readdir(join(memory, 'knowledge', 'checkpoint-0002')),
-    [
-      'a--' +
-        second.knowledgeVersions.heads['knowledge/a.md'].id +
-        '--' +
-        second.knowledgeVersions.heads['knowledge/a.md'].revision +
-        '.md',
-    ],
+  assert.deepEqual(await readdir(join(memory, 'knowledge', 'H000002')), [
+    'c--' +
+      second.knowledgeVersions.heads['knowledge/H000002/c.md'].id +
+      '--' +
+      second.knowledgeVersions.heads['knowledge/H000002/c.md'].revision +
+      '.md',
+  ]);
+  assert.match((await memoryRead(memory, ids[2]!)).content, /Revised/);
+  assert.match(
+    (await memoryRead(memory, 'knowledge/H000002/c.md')).content,
+    /Revised/,
   );
-  assert.match((await memoryRead(memory, ids[0]!)).content, /Revised/);
-  assert.match((await memoryRead(memory, 'knowledge/a.md')).content, /Revised/);
   const direct = (await memoryFind(memory, 'Revised'))[0]!.reference;
   assert.match((await memoryRead(memory, direct)).content, /Revised/);
   assert.match(
     (await memoryRead(memory, ids[0]!, { at: 1 })).content,
     /Original/,
   );
-  assert.match(
-    (await memoryRead(memory, 'H000002')).content,
-    /checkpoint-0001/,
-  );
+  assert.match((await memoryRead(memory, 'H000002')).content, /H000001/);
   assert.equal(
     (await memoryFind(memory, 'Revised'))[0]?.path.startsWith(
-      'knowledge/checkpoint-0002/',
+      'knowledge/H000002/',
     ),
     true,
   );
-  assert.equal((await memoryFind(memory, 'Original')).length, 0);
+  assert.equal((await memoryFind(memory, 'Original')).length, 1); // the first note is still current
   const no = await commit(3, 'noop');
   assert.deepEqual(no.knowledgeVersions.heads, second.knowledgeVersions.heads);
   assert.match(
-    (await memoryRead(memory, ids[0]!, { at: 3 })).content,
+    (await memoryRead(memory, ids[2]!, { at: 3 })).content,
     /Revised/,
   );
   assert.deepEqual(await readFile(archivePath(work, old.file)), oldBytes);
@@ -207,7 +220,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
   await rebuildTaxonomy(work);
   assert.match(
     await readFile(join(memory, 'topics/category-spec.md'), 'utf8'),
-    /knowledge|checkpoint-0001/,
+    /knowledge|H000001/,
   );
   assert.ok((await memoryCategory(memory, 'spec')).results.length >= 1);
   assert.equal((await cp()).sequence, 3);
@@ -238,4 +251,62 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
     code: 'CURATOR_RECOVERY_INVALID',
   });
   assert.equal((await cp()).sequence, 3);
+});
+
+test('a flat archived revision linked from canonical STATE is a link, not a logical note, at the next checkpoint', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'knownex-layout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const memory = join(root, '.knownex/memory'),
+    work = join(root, '.knownex/internal/curator'),
+    directory = join(root, '.knownex/internal/feed');
+  await mkdir(join(memory, 'knowledge'), { recursive: true });
+  const { emptyMemory } = await import('../src/curator.ts');
+  for (const [name, text] of Object.entries(emptyMemory))
+    await writeFile(join(memory, name), text);
+  for (let n = 1; n <= 2; n++)
+    await appendFeedEvent(directory, {
+      type: 'user_message',
+      sessionId: 's',
+      turnId: String(n),
+      text: 'Input ' + n,
+      hook: 'UserPromptSubmit',
+    });
+  await initCurator(work, memory, join(directory, hash('s') + '.jsonl'), 0);
+  // A run prepared before the chronological layout publishes knowledge/kn-…--r-….md.
+  const first = await prepareCurator(work, undefined, { through: 1 });
+  const record = JSON.parse(
+    await readFile(join(first.run!, 'run.json'), 'utf8'),
+  );
+  delete record.revisionLayout;
+  await writeFile(join(first.run!, 'run.json'), JSON.stringify(record));
+  await writeFile(
+    first.proposal!,
+    JSON.stringify({
+      action: 'update',
+      state: '# Project\n\n[A](knowledge/a.md) [E001]\n',
+      history: { summary: 'A', topics: ['A'], transition: 'A.' },
+      knowledge: {
+        'knowledge/a.md': `---\nid: ${ids[0]}\ntype: knowledge\n---\n# A\n\nFlat. [E001]\n`,
+      },
+    }),
+  );
+  await applyCurator(work, (await validateCurator(work)).seal);
+  const link = /\[A\]\(([^)]+)\)/.exec(await memoryState(memory))![1]!;
+  assert.match(link, /^knowledge\/kn-[0-9a-f-]+--r-[0-9a-f-]+\.md$/);
+  assert.match((await memoryRead(memory, link)).content, /Flat\./);
+  // The next checkpoint carries the copied STATE link forward unchanged.
+  const next = await prepareCurator(work, undefined, { through: 2 });
+  const state = await readFile(join(next.run!, 'base/STATE.md'), 'utf8');
+  assert.ok(state.includes(`[A](${link})`));
+  await writeFile(
+    next.proposal!,
+    JSON.stringify({
+      action: 'update',
+      state: state + '\nNext. [E002]\n',
+      history: { summary: 'B', topics: ['B'], transition: 'B.' },
+      knowledge: {},
+    }),
+  );
+  await applyCurator(work, (await validateCurator(work)).seal);
+  assert.ok((await memoryState(memory)).includes(`[A](${link})`));
 });

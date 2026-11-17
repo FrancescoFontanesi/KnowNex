@@ -11,21 +11,30 @@ Il comando esegue prepare, avvia una sessione non interattiva e non persistita d
 provider (`codex exec --ephemeral -s read-only` o `claude -p --no-session-persistence`)
 con `KNOWNEX_CAPTURE=0`, cosi la curatela non entra nel feed. La sessione ha un
 contesto minimo: istruzioni di sistema del provider sostituite da una riga, niente
-AGENTS.md o CLAUDE.md del progetto, skill, plugin, server MCP, multi-agent o
-strumenti oltre alla shell (Codex con override `-c`, Claude con `--safe-mode`,
-`--strict-mcp-config`, `--system-prompt` e `--tools Bash`). Il contesto fisso scende
+AGENTS.md o CLAUDE.md del progetto, skill, plugin, multi-agent e nessuno strumento,
+shell e server MCP compresi (Codex con override `-c`, e i server MCP spenti uno per
+uno dopo `codex mcp list --json`, perche i loro nomi dipendono dal config utente;
+Claude con `--safe-mode`, `--strict-mcp-config`, `--system-prompt` e `--tools ""`).
+Senza strumenti la sessione non puo diventare piu chiamate al modello. Il contesto fisso scende
 da circa 22k a 4k token con Codex e da 47k a 3k con Claude; resta solo
 l'eventuale `~/.codex/AGENTS.md` globale, che Codex carica dalla sua home. Su stdin passa
-l'intero compito in un solo messaggio: skill, WINDOW.md, STATE congelato, catalogo
-delle note e le note di base (tutte se piccole, altrimenti quelle citate da STATE;
-le altre restano leggibili con `curate read`). Il modello risponde con un unico
+l'intero compito in un solo messaggio: skill, WINDOW.md e STATE congelato, senza
+catalogo delle note esistenti. Le note esistenti non si riscrivono ne si leggono: per
+superarne una il modello copia il suo link dallo STATE (percorso dalla radice della
+memoria, valido sia nel nuovo STATE sia in una nota nuova). Le note nuove si chiamano
+`knowledge/<nome>.md` e il runtime le colloca in `knowledge/H000NNN/<nome>.md`, con
+l'id HISTORY del checkpoint: il nome puo ripetersi tra checkpoint. Il modello risponde con un unico
 JSON (proposta, STATE, note, rapporto) in una sola chiamata, invece di una
 chiamata per ogni passo con strumenti: ogni chiamata ripaga il contesto fisso del
 provider. Il comando scrive la bozza e la valida come `curate write`; se viene
 rifiutata ripropone l'incarico una volta con il codice d'errore. Se invece la bozza
-e valida ma il rapporto dichiara incertezze o anomalie, la seconda chiamata chiede
-al modello di rivederle: toglie solo quelle risolte dalle fonti o gia registrate in
-memoria come problema aperto. Le chiamate restano al massimo due. Il messaggio finale e il consumo si leggono dall'output strutturato del
+e valida ma il rapporto dichiara incertezze o anomalie, la seconda chiamata e mirata:
+passa solo i punti bloccanti, gli eventi del batch che citano (tutto WINDOW.md se non ne
+citano) e la risposta precedente, senza skill e STATE. Il modello risponde con
+le sole chiavi che cambiano (di solito `review`) e il comando le fonde sulla risposta
+precedente; toglie solo i punti risolti dalle fonti o gia registrati in memoria come
+problema aperto. Se la revisione non e interpretabile o viene rifiutata resta la prima
+consegna, con esito `BLOCKED`. Le chiamate restano al massimo due. Il messaggio finale e il consumo si leggono dall'output strutturato del
 provider (`codex exec --json`, `claude -p --output-format json`); la risposta grezza
 resta in `session.log` nel run. Poi esegue complete e stampa solo l'esito
 (`SUCCESS`, `BLOCKED`, `ERROR` con codice) con `tokens`: input (cache compresa),
@@ -58,8 +67,10 @@ con cutoff, conteggi disponibili, codice/fase, diagnostica essenziale e
 riferimenti agli artefatti interni. Non contiene documenti. Qualsiasi
 incertezza/anomalia dichiarata blocca l'applicazione automatica. Comando e percorso
 manuale (`curate prepare/validate/apply/write/complete --run`) condividono la
-stessa funzione di pubblicazione e le garanzie transazionali; la review e v3
-(v1/v2 solo per run gia scritti).
+stessa funzione di pubblicazione e le garanzie transazionali; la review e v4,
+con ogni evento del batch in `sources` o in `ignored` (v1-v3 solo per run gia scritti).
+`curate write` accetta solo note nuove: le Knowledge sono un diario di bordo, la
+verità attuale è nelle note linkate da STATE e le precedenti mostrano l'evoluzione.
 
 ## I/O del Curator
 
@@ -81,8 +92,8 @@ chiave. Il blocco conserva gli artefatti per esame esplicito.
 Il Curator conserva autoverifica di copertura, confronto storico e continuità critica.
 Hash, fonti, intervalli v2, link e validazione strutturale restano obbligatori,
 ma non dimostrano pertinenza semantica o assenza di omissioni non dichiarate.
-Un rapporto formalmente valido può essere incompleto. Il risultato espone
-`CURATOR_SEMANTIC_SELF_REVIEW_ONLY` per rendere visibile questo compromesso.
+Un rapporto formalmente valido può essere incompleto: il risultato non lo segnala
+con alcun avviso, perché un avviso sempre presente non informa.
 
 Un batch già reclamato non rilancia la sessione. Gli errori restituiscono codice,
 fase, cutoff confermato o null se non verificabile, azione e percorso diagnostico;

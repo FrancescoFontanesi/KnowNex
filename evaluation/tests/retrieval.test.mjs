@@ -193,7 +193,7 @@ test('isolated reference fixture freezes five distinct protocols with a private 
   );
 });
 
-test('ordinary installed SessionStart emits byte-exact seed for startup and compact without modifying fixture memory', async (t) => {
+test('ordinary installed SessionStart emits byte-exact seed for startup and nothing for compact without modifying fixture memory', async (t) => {
   const f = await fixture(t),
     before = await inventory(f.workspace);
   const hooks = await json(join(f.workspace, '.codex/hooks.json'));
@@ -201,11 +201,27 @@ test('ordinary installed SessionStart emits byte-exact seed for startup and comp
   assert.equal(hook.additionalContextLimit, 0);
   const script = hook.command.match(/^node "([^"]+)"$/)?.[1];
   assert.ok(script);
-  for (const source of ['startup', 'compact']) {
+  const hookInput = (source) => ({
+    input: JSON.stringify({ hook_event_name: 'SessionStart', source }),
+  });
+  // After compact the summary already carries the context: the hook emits nothing.
+  const compact = spawnSync(process.execPath, [resolve(f.workspace, script)], {
+    cwd: f.workspace,
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, KNOWNEX_WORKSPACE: f.workspace },
+    timeout: 15000,
+    ...hookInput('compact'),
+  });
+  assert.equal(compact.status, 0, compact.stderr);
+  assert.equal(compact.stdout, '');
+  for (const source of ['startup']) {
     // A real hook executable, manually supplied event: not native delivery proof.
-    const payload = run(f, [resolve(f.workspace, script)], {
-      input: JSON.stringify({ hook_event_name: 'SessionStart', source }),
-    }).hookSpecificOutput;
+    const payload = run(
+      f,
+      [resolve(f.workspace, script)],
+      hookInput(source),
+    ).hookSpecificOutput;
     assert.equal(payload.hookEventName, 'SessionStart');
     assert.match(
       payload.additionalContext,

@@ -9,6 +9,8 @@ try {
   }
   const payload = JSON.parse(input);
   if (payload?.hook_event_name !== 'SessionStart') throw new Error();
+  // After a compact the conversation summary already holds the context.
+  if (payload.source === 'compact') process.exit(0);
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {

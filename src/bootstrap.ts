@@ -26,7 +26,7 @@ La conversazione viene acquisita automaticamente dagli hook. Non chiedere all'ut
 
 ### Contesto e recupero
 
-- **STATE** è l'handoff automatico all'avvio di una nuova sessione nello stesso workspace: riusalo con il contesto conversazionale, senza reiniezioni per turno o consultazioni periodiche. Gli hook attuali lo emettono anche dopo compact; questo intervento non ne cambia il comportamento.
+- **STATE** è l'handoff automatico all'avvio di una nuova sessione nello stesso workspace: riusalo con il contesto conversazionale, senza reiniezioni per turno o consultazioni periodiche. Dopo un compact STATE non viene riemesso: il riassunto della conversazione lo contiene già.
 - STATE rappresenta lo stato del progetto fino all'ultimo checkpoint confermato. Eventi successivi possono averlo modificato.
 - Se il contesto disponibile è sufficiente, prosegui senza Recall. Una nota già linkata da STATE leggila direttamente con \`npm exec --offline -- knownex memory read\`: è una sola lettura.
 - Storia (HISTORY, finestre, revisioni ed eventi), tassonomia e ricerche di riferimenti ignoti delegale a un subagente con contesto indipendente, che segue la skill \`knownex-recall\` (\`.agents/skills/knownex-recall/SKILL.md\`) in sola consultazione e restituisce fatti, riferimenti, provenienza e limiti. Passa una richiesta precisa e i riferimenti già noti, non la conversazione completa. Se l'harness non offre subagenti, segnala il limite.
@@ -271,7 +271,7 @@ export async function initWorkspace(directory: string, requested?: Provider[]) {
     '.knownex/START.md',
     '# KnowNex runtime\n\n' +
       'Avvia Codex dalla radice del progetto e approva gli hook quando richiesto.\n' +
-      'SessionStart (anche dopo compact) rende disponibili STATE e pending di progetto.\n' +
+      'SessionStart (non dopo compact) rende disponibili STATE e pending di progetto.\n' +
       'Il principale suggerisce il checkpoint ai milestone; lo avvia l utente con npm exec --offline -- knownex checkpoint.\n' +
       'CLI locale: npm exec --offline -- knownex runtime\n' +
       'Feed unico: .knownex/feed/project.jsonl. Seed: .knownex/seed/. Confermata: .knownex/curator/memory.\n' +

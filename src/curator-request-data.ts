@@ -17,7 +17,7 @@ const ioModule = new URL(
     : './curation-io.js',
   import.meta.url,
 );
-export const cliPath = fileURLToPath(new URL('./index.js', ioModule));
+const cliPath = fileURLToPath(new URL('./index.js', ioModule));
 
 export async function curatorRequest(run: string) {
   const bytes = await readFile(join(run, 'packet.json'));

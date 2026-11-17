@@ -7,6 +7,7 @@ import {
 } from './layout.ts';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { historySegments } from './history.ts';
 import { parseNoteIdentity } from './memory-contract.ts';
 
 type Tree = Record<string, string>;
@@ -51,7 +52,12 @@ const idPattern =
   /^kn-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const revisionPattern = /^[br]-\d+-\d+-[0-9a-f-]{36}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
-const namePattern = /^knowledge\/[a-z0-9-]+\.md$/;
+/**
+ * Logical note keys: legacy `knowledge/<name>.md`, or `knowledge/H000004/<name>.md` for notes
+ * filed by that checkpoint. An archived revision (`…kn-<id>--r-….md`) is never a logical key.
+ */
+const namePattern =
+  /^knowledge\/(?:H\d{6,}\/)?(?![a-z0-9-]*kn-[0-9a-f-]{36}--[br]-)[a-z0-9-]+\.md$/;
 const categoryPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const categoryKey = (key: string) =>
   categoryPattern.test(key) &&
@@ -62,20 +68,32 @@ const checkpointFolder = (through: number) =>
  * New revision files start with the note name (`storage--kn-…--r-….md`) so people browsing
  * the vault see what a file is. The prefix is cosmetic: identity checks use `name`, without it.
  */
-const slug = (logical: string) => logical.slice('knowledge/'.length, -3) + '--';
+const slug = (logical: string) =>
+  logical.slice(logical.lastIndexOf('/') + 1, -3) + '--';
+/**
+ * Two folder forms. `checkpoint-NNNN` (published before HISTORY ids) is the last event of the
+ * batch, so `through` is known from the path. `H000002` is the checkpoint's HISTORY id: the
+ * path alone cannot tell `through`, so verifyVersionState checks it against HISTORY.md.
+ */
 function placement(file: string) {
   const m =
-    /^(checkpoint-(\d{4,}))\/(?:([a-z0-9-]+)\/)?(?:[a-z0-9-]+?--)?(kn-[a-f0-9-]+--[br]-[a-f0-9-]+\.md)$/.exec(
+    /^(?:(checkpoint-(\d{4,}))|(H\d{6,}))\/(?:([a-z0-9-]+)\/)?(?:[a-z0-9-]+?--)?(kn-[a-f0-9-]+--[br]-[a-f0-9-]+\.md)$/.exec(
       file,
     );
   if (
     !m ||
-    !Number.isSafeInteger(Number(m[2])) ||
-    checkpointFolder(Number(m[2])) !== m[1] ||
-    (m[3] !== undefined && !categoryKey(m[3]))
+    (m[1] !== undefined &&
+      (!Number.isSafeInteger(Number(m[2])) ||
+        checkpointFolder(Number(m[2])) !== m[1])) ||
+    (m[4] !== undefined && !categoryKey(m[4]))
   )
     return;
-  return { through: Number(m[2]), category: m[3], name: m[4]! };
+  return {
+    through: m[2] === undefined ? undefined : Number(m[2]),
+    history: m[3],
+    category: m[4],
+    name: m[5]!,
+  };
 }
 const object = (x: unknown): x is Record<string, unknown> =>
   x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -297,7 +315,8 @@ export function checkPublications(
       if (
         revisionFile({ ...metadata, ...(location ? { file: f.file } : {}) }) !==
           f.file ||
-        (location && location.through !== metadata.through)
+        (location?.through !== undefined &&
+          location.through !== metadata.through)
       )
         fail();
     } else if (checkpointFile(decodeCheckpoint(f.content).through) !== f.file)
@@ -381,7 +400,10 @@ export function planVersions(
   categories: Record<string, string> = {},
   taxonomy: Record<string, string> = {},
   chronological = true,
+  /** HISTORY id of this checkpoint (`H000002`); without it, the legacy `checkpoint-NNNN`. */
+  folder = checkpointFolder(through),
 ): VersionPlan {
+  if (folder !== checkpointFolder(through) && !/^H\d{6,}$/.test(folder)) fail();
   checkTaxonomy(taxonomy);
   if (
     !object(categories) ||
@@ -400,7 +422,6 @@ export function planVersions(
     name: string,
     source: string,
     revision: string,
-    previous: RevisionRef | null,
     cutoff: number,
     sourceChecksum: string,
     heads: Record<string, RevisionRef>,
@@ -421,7 +442,7 @@ export function planVersions(
       id: ref.id,
       revision,
       name,
-      previous,
+      previous: null, // notes are never rewritten: every new revision starts its own chain
       through: cutoff,
       checksum: sourceChecksum,
       contentHash: revisionHash(content),
@@ -456,31 +477,16 @@ export function planVersions(
         name,
         before[name]!,
         ref.revision,
-        null,
         base.sequence,
         base.checksum,
         oldHeads,
       );
   }
   const heads = structuredClone(oldHeads);
-  const changed = Object.keys(raw).filter((name) => {
-    if (!namePattern.test(name) || raw[name] === before[name]) return false;
-    if (!before[name]) return true;
-    try {
-      const file = join(memory, name);
-      return (
-        revisionLinks(raw[name]!, file, file, memory, work, oldHeads) !==
-        revisionLinks(before[name]!, file, file, memory, work, oldHeads)
-      );
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'KNOWLEDGE_REFERENCE_INVALID')
-        return true;
-      throw e;
-    }
-  });
-  if (prior)
-    for (const name of Object.keys(oldHeads))
-      if (!changed.includes(name)) tree[name] = before[name]!;
+  // Knowledge is a log: only notes absent from the active tree are new revisions.
+  const changed = Object.keys(raw).filter(
+    (name) => namePattern.test(name) && !before[name],
+  );
   if (Object.keys(categories).some((name) => !changed.includes(name)))
     fail('CURATOR_CATEGORY_INVALID');
   for (const name of changed)
@@ -491,7 +497,7 @@ export function planVersions(
       ...(chronological
         ? {
             file:
-              checkpointFolder(through) +
+              folder +
               '/' +
               (categories[name] ? categories[name] + '/' : '') +
               slug(name) +
@@ -507,7 +513,6 @@ export function planVersions(
       name,
       raw[name]!,
       heads[name]!.revision,
-      oldHeads[name] ?? null,
       through,
       checksum,
       heads,
@@ -599,11 +604,15 @@ async function loadRevision(
   const value = decodeRevision(text);
   if (value.metadata.id !== ref.id || value.metadata.revision !== ref.revision)
     fail();
-  if (
-    ref.file !== undefined &&
-    placement(ref.file)?.through !== value.metadata.through
-  )
-    fail();
+  if (ref.file !== undefined) {
+    const location = placement(ref.file);
+    if (
+      !location ||
+      (location.through !== undefined &&
+        location.through !== value.metadata.through)
+    )
+      fail();
+  }
   return value;
 }
 export async function resolveVersionLink(
@@ -661,6 +670,14 @@ export async function verifyVersionState(
     if (!ref || ref.id !== parseNoteIdentity(memory[name]!).id)
       fail('KNOWLEDGE_REFERENCE_INVALID');
     const { metadata, content } = await loadRevision(work, ref);
+    const folder = ref.file && placement(ref.file)?.history;
+    if (
+      folder &&
+      historySegments(memory['HISTORY.md'] ?? '', sequence).find(
+        (s) => s.id === folder,
+      )?.through !== metadata.through
+    )
+      fail('KNOWLEDGE_REFERENCE_INVALID');
     if (
       metadata.name !== name ||
       metadata.through > sequence ||

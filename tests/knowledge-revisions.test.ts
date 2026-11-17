@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   appendFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
   symlink,
@@ -36,6 +38,8 @@ import { historyAppendix } from './legacy-history.ts';
 
 const id = 'kn-00000000-0000-4000-8000-000000000001';
 const secondId = 'kn-00000000-0000-4000-8000-000000000002';
+const noteId = (through: number) =>
+  'kn-00000000-0000-4000-8000-' + String(100 + through).padStart(12, '0');
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const digest = (tree: Record<string, string>) =>
   hash(
@@ -43,7 +47,11 @@ const digest = (tree: Record<string, string>) =>
       Object.entries(tree).sort(([a], [b]) => a.localeCompare(b, 'en')),
     ),
   );
-async function fixture(t: TestContext) {
+/**
+ * `restored` starts from a memory published before the log-of-notes rule, where the topic note
+ * has several revisions (checkpoints 2, 4, 6, no noop), now impossible to produce through curation.
+ */
+async function fixture(t: TestContext, restored = false) {
   const root = await mkdtemp(join(tmpdir(), 'knownex-versions-'));
   t.after(async () => {
     assert.equal(dirname(root), resolve(tmpdir()));
@@ -52,7 +60,24 @@ async function fixture(t: TestContext) {
   const work = join(root, 'work'),
     seed = join(root, 'seed'),
     feedDir = join(root, 'feed');
-  for (let n = 1; n <= 9; n++)
+  if (restored) {
+    const source = resolve('tests/fixtures/multi-revision');
+    await cp(source, root, { recursive: true });
+    const feedName = hash('s') + '.jsonl';
+    const point = join(work, 'checkpoint.json');
+    await writeFile(
+      point,
+      JSON.stringify({
+        ...JSON.parse(await readFile(point, 'utf8')),
+        feed: join(await realpath(feedDir), feedName),
+      }),
+    );
+    await writeFile(
+      join(feedDir, feedName + '.curator.json'),
+      JSON.stringify({ work: await realpath(work) }),
+    );
+  }
+  for (let n = 1; n <= 9 && !restored; n++)
     await appendFeedEvent(feedDir, {
       type: 'user_message',
       sessionId: 's',
@@ -61,23 +86,25 @@ async function fixture(t: TestContext) {
       hook: 'UserPromptSubmit',
     });
   const feed = join(feedDir, hash('s') + '.jsonl');
-  await mkdir(join(seed, 'knowledge'), { recursive: true });
-  await writeFile(join(seed, 'HISTORY.md'), '# History\n');
-  await writeFile(
-    join(seed, 'STATE.md'),
-    '# Project\n\n[Topic](knowledge/topic.md) [E001](../feed/' +
-      basename(feed) +
-      ')\n',
-  );
-  await writeFile(
-    join(seed, 'knowledge/topic.md'),
-    '---\nid: ' +
-      id +
-      '\ntype: knowledge\n---\n\n# Topic\n\nOriginal caffè 日本語 🧠 e\u0301. [E001](../../feed/' +
-      basename(feed) +
-      ')\n',
-  );
-  await initCurator(work, seed, feed, 1);
+  if (!restored) {
+    await mkdir(join(seed, 'knowledge'), { recursive: true });
+    await writeFile(join(seed, 'HISTORY.md'), '# History\n');
+    await writeFile(
+      join(seed, 'STATE.md'),
+      '# Project\n\n[Topic](knowledge/topic.md) [E001](../feed/' +
+        basename(feed) +
+        ')\n',
+    );
+    await writeFile(
+      join(seed, 'knowledge/topic.md'),
+      '---\nid: ' +
+        id +
+        '\ntype: knowledge\n---\n\n# Topic\n\nOriginal caffè 日本語 🧠 e\u0301. [E001](../../feed/' +
+        basename(feed) +
+        ')\n',
+    );
+    await initCurator(work, seed, feed, 1);
+  }
   const memory = join(work, 'memory');
   const checkpoint = async () =>
     JSON.parse(await readFile(join(work, 'checkpoint.json'), 'utf8'));
@@ -95,13 +122,16 @@ async function fixture(t: TestContext) {
       await readFile(join(p.run!, 'packet.json'), 'utf8'),
     );
     const knowledge: Record<string, string> = {};
+    // Knowledge is a log: a curation only adds notes, so `body` becomes a new note per checkpoint.
     if (body !== undefined)
-      knowledge['knowledge/topic.md'] = packet.context[
-        'knowledge/topic.md'
-      ].replace(
-        /^# Topic[\s\S]*/m,
-        '# Topic\n\n' + body + ` [E00${through}](../${packet.feed})\n`,
-      );
+      knowledge[`knowledge/note-${through}.md`] =
+        '---\nid: ' +
+        noteId(through) +
+        '\ntype: knowledge\n---\n\n# Note ' +
+        through +
+        '\n\n' +
+        body +
+        ` [E00${through}](../${packet.feed})\n`;
     if (extra !== undefined)
       knowledge['knowledge/second.md'] =
         '---\nid: ' +
@@ -142,64 +172,52 @@ async function fixture(t: TestContext) {
   return { root, work, memory, feed, proposal, commit, checkpoint };
 }
 
-test('immutable full revisions, baseline, noop checkpoints and historical STATE resolve without duplicating unchanged notes', async (t) => {
-  const f = await fixture(t),
-    first = await f.commit(2, 'Revision two.');
-  const r2 = first.cp.knowledgeVersions.heads['knowledge/topic.md'].revision;
-  const exact2 = await memoryRead(f.memory, id + '@' + r2);
-  assert.match(exact2.content, /Revision two/);
+test('notes with several revisions published before the log rule stay readable: baseline, exact revisions, noop checkpoints and historical STATE', async (t) => {
+  const f = await fixture(t, true);
+  const at2 = await memoryRead(f.memory, id, { at: 2 });
+  assert.match(at2.content, /30 s/);
+  const exact2 = await memoryRead(f.memory, id + '@' + at2.revision);
+  assert.equal(exact2.content, at2.content);
   assert.equal(
     (await memoryRead(f.memory, id, { at: 1 })).content.includes(
-      'Original caffè 日本語 🧠 e\u0301',
+      'Original caffè 日本語 🧠 é',
     ),
     true,
   );
   await assert.rejects(memoryRead(f.memory, id, { at: 0 }), {
     code: 'KNOWLEDGE_LEGACY_HISTORY',
   });
-  const oldHistory = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
-  const oldVersion = await readFile(resolve(f.memory, exact2.path));
-  const middle = await f.commit(4, undefined, undefined, true);
-  assert.deepEqual(
-    middle.cp.knowledgeVersions.heads,
-    first.cp.knowledgeVersions.heads,
+  await assert.rejects(memoryRead(f.memory, id, { at: 3 }), {
+    code: 'KNOWLEDGE_CHECKPOINT_NOT_FOUND',
+  });
+  assert.match((await memoryRead(f.memory, id, { at: 4 })).content, /45 s/);
+  assert.match((await memoryRead(f.memory, id)).content, /50 s/);
+  assert.equal(
+    (await memoryRead(f.memory, id, { at: 'H000002' })).content,
+    at2.content,
   );
+  await assert.rejects(memoryRead(f.memory, secondId, { at: 1 }), {
+    code: 'KNOWLEDGE_NOT_AT_CHECKPOINT',
+  });
+  const oldHistory = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
+  const oldVersion = await readFile(resolve(f.memory, at2.path));
+  // A new checkpoint on top of a multi-revision memory: the noop keeps every head.
+  const heads = (await f.checkpoint()).knowledgeVersions.heads;
+  const noop = await f.commit(8, undefined, undefined, true);
+  assert.deepEqual(noop.cp.knowledgeVersions.heads, heads);
   assert.equal(
     await readFile(join(f.memory, 'HISTORY.md'), 'utf8'),
     oldHistory,
   );
-  assert.equal(
-    (await memoryRead(f.memory, id, { at: 4 })).content,
-    exact2.content,
-  );
-  await assert.rejects(memoryRead(f.memory, id, { at: 3 }), {
-    code: 'KNOWLEDGE_CHECKPOINT_NOT_FOUND',
-  });
-  const final = await f.commit(6, 'Revision six.', 'Independent result');
-  assert.equal(final.cp.sequence, 6);
-  assert.equal((await memoryRead(f.memory, id)).id, id);
-  assert.match((await memoryRead(f.memory, id)).content, /Revision six/);
-  assert.equal(
-    (await memoryRead(f.memory, id + '@' + r2)).content,
-    exact2.content,
-  );
-  assert.equal(
-    (await memoryRead(f.memory, id, { at: 'H000002' })).content,
-    exact2.content,
-  );
-  await assert.rejects(memoryRead(f.memory, secondId, { at: 4 }), {
-    code: 'KNOWLEDGE_NOT_AT_CHECKPOINT',
-  });
-  assert.deepEqual(await readFile(resolve(f.memory, exact2.path)), oldVersion);
-  const history = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
-  assert.ok(history.startsWith(oldHistory));
+  assert.match((await memoryRead(f.memory, id, { at: 8 })).content, /50 s/);
+  assert.deepEqual(await readFile(resolve(f.memory, at2.path)), oldVersion);
   // The STATE that linked this exact revision is kept in its checkpoint window.
   const windows = await Promise.all(
     (await readdir(join(f.memory, 'history'))).map((w) =>
       readFile(join(f.memory, 'history', w), 'utf8'),
     ),
   );
-  assert.ok(windows.some((w) => w.includes('../' + exact2.path)));
+  assert.ok(windows.some((w) => w.includes('../' + at2.path)));
   const current = await memoryState(f.memory);
   assert.match(current, /\[Topic\]\(\.\.\/revisions\//);
   assert.match(
@@ -207,8 +225,8 @@ test('immutable full revisions, baseline, noop checkpoints and historical STATE 
     /\[Current\]\(knowledge\/topic\.md\)<!-- knownex:current -->/,
   );
   const archive = await readdir(join(f.work, 'revisions'), { recursive: true });
-  assert.equal(archive.filter((n) => n.endsWith('.md')).length, 4); // baseline, two changed versions, new independent note
-  assert.equal(archive.filter((n) => n.endsWith('.json')).length, 4); // baseline and all three confirmed checkpoints, including noop
+  assert.equal(archive.filter((n) => n.endsWith('.md')).length, 5); // baseline, three topic revisions, second note
+  assert.equal(archive.filter((n) => n.endsWith('.json')).length, 5); // baseline, three checkpoints, noop
   const cli = spawnSync(
     process.execPath,
     [
@@ -224,30 +242,60 @@ test('immutable full revisions, baseline, noop checkpoints and historical STATE 
     { encoding: 'utf8' },
   );
   assert.equal(cli.status, 0, cli.stderr);
-  assert.equal(JSON.parse(cli.stdout).content, exact2.content);
+  assert.match(JSON.parse(cli.stdout).content, /45 s/);
+});
+
+test('a legacy flat memory with multi-revision notes gets a note of the same name under the next HISTORY folder', async (t) => {
+  const f = await fixture(t, true);
+  const before = (await f.checkpoint()).knowledgeVersions.heads;
+  const p = await f.proposal(8);
+  const raw = JSON.parse(await readFile(p.proposal!, 'utf8'));
+  raw.knowledge = {
+    'knowledge/topic.md':
+      '---\nid: ' +
+      noteId(8) +
+      '\ntype: knowledge\n---\n\n# Topic again\n\nNew topic. [E008](../' +
+      p.packet.feed +
+      ')\n',
+  };
+  await writeFile(p.proposal!, JSON.stringify(raw));
+  await applyCurator(f.work, (await validateCurator(f.work)).seal);
+  const heads = (await f.checkpoint()).knowledgeVersions.heads;
+  assert.deepEqual(Object.keys(heads).sort(), [
+    'knowledge/H000004/topic.md',
+    'knowledge/second.md',
+    'knowledge/topic.md',
+  ]);
+  for (const key of Object.keys(before))
+    assert.deepEqual(heads[key], before[key], key);
+  assert.match(
+    heads['knowledge/H000004/topic.md'].file,
+    /^H000004\/topic--kn-/,
+  );
+  assert.match(
+    (await memoryRead(f.memory, 'knowledge/topic.md')).content,
+    /50 s/,
+  );
+  assert.match(
+    (await memoryRead(f.memory, 'knowledge/H000004/topic.md')).content,
+    /New topic/,
+  );
+  assert.match((await memoryRead(f.memory, id, { at: 2 })).content, /30 s/);
+  assert.deepEqual(
+    new Set(
+      (await memoryFind(f.memory, 'topic', 'knowledge')).map((r) => r.id),
+    ),
+    new Set([id, noteId(8)]),
+  );
 });
 
 test('direct links and section reads retain temporal identity across similar notes and repeated corrections', async (t) => {
-  const f = await fixture(t);
-  await f.commit(
-    2,
-    '## Policy\n\nTimeout 30 s; policy precedente.\n\n## Limiti\n\nRete non verificata.',
-    '## Policy\n\nTimeout indipendente: 60 s.',
-  );
-  const early = await memoryRead(f.memory, id);
-  assert.ok('versionReference' in early);
-  const earlyReference = early.versionReference! + '#policy';
+  const f = await fixture(t, true);
+  const early = await memoryRead(f.memory, id, { at: 2 });
+  const earlyReference = early.path + '#policy';
   const frozen = await memoryRead(f.memory, earlyReference);
   assert.ok(frozen.content.includes('30 s'));
   assert.ok(!frozen.content.includes('Limiti'));
-  await f.commit(
-    4,
-    '## Policy\n\nTimeout corretto: 45 s, solo locale.\n\n## Limiti\n\nRete non verificata.',
-  );
-  await f.commit(
-    6,
-    '## Policy\n\nTimeout corretto: 50 s, solo locale.\n\n## Limiti\n\nRete non verificata.',
-  );
   const current = await memoryRead(f.memory, 'knowledge/topic.md#policy');
   assert.ok(current.content.includes('50 s'));
   assert.ok(!current.content.includes('30 s'));
@@ -315,9 +363,9 @@ test('checkpoint folders publish only changed notes with optional approved categ
     code: 'CURATOR_PROPOSAL_INVALID',
   });
   for (const categories of [
-    { 'knowledge/topic.md': 'invented' },
+    { 'knowledge/note-2.md': 'invented' },
     { '../outside.md': 'architecture' },
-    { 'knowledge/topic.md': '../architecture' },
+    { 'knowledge/note-2.md': '../architecture' },
   ]) {
     await writeFile(p.proposal!, JSON.stringify({ ...proposal, categories }));
     await assert.rejects(validateCurator(f.work), {
@@ -330,7 +378,7 @@ test('checkpoint folders publish only changed notes with optional approved categ
     JSON.stringify({
       ...proposal,
       categories: {
-        'knowledge/topic.md': 'architecture',
+        'knowledge/note-2.md': 'architecture',
         'knowledge/second.md': 'experiments',
       },
     }),
@@ -343,11 +391,11 @@ test('checkpoint folders publish only changed notes with optional approved categ
   const v = await validateCurator(f.work);
   await applyCurator(f.work, v.seal);
   const first = await f.checkpoint();
-  const topic = await memoryRead(f.memory, id);
+  const topic = await memoryRead(f.memory, noteId(2));
   assert.ok('versionReference' in topic);
   assert.equal(topic.category, 'architecture');
-  assert.equal(topic.checkpoint, 2);
-  assert.match(topic.versionReference!, /checkpoint-0002\/architecture\//);
+  assert.equal(topic.history, 'H000001');
+  assert.match(topic.versionReference!, /H000001\/architecture\//);
   assert.equal(
     (await memoryRead(f.memory, topic.versionReference!)).content.includes(
       'Architecture detail.',
@@ -395,20 +443,14 @@ test('checkpoint folders publish only changed notes with optional approved categ
     assert.ok(JSON.parse(cli.stdout).content.includes('Architecture detail.'));
   }
   await assert.rejects(
-    memoryRead(
-      f.memory,
-      topic.versionReference!.replace('checkpoint-0002', 'checkpoint-0999'),
-    ),
+    memoryRead(f.memory, topic.versionReference!.replace('H000001', 'H000999')),
     { code: 'MEMORY_NOT_FOUND' },
   );
   assert.deepEqual(
     (await memoryFind(f.memory, 'architecture', 'knowledge')).map((r) => r.id),
-    [id],
+    [noteId(2)],
   );
-  assert.equal(
-    (await memoryFind(f.memory, 'checkpoint-0002', 'knowledge')).length,
-    2,
-  );
+  assert.equal((await memoryFind(f.memory, 'H000001', 'knowledge')).length, 2);
   const state = await memoryState(f.memory);
   for (const match of state.matchAll(/\]\(([^)#]+)(?:#[^)]+)?\)/g))
     assert.ok(await readFile(resolve(f.memory, decodeURIComponent(match[1]!))));
@@ -422,7 +464,7 @@ test('checkpoint folders publish only changed notes with optional approved categ
     (await f.checkpoint()).knowledgeVersions.heads,
     first.knowledgeVersions.heads,
   );
-  await assert.rejects(readdir(join(f.work, 'revisions/checkpoint-0004')), {
+  await assert.rejects(readdir(join(f.work, 'revisions/H000002')), {
     code: 'ENOENT',
   });
   assert.deepEqual(
@@ -433,30 +475,31 @@ test('checkpoint folders publish only changed notes with optional approved categ
   );
   const later = await f.commit(6, 'Uncategorized update.');
   assert.match(
-    later.cp.knowledgeVersions.heads['knowledge/topic.md'].file,
-    /^checkpoint-0006\/topic--kn-/,
+    later.cp.knowledgeVersions.heads['knowledge/H000002/note-6.md'].file,
+    /^H000002\/note-6--kn-/,
   );
   // The name prefix is for people browsing the vault; the reader still authenticates the path.
   const physical =
-    'knowledge/' + later.cp.knowledgeVersions.heads['knowledge/topic.md'].file;
+    'knowledge/' +
+    later.cp.knowledgeVersions.heads['knowledge/H000002/note-6.md'].file;
   assert.ok(
     (await memoryRead(f.memory, physical)).path.endsWith(
-      later.cp.knowledgeVersions.heads['knowledge/topic.md'].file,
+      later.cp.knowledgeVersions.heads['knowledge/H000002/note-6.md'].file,
     ),
   );
   await assert.rejects(
-    memoryRead(f.memory, physical.replace('/topic--', '/other--')),
+    memoryRead(f.memory, physical.replace('/note-6--', '/other--')),
     { code: 'MEMORY_NOT_FOUND' },
   );
   await assert.rejects(
-    memoryRead(f.memory, physical.replace('/topic--', '/')),
+    memoryRead(f.memory, physical.replace('/note-6--', '/')),
     { code: 'MEMORY_NOT_FOUND' },
   );
   assert.deepEqual(
-    later.cp.knowledgeVersions.heads['knowledge/second.md'],
-    first.knowledgeVersions.heads['knowledge/second.md'],
+    later.cp.knowledgeVersions.heads['knowledge/H000001/second.md'],
+    first.knowledgeVersions.heads['knowledge/H000001/second.md'],
   );
-  assert.equal((await memoryRead(f.memory, id)).category, undefined);
+  assert.equal((await memoryRead(f.memory, noteId(6))).category, undefined);
   assert.equal(
     (await memoryRead(f.memory, topic.versionReference!)).category,
     'architecture',
@@ -473,8 +516,9 @@ test('checkpoint folders publish only changed notes with optional approved categ
       categories: { 'knowledge/topic.md': 'experiments' },
     }),
   );
+  // An existing note is never rewritten, not even to recategorize it.
   await assert.rejects(validateCurator(f.work), {
-    code: 'CURATOR_CATEGORY_INVALID',
+    code: 'CURATOR_NOTE_ID_DUPLICATE',
   });
 });
 
@@ -490,7 +534,7 @@ test('flat legacy revisions and pending validations keep their paths and coexist
   const v = await validateCurator(f.work);
   interrupt(f.work, v.seal, 'memory/STATE.md');
   assert.match(await memoryState(f.memory), /Topic/);
-  const legacy = await memoryRead(f.memory, id);
+  const legacy = await memoryRead(f.memory, noteId(2));
   assert.ok('versionReference' in legacy);
   assert.ok(!legacy.versionReference!.includes('checkpoint-'));
   const bytes = await readFile(resolve(f.memory, legacy.versionReference!));
@@ -498,8 +542,8 @@ test('flat legacy revisions and pending validations keep their paths and coexist
   await applyCurator(f.work, v.seal);
   const next = await f.commit(4, 'New hierarchical version.');
   assert.match(
-    next.cp.knowledgeVersions.heads['knowledge/topic.md'].file,
-    /^checkpoint-0004\//,
+    next.cp.knowledgeVersions.heads['knowledge/H000002/note-4.md'].file,
+    /^H000002\//,
   );
   assert.deepEqual(
     await readFile(resolve(f.memory, legacy.versionReference!)),
@@ -514,7 +558,7 @@ test('flat legacy revisions and pending validations keep their paths and coexist
     ),
   );
   assert.ok(
-    (await memoryRead(f.memory, id, { at: 2 })).content.includes(
+    (await memoryRead(f.memory, noteId(2), { at: 2 })).content.includes(
       'Legacy flat version.',
     ),
   );
@@ -542,7 +586,7 @@ test('taxonomy validation and nested archive junctions reject unsafe input witho
   await mkdir(join(f.work, 'revisions'));
   await symlink(
     outside,
-    join(f.work, 'revisions/checkpoint-0002'),
+    join(f.work, 'revisions/H000001'),
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   await assert.rejects(validateCurator(f.work), {
@@ -555,7 +599,7 @@ test('crash after checkpoint directory creation and interrupted recovery preserv
   const f = await fixture(t),
     p = await f.proposal(2, 'Recovered nested publication.'),
     v = await validateCurator(f.work);
-  const source = `import fs from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';const mkdir=fs.mkdir;fs.mkdir=async function(...args){const result=await mkdir.apply(this,args);if(String(args[0]).replaceAll('\\\\','/').endsWith('/checkpoint-0002'))process.exit(73);return result;};syncBuiltinESMExports();const {applyCurator}=await import(${JSON.stringify(pathToFileURL(resolve('src/curator.ts')).href)});await applyCurator(${JSON.stringify(f.work)},${JSON.stringify(v.seal)});`;
+  const source = `import fs from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';const mkdir=fs.mkdir;fs.mkdir=async function(...args){const result=await mkdir.apply(this,args);if(String(args[0]).replaceAll('\\\\','/').endsWith('/H000001'))process.exit(73);return result;};syncBuiltinESMExports();const {applyCurator}=await import(${JSON.stringify(pathToFileURL(resolve('src/curator.ts')).href)});await applyCurator(${JSON.stringify(f.work)},${JSON.stringify(v.seal)});`;
   const interrupted = spawnSync(
     process.execPath,
     ['--input-type=module', '-e', source],
@@ -571,7 +615,7 @@ test('crash after checkpoint directory creation and interrupted recovery preserv
   await rm(v.candidate, { recursive: true });
   assert.equal(await memoryState(f.memory), record.next['STATE.md']);
   assert.ok(
-    (await memoryRead(f.memory, id)).content.includes(
+    (await memoryRead(f.memory, noteId(2))).content.includes(
       'Recovered nested publication.',
     ),
   );
@@ -626,9 +670,7 @@ async function taxonomyApprove(
   return taxonomyEvent(f, 'user_message', reply, turn + '-reply');
 }
 test('explicit taxonomy workflow preserves historical bytes, exposes chronological retroactive categories and rebuilds Markdown views', async (t) => {
-  const f = await fixture(t);
-  await f.commit(2, 'First research detail.');
-  await f.commit(4, 'Current research detail.');
+  const f = await fixture(t, true);
   const checkpoint = await readFile(join(f.work, 'checkpoint.json'));
   const history = await readFile(join(f.memory, 'HISTORY.md'));
   const state = await memoryState(f.memory);
@@ -651,7 +693,7 @@ test('explicit taxonomy workflow preserves historical bytes, exposes chronologic
   const p = await taxonomyStart(f, 'taxonomy-one');
   const packet = JSON.parse(await readFile(join(p.run, 'packet.json'), 'utf8'));
   const chosen = packet.revisions.filter(
-    (r: { through: number }) => r.through === 1 || r.through === 4,
+    (r: { through: number }) => r.through === 1 || r.through === 6,
   );
   const assignments = Object.fromEntries(
     chosen.map((r: { id: string; revision: string }) => [
@@ -665,7 +707,7 @@ test('explicit taxonomy workflow preserves historical bytes, exposes chronologic
       categories: { methods: 'Metodi e limiti della ricerca' },
       assignments,
       explanations:
-        'Tema ricorrente nei checkpoint 1 e 4; nessuna sovrapposizione nota.',
+        'Tema ricorrente nei checkpoint 1 e 6; nessuna sovrapposizione nota.',
     }),
   );
   const v = await validateTaxonomy(f.work, p.id);
@@ -694,11 +736,11 @@ test('explicit taxonomy workflow preserves historical bytes, exposes chronologic
   const last = await memoryCategory(f.memory, 'methods', {
     cursor: page.nextCursor!,
   });
-  assert.equal(last.results[0]!.through, 4);
+  assert.equal(last.results[0]!.through, 6);
   assert.equal(last.results[0]!.classification, 'retroactive');
   assert.ok(
     (await memoryRead(f.memory, last.results[0]!.reference)).content.includes(
-      'Current research detail.',
+      '50 s',
     ),
   );
   assert.deepEqual(
@@ -709,7 +751,7 @@ test('explicit taxonomy workflow preserves historical bytes, exposes chronologic
     join(f.work, 'topics/category-methods.md'),
     'utf8',
   );
-  assert.ok(index.indexOf('Checkpoint 1') < index.indexOf('Checkpoint 4'));
+  assert.ok(index.indexOf('Checkpoint 1') < index.indexOf('Checkpoint 6'));
   for (const match of index.matchAll(/\]\(([^)]+)\)/g))
     assert.ok(
       await readFile(resolve(f.work, 'topics', decodeURIComponent(match[1]!))),
@@ -756,8 +798,8 @@ test('explicit taxonomy workflow preserves historical bytes, exposes chronologic
     (await applyTaxonomy(f.work, p.id, v.seal!, approval)).status,
     'already_applied',
   );
-  await f.commit(6, 'Normal curator still works.');
-  assert.equal((await f.checkpoint()).sequence, 6);
+  await f.commit(8, 'Normal curator still works.');
+  assert.equal((await f.checkpoint()).sequence, 8);
 });
 test('taxonomy noop, revisions by user, stale proposals and unrelated approval events cannot apply silently', async (t) => {
   const f = await fixture(t);
@@ -886,46 +928,34 @@ test('taxonomy approval is session-bound and the same journal recovers interrupt
 });
 
 test('current navigation ignores unrelated archive contents; missing historical revisions and corrupt current heads fail explicitly', async (t) => {
-  const f = await fixture(t),
-    one = await f.commit(2, 'First.'),
-    two = await f.commit(4, 'Second.');
-  const old = await memoryRead(
-    f.memory,
-    id + '@' + one.cp.knowledgeVersions.heads['knowledge/topic.md'].revision,
-  );
+  const f = await fixture(t, true);
+  const old = await memoryRead(f.memory, id, { at: 2 });
+  const head = await memoryRead(f.memory, id);
+  const unrelated =
+    'kn-00000000-0000-4000-8000-000000000099--r-9-9-00000000-0000-4000-8000-000000000099.md';
   await writeFile(
-    join(
-      f.work,
-      'revisions',
-      'kn-00000000-0000-4000-8000-000000000099--r-9-9-00000000-0000-4000-8000-000000000099.md',
-    ),
+    join(f.work, 'revisions', unrelated),
     'unrelated malformed archive entry',
   );
-  assert.equal((await memoryFind(f.memory, 'Second', 'knowledge')).length, 1);
-  await assert.rejects(
-    memoryRead(
-      f.memory,
-      '../revisions/kn-00000000-0000-4000-8000-000000000099--r-9-9-00000000-0000-4000-8000-000000000099.md',
-    ),
-    { code: 'MEMORY_NOT_FOUND' },
-  );
+  assert.equal((await memoryFind(f.memory, 'locale', 'knowledge')).length, 1);
+  await assert.rejects(memoryRead(f.memory, '../revisions/' + unrelated), {
+    code: 'MEMORY_NOT_FOUND',
+  });
   await rm(resolve(f.memory, old.path));
-  assert.match((await memoryRead(f.memory, id)).content, /Second/);
-  await assert.rejects(
-    memoryRead(
+  assert.match((await memoryRead(f.memory, id)).content, /50 s/);
+  await assert.rejects(memoryRead(f.memory, id + '@' + old.revision), {
+    code: 'KNOWLEDGE_REVISION_MISSING',
+  });
+  await appendFile(
+    resolve(
       f.memory,
-      id + '@' + one.cp.knowledgeVersions.heads['knowledge/topic.md'].revision,
+      (await memoryRead(f.memory, id + '@' + head.revision)).path,
     ),
-    { code: 'KNOWLEDGE_REVISION_MISSING' },
+    'corruption',
   );
-  const current = await memoryRead(
-    f.memory,
-    id + '@' + two.cp.knowledgeVersions.heads['knowledge/topic.md'].revision,
-  );
-  await appendFile(resolve(f.memory, current.path), 'corruption');
   const checkpoint = await readFile(join(f.work, 'checkpoint.json'));
   await assert.rejects(memoryRead(f.memory, id), {
-    code: 'KNOWLEDGE_REVISION_COLLISION',
+    code: 'KNOWLEDGE_REVISION_CHANGED',
   });
   assert.deepEqual(await readFile(join(f.work, 'checkpoint.json')), checkpoint);
 });
@@ -976,7 +1006,7 @@ test('taxonomy accepts registry-only workspaces, preserves original categories a
   const raw = JSON.parse(await readFile(p.proposal!, 'utf8'));
   await writeFile(
     p.proposal!,
-    JSON.stringify({ ...raw, categories: { 'knowledge/topic.md': 'design' } }),
+    JSON.stringify({ ...raw, categories: { 'knowledge/note-2.md': 'design' } }),
   );
   await applyCurator(f.work, (await validateCurator(f.work)).seal);
   const original = await memoryCategory(f.memory, 'design');
@@ -1221,7 +1251,10 @@ test('interrupted revision publication and interrupted recovery remain authorize
       if (boundary === '--b-') interrupt(f.work, v.seal, '--r-');
       const state = await memoryState(f.memory);
       assert.equal(state, record.next['STATE.md']);
-      assert.match((await memoryRead(f.memory, id)).content, /Recovered/);
+      assert.match(
+        (await memoryRead(f.memory, noteId(2))).content,
+        /Recovered/,
+      );
       assert.equal(
         (await memoryRead(f.memory, id, { at: 1 })).content.includes(
           'Original',
@@ -1311,7 +1344,10 @@ test('I/O failure after a revision rename preserves the old checkpoint and pendi
   assert.ok(await readFile(join(f.work, 'pending.json')));
   await memoryState(f.memory);
   assert.equal((await f.checkpoint()).sequence, 2);
-  assert.match((await memoryRead(f.memory, id)).content, /I\/O recovery/);
+  assert.match(
+    (await memoryRead(f.memory, noteId(2))).content,
+    /I\/O recovery/,
+  );
   assert.deepEqual(await applyCurator(f.work, v.seal), {
     status: 'applied',
     through: 2,
@@ -1325,13 +1361,13 @@ test('publication pins cross-Knowledge links and rejects invalid head references
     one = await f.commit(
       2,
       'First.',
-      '[Evidence](topic.md) [Navigate](topic.md)<!-- knownex:current -->',
+      '[Evidence](note-2.md) [Navigate](topic.md)<!-- knownex:current -->',
     );
   const second = await memoryRead(
     f.memory,
     secondId +
       '@' +
-      one.cp.knowledgeVersions.heads['knowledge/second.md'].revision,
+      one.cp.knowledgeVersions.heads['knowledge/H000001/second.md'].revision,
   );
   const evidence = second.content.match(/\[Evidence\]\(([^)]+)\)/)![1]!;
   const navigate = second.content.match(/\[Navigate\]\(([^)]+)\)/)![1]!;
@@ -1352,7 +1388,7 @@ test('publication pins cross-Knowledge links and rejects invalid head references
       resolve(dirname(resolve(f.memory, second.path)), navigate),
       'utf8',
     ),
-    /Later/,
+    /Original/,
   );
   const cp = await f.checkpoint();
   cp.knowledgeVersions.heads['knowledge/topic.md'].id = secondId;
@@ -1377,5 +1413,53 @@ test('old pending validation requires revalidation, not a new batch, consent or 
   const again = await validateCurator(f.work);
   assert.equal(again.seal, v.seal);
   await applyCurator(f.work, again.seal);
-  assert.match((await memoryRead(f.memory, id)).content, /Revalidated/);
+  assert.match((await memoryRead(f.memory, noteId(2))).content, /Revalidated/);
+});
+
+test('new checkpoint folders are named after the HISTORY entry of the same checkpoint, noops included', async (t) => {
+  const f = await fixture(t);
+  await f.commit(2, 'Revision two.');
+  await f.commit(4, undefined, undefined, true);
+  const last = await f.commit(6, 'Revision six.', 'Independent result');
+  const history = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
+  const entries = [...history.matchAll(/^- \[(H\d{6})\]/gm)].map((m) => m[1]);
+  assert.deepEqual(entries, ['H000001', 'H000002']);
+  const heads = last.cp.knowledgeVersions.heads;
+  for (const name of [
+    'knowledge/H000002/note-6.md',
+    'knowledge/H000002/second.md',
+  ])
+    assert.equal(heads[name].file.split('/')[0], entries.at(-1), name);
+  // The window of that HISTORY entry links the notes published in the same-named folder.
+  const window = await readFile(
+    join(f.memory, 'history', entries.at(-1) + '.md'),
+    'utf8',
+  );
+  for (const name of [
+    'knowledge/H000002/note-6.md',
+    'knowledge/H000002/second.md',
+  ])
+    assert.ok(window.includes(heads[name].file), name);
+});
+
+test('memories with checkpoint-NNNN folders stay readable and the next checkpoint publishes under its HISTORY id', async (t) => {
+  const f = await fixture(t);
+  // The baseline note keeps the legacy folder name (last event of the adopted batch).
+  const first = await f.commit(2, undefined);
+  const topic = first.cp.knowledgeVersions.heads['knowledge/topic.md'];
+  assert.match(topic.file, /^checkpoint-0001\/topic--kn-/);
+  const next = await f.commit(4, undefined, 'Independent result');
+  assert.deepEqual(
+    next.cp.knowledgeVersions.heads['knowledge/topic.md'],
+    topic,
+  );
+  assert.match(
+    next.cp.knowledgeVersions.heads['knowledge/H000002/second.md'].file,
+    /^H000002\/second--kn-/,
+  );
+  assert.match((await memoryRead(f.memory, id)).content, /Original/);
+  assert.match(
+    (await memoryRead(f.memory, secondId, { at: 4 })).content,
+    /Independent result/,
+  );
 });

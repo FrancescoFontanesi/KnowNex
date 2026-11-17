@@ -28,8 +28,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"tests/*.test.ts\"",
-    "format": "prettier --write . --ignore-path .gitignore",
-    "format:check": "prettier --check . --ignore-path .gitignore",
+    "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
+    "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
     "check": "npm run typecheck && npm test && npm run format:check && npm run build",
     "curate": "node src/curator-cli.ts"
   },

@@ -17,7 +17,7 @@ Obiettivo: recuperare il minimo contesto sufficiente a rispondere correttamente,
 STATE è autorevole fino all'ultimo checkpoint confermato, non necessariamente fino a ora. Procedi per gradi e fermati appena hai risposta, qualificazioni e provenienza:
 
 1. STATE già nel contesto: usalo. Se manca o è troncato, recuperalo una volta.
-2. Dettagli: segui i link di STATE verso le Knowledge.
+2. Dettagli: segui i link di STATE verso le Knowledge. Le note sono voci di diario mai riscritte: la verità attuale è nelle note linkate da STATE; una nota che ne supera un'altra la linka, e le precedenti mostrano l'evoluzione.
 3. Storia: `memory history` per la cronologia, poi la finestra o la revisione specifica.
 4. Eventi successivi al cutoff: `pending`, solo se rilevanti.
 
@@ -50,7 +50,7 @@ Per audit o richieste esplicitamente esaustive amplia la copertura in modo verif
 ## Storia e provenienza
 
 - Non sostituire una revisione storica con quella corrente. Una finestra `history/H…md` contiene lo STATE prodotto dal suo checkpoint e le note scritte; un segmento più vecchio, dentro HISTORY.md, contiene invece lo STATE precedente alla sua transizione. Checkpoint, revisioni e ID HISTORY sono numerazioni distinte.
-- Distingui fatti confermati, risultati sperimentali, decisioni superate e incertezze. Riporta riferimenti ed eventi quando rilevanti, senza letture aggiuntive per citazioni decorative.
+- Distingui fatti confermati, risultati sperimentali, decisioni superate e incertezze. Una nota non linkata da STATE può essere superata da una più recente: non presentarla come presente senza verificarlo. Riporta riferimenti ed eventi quando rilevanti, senza letture aggiuntive per citazioni decorative.
 - Se non trovi qualcosa, indica l'ambito consultato: `not_found` non prova l'assenza. Non dedurre eventi o provenienze che non compaiono nei risultati. Se lo storico precede la baseline, dillo.
 
 ## Integrità

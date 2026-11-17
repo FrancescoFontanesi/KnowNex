@@ -72,7 +72,12 @@ import {
   validateKnowledge,
   validateKnowledgeEvolution,
 } from './memory-contract.ts';
-import { historySegments, historyWindow, type Transition } from './history.ts';
+import {
+  historySegments,
+  historyWindow,
+  nextHistoryId,
+  type Transition,
+} from './history.ts';
 type Tree = Record<string, string>;
 export const emptyMemory: Tree = {
   'STATE.md':
@@ -129,7 +134,7 @@ function fail(code: string): never {
 const object = (x: unknown): x is Record<string, unknown> =>
   x !== null && typeof x === 'object' && !Array.isArray(x);
 const allowed = (name: string) =>
-  /^(?:(?:STATE|HISTORY)\.md|knowledge\/[a-z0-9-]+\.md|history\/H\d{6,}\.md)$/.test(
+  /^(?:(?:STATE|HISTORY)\.md|knowledge\/(?:H\d{6,}\/)?[a-z0-9-]+\.md|history\/H\d{6,}\.md)$/.test(
     name,
   );
 /** Links written for the memory root, moved one level down into history/. */
@@ -222,7 +227,11 @@ async function treeAt(
         name = relative(root, p).split(sep).join('/');
       if (entry.isSymbolicLink()) fail('CURATOR_UNSAFE_PATH');
       if (entry.isDirectory()) {
-        if (name !== 'knowledge' && name !== 'history')
+        if (
+          name !== 'knowledge' &&
+          name !== 'history' &&
+          !/^knowledge\/H\d{6,}$/.test(name)
+        )
           fail('CURATOR_UNSAFE_PATH');
         await walk(p);
       } else {
@@ -247,25 +256,41 @@ async function putTree(root: string, tree: Tree) {
   }
 }
 
-function rebase(tree: Tree, from: string, to: string): Tree {
+/**
+ * Moves documents from one memory root to another. Links inside memory, archived revisions
+ * under knowledge/ included, stay relative. `moves` also renames documents (proposal note
+ * `knowledge/x.md` to `knowledge/H000004/x.md`) and retargets the links to them.
+ */
+function rebase(
+  tree: Tree,
+  from: string,
+  to: string,
+  moves: Record<string, string> = {},
+): Tree {
   return Object.fromEntries(
     Object.entries(tree).map(([name, text]) => [
-      name,
+      moves[name] ?? name,
       text.replace(
         /(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g,
         (whole, label: string, href: string) => {
           const [url, fragment] = href.split('#');
           if (!url || /^[a-z]+:/i.test(url)) return whole;
-          const target = resolve(
+          let target = resolve(
             dirname(join(from, name)),
             decodeURIComponent(url),
           );
+          const key = relative(from, target).split(sep).join('/');
           if (
             inside(from, target) &&
-            allowed(relative(from, target).split(sep).join('/'))
+            (allowed(key) || key.startsWith('knowledge/'))
+          ) {
+            if (!moves[name] && !moves[key]) return whole;
+            target = join(to, moves[key] ?? key);
+          }
+          return `[${label}](${relative(
+            dirname(join(to, moves[name] ?? name)),
+            target,
           )
-            return whole;
-          return `[${label}](${relative(dirname(join(to, name)), target)
             .split(sep)
             .map(encodeURIComponent)
             .join('/')}${fragment ? '#' + fragment : ''})`;
@@ -519,10 +544,14 @@ async function syncTree(
     await syncDirectory(dirname(root));
     return;
   }
-  for (const name of Object.keys(tree)) await syncPath(join(root, name));
-  for (const folder of ['knowledge', 'history'])
-    if (Object.keys(tree).some((name) => name.startsWith(folder + '/')))
-      await syncDirectory(join(root, folder));
+  const folders = new Set<string>();
+  for (const name of Object.keys(tree)) {
+    await syncPath(join(root, name));
+    // Deepest first: knowledge/H000004 before knowledge.
+    for (let f = dirname(name); f !== '.'; f = dirname(f)) folders.add(f);
+  }
+  for (const folder of [...folders].sort().reverse())
+    await syncDirectory(join(root, folder));
   await syncDirectory(root);
   await syncDirectory(dirname(root));
 }
@@ -1737,11 +1766,7 @@ export async function prepareCurator(
         checksum: r.checksum,
         sourceBytes: [r.from, r.end],
       })),
-      nextHistoryId:
-        'H' +
-        String(
-          historySegments(memory['HISTORY.md']!, cp.sequence).length + 1,
-        ).padStart(6, '0'),
+      nextHistoryId: nextHistoryId(memory['HISTORY.md']!, cp.sequence),
       feed: relative(base, cp.feed)
         .split(sep)
         .map(encodeURIComponent)
@@ -1870,23 +1895,32 @@ function materialize(
 ) {
   const cp = run.base;
   const next: Tree = { ...memory };
+  const folder =
+    proposal.action === 'update'
+      ? nextHistoryId(memory['HISTORY.md']!, run.last.event.sequence)
+      : undefined;
+  // The Curator names a new note `knowledge/x.md`; the runtime files it as `knowledge/H000004/x.md`,
+  // so names may repeat across checkpoints and a new note never has the key of an existing one.
+  // Rewriting an existing note (its id) still fails: validateKnowledge refuses duplicate ids.
+  const moves: Record<string, string> = {};
   if (proposal.action === 'update') {
-    next['STATE.md'] = rebase(
-      { 'STATE.md': proposal.state },
-      join(dir, 'base'),
-      target,
-    )['STATE.md']!;
     for (const [name, text] of Object.entries(proposal.knowledge)) {
       if (
-        !name.startsWith('knowledge/') ||
-        !allowed(name) ||
+        !/^knowledge\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(name) ||
         typeof text !== 'string'
       )
         fail('CURATOR_UNSAFE_PATH');
-      if (memory[name] && !run.context.includes(name))
-        fail('CURATOR_CONTEXT_INVALID');
-      next[name] = rebase({ [name]: text }, join(dir, 'base'), target)[name]!;
+      moves[name] = `knowledge/${folder}/${name.slice('knowledge/'.length)}`;
     }
+    Object.assign(
+      next,
+      rebase(
+        { 'STATE.md': proposal.state, ...proposal.knowledge },
+        join(dir, 'base'),
+        target,
+        moves,
+      ),
+    );
     if (digest(next) === digest(memory)) fail('CURATOR_EMPTY_UPDATE');
   }
   const plan = planVersions(
@@ -1898,9 +1932,14 @@ function materialize(
     run.id,
     run.last.event.sequence,
     run.last.checksum,
-    proposal.action === 'update' ? (proposal.categories ?? {}) : {},
+    Object.fromEntries(
+      Object.entries(
+        proposal.action === 'update' ? (proposal.categories ?? {}) : {},
+      ).map(([name, category]) => [moves[name] ?? name, category]),
+    ),
     run.taxonomy ?? {},
     run.revisionLayout === 1,
+    folder,
   );
   if (proposal.action === 'update') {
     const transition = revisionLinks(
@@ -1908,6 +1947,7 @@ function materialize(
         { 'HISTORY.md': proposal.history.transition },
         join(dir, 'base'),
         target,
+        moves,
       )['HISTORY.md']!,
       join(target, 'HISTORY.md'),
       join(target, 'HISTORY.md'),
@@ -1916,8 +1956,8 @@ function materialize(
       plan.versions.heads,
     );
     const work = workFromMemory(target),
-      folder = join(target, 'history');
-    const notes = Object.keys(proposal.knowledge)
+      windows = join(target, 'history');
+    const notes = Object.values(moves)
       .sort()
       .map((key): [string, string] => {
         const ref = plan.versions.heads[key];
@@ -1926,7 +1966,7 @@ function materialize(
           : join(target, key);
         return [
           key,
-          relative(folder, file).split(sep).map(encodeURIComponent).join('/'),
+          relative(windows, file).split(sep).map(encodeURIComponent).join('/'),
         ];
       });
     const entry = historyWindow(
@@ -1950,10 +1990,11 @@ function materialize(
 }
 
 interface CurationReview {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   proposalSha256: string;
   summary: string;
   sources: number[];
+  ignored?: number[];
   changes: { path: string; summary: string; sources: number[] }[];
   uncertainties: string[];
   anomalies: string[];
@@ -1980,7 +2021,7 @@ async function reviewAt(
   for (const [name, expected] of Object.entries(manifest.files)) {
     if (
       // MEMORY-CONTRACT.md is only frozen in runs prepared before WINDOW.md replaced it.
-      !/^(packet\.json|WINDOW\.md|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/[a-z0-9-]+\.md))$/.test(
+      !/^(packet\.json|WINDOW\.md|SKILL\.md|MEMORY-CONTRACT\.md|base\/(STATE\.md|HISTORY\.md|knowledge\/(H\d{6,}\/)?[a-z0-9-]+\.md))$/.test(
         name,
       ) ||
       !object(expected)
@@ -2019,9 +2060,8 @@ async function reviewAt(
   }
   const nonempty = (v: unknown): v is string =>
     typeof v === 'string' && !!v.trim();
-  const sources = (v: unknown) =>
+  const sequences = (v: unknown): v is number[] =>
     Array.isArray(v) &&
-    v.length > 0 &&
     v.every(
       (n) =>
         Number.isSafeInteger(n) &&
@@ -2030,17 +2070,21 @@ async function reviewAt(
         !(run.excluded ?? []).includes(n) &&
         !(run.base.excluded ?? []).includes(n),
     );
+  const sources = (v: unknown) => sequences(v) && v.length > 0;
   // v1/v2 reviews (sealed before v3) still carry a critical list; it is no longer checked.
-  const legacy = object(r) && (r.version === 1 || r.version === 2);
+  // v1-v3 reviews (sealed before v4) have no ignored list, so their coverage is not checked.
+  const version = object(r) ? r.version : undefined;
+  const legacy = version === 1 || version === 2;
   if (
     !object(r) ||
     Object.keys(r).sort().join(',') !==
-      `anomalies,changes,${legacy ? 'critical,' : ''}proposalSha256,sources,summary,uncertainties,version` ||
-    (!legacy && r.version !== 3) ||
+      `anomalies,changes,${legacy ? 'critical,' : ''}${version === 4 ? 'ignored,' : ''}proposalSha256,sources,summary,uncertainties,version` ||
+    (!legacy && version !== 3 && version !== 4) ||
     (legacy && !Array.isArray(r.critical)) ||
     r.proposalSha256 !== sha(bytes) ||
     !nonempty(r.summary) ||
-    !sources(r.sources) ||
+    // A noop uses no event: every sequence is in ignored.
+    !(proposal.action === 'noop' ? sequences : sources)(r.sources) ||
     !Array.isArray(r.changes) ||
     !Array.isArray(r.uncertainties) ||
     !r.uncertainties.every(nonempty) ||
@@ -2048,6 +2092,20 @@ async function reviewAt(
     !r.anomalies.every(nonempty)
   )
     fail('CURATOR_REVIEW_INVALID');
+  if (version === 4) {
+    // Every event the Curator saw is either used or deliberately ignored, never forgotten:
+    // sorted together they must equal the batch, so an overlap or a gap both fail.
+    const packet = JSON.parse(
+      (await readFile(join(dir, 'packet.json'))).toString('utf8'),
+    );
+    const order = (list: number[]) => list.sort((a, b) => a - b).join(',');
+    if (
+      !sequences(r.ignored) ||
+      order([...(r.sources as number[]), ...r.ignored]) !==
+        order(packet.events.map((e: { sequence: number }) => e.sequence))
+    )
+      fail('CURATOR_REVIEW_INVALID');
+  }
   const expected =
     proposal.action === 'noop'
       ? []

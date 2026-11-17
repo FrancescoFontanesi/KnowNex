@@ -23,7 +23,7 @@ memory/
 ├── STATE.md
 ├── HISTORY.md
 ├── history/H000001.md
-└── knowledge/checkpoint-NNNN/[categoria/]<nome>--kn-UUID--REV.md
+└── knowledge/H000NNN/[categoria/]<nome>--kn-UUID--REV.md
 ```
 
 `STATE.md` e la radice operativa navigabile, autorevole fino al checkpoint
@@ -49,8 +49,8 @@ contatori dimensionali delle vecchie validazioni non cambiano il protocollo o i
 sigilli: i batch esistenti rimangono utilizzabili. Noop, recovery e replay
 conservano integralmente la generazione autorizzata, anche negli archivi legacy.
 
-SessionStart tenta sempre di emettere STATE completo in additionalContext,
-all'avvio e dopo compact, senza troncamenti o rappresentazioni alternative.
+SessionStart tenta di emettere STATE completo in additionalContext
+all'avvio (non dopo compact, dove il riassunto contiene già il contesto), senza troncamenti o rappresentazioni alternative.
 KnowNex verifica il payload prodotto, non la consegna effettiva al modello:
 esecuzione, gestione dell'output e finestra di contesto dipendono dall'harness.
 Il [contratto runtime](RUNTIME.md) distingue questi confini e i limiti documentati.
@@ -78,7 +78,7 @@ indice e le sue finestre corrispondono uno a uno, senza orfane né mancanti.
 
 ## Note scritte
 
-- [knowledge/contratto.md](../knowledge/checkpoint-0016/contratto--kn-UUID--REV.md)
+- [knowledge/contratto.md](../knowledge/H000016/contratto--kn-UUID--REV.md)
 
 ## STATE risultante
 
@@ -98,17 +98,22 @@ datare più precisamente la decisione. L'intervallo indica il batch materializza
 Una conferma esplicita `noop` può avanzare il checkpoint senza sostituire STATE e
 senza aggiungere storia. Senza eventi nuovi, prepare non modifica la memoria.
 
-Le Knowledge nascono soltanto per argomenti che giustificano consultazione
-indipendente; non per turno o milestone. Modificare prima le note pertinenti.
+Le Knowledge sono un diario di bordo: ogni checkpoint aggiunge note nuove con ciò
+che introduce e non riscrive mai quelle esistenti (una nota con l'identità di una
+esistente è rifiutata con CURATOR_NOTE_ID_DUPLICATE, anche con `validate`/`apply` manuali).
+Ogni nota nuova sta nella cartella del suo checkpoint, quindi il nome può ripetersi
+tra checkpoint. Se una decisione cambia, la nota
+nuova dice la nuova verità e linka quella che supera, copiandone il link dallo STATE; quella resta invariata e mostra
+l'evoluzione. STATE è l'unico documento cumulativo e linka le note che contengono
+la verità attuale. Le note nascono soltanto per argomenti che giustificano
+consultazione indipendente; non per turno o milestone.
 Sono documenti tematici autonomamente comprensibili, dettagliati e collegati:
 conservano fatti, risultati, dettagli tecnici, decisioni e motivazioni, alternative,
 condizioni, eccezioni, incertezze, relazioni e questioni aperte, anche secondarie.
 Attribuzione, provenienza, negazioni circoscritte e grado di certezza devono
 mantenere significato. Non inferire identita, completamenti o garanzie non supportati.
-Aggiornare integra il contenuto precedente ancora pertinente; non sostituirlo
-con le sole novita o una sintesi. Una revisione immutabile conserva il passato,
-ma non giustifica l'impoverimento della nota corrente. Spiegare correzioni e
-sostituzioni supportate, evitando duplicazioni e frammentazioni artificiali.
+Spiegare correzioni e sostituzioni supportate, evitando duplicazioni e
+frammentazioni artificiali.
 Ogni nota usa questo frontmatter ristretto, non YAML generale:
 
 ```markdown
@@ -146,7 +151,7 @@ esempio `[E017]` o `[E015–E016]`, oppure il campo `- Eventi` nei segmenti HIST
 Il feed sta fuori dalla cartella memory: un link verso di esso sarebbe rotto in
 Obsidian e per un agente aprirebbe un JSONL intero, mentre l'etichetta basta a
 leggere l'evento per sequenza. `curate write` riduce a etichetta i link al feed
-copiati da note precedenti; i link al feed già pubblicati restano validi e vengono
+copiati dallo STATE precedente; i link al feed già pubblicati restano validi e vengono
 controllati come prima. Titoli, argomenti e prosa ordinaria non tra parentesi
 quadre (anche `Catalogo E1` o `E999`) non dichiarano provenienza.
 
@@ -166,9 +171,11 @@ scoped al feed fissato dal workspace (di sessione o di progetto). Non sono ancho
 citate devono esistere ed essere entro il cutoff congelato. STATE e ogni Knowledge
 devono avere almeno un riferimento al feed. Unica eccezione: il seed vuoto
 canonico del bootstrap, senza fatti materializzati; init a sequenza zero non
-conferma eventi. Distinguere decisione confermata,
-proposta, risultato dichiarato e risultato verificato; un report dell'assistente
-non prova da solo l'esecuzione di un esperimento. Allegati non presenti nel feed
+conferma eventi. Il feed non contiene l'output degli strumenti: STATE e ogni nota
+dichiarano una volta che i risultati sono quelli riportati nella conversazione e
+marcano solo le eccezioni (verificato di persona dall'utente, smentito o corretto
+in seguito). Distinguere proposta, decisione approvata e smentita; un report
+dell'assistente non prova da solo l'esecuzione di un esperimento. Allegati non presenti nel feed
 non possono essere ricostruiti. Nessuna inferenza semantica di identità.
 
 Link Markdown relativi inline, senza immagini o link di riferimento; codificare
@@ -196,7 +203,7 @@ Nel flusso --autonomous, prepare congela il batch e la base corrente; inputs.jso
 fornisce percorsi, hash, identita, titoli e intestazioni delle Knowledge. Il packet
 contiene STATE e gli eventi autorizzati, non i corpi delle note. Il Curator legge
 autonomamente tutto il batch e sceglie il contesto storico e tematico necessario;
-legge integralmente le note prima di aggiornarle, conservandone il contenuto valido.
+legge una nota esistente solo per citarla o superarla, senza riscriverla.
 Non pre-carica tutte le Knowledge. Sorgenti essenziali mancanti richiedono arresto,
 non duplicazione o ampliamento implicito del batch. Nessuna seconda sessione.
 
@@ -223,15 +230,17 @@ cui il Curator scrive STATE e note come file separati:
 }
 ```
 
-`knowledge` contiene esclusivamente testi completi di note modificate o nuove,
-con chiavi `knowledge/<nome-minuscolo>.md`. Le note esistenti devono essere fra
-quelle congelate in base nel modo autonomo, o fornite in context nel modo legacy; nessuna cancellazione. `state` è completo. I link si
-risolvono rispetto a `runs/<id>/base/`. Nessun campo per riscrivere HISTORY.
+`knowledge` contiene esclusivamente testi completi di note nuove, con chiavi
+`knowledge/<nome-minuscolo>.md` (minuscole, cifre e trattini singoli); il runtime le
+pubblica come `knowledge/H000NNN/<nome>.md`, quindi un nome della base congelata si può
+riusare; nessuna cancellazione. `state` è completo. I link si
+risolvono rispetto a `runs/<id>/base/`; una nota nuova si scrive come se stesse in
+`base/knowledge/`, e il runtime ne sposta i link nella sua cartella. Nessun campo per riscrivere HISTORY.
 Descrizione, argomenti e transizione sono stringhe non vuote su una sola riga.
-Il campo facoltativo categories di update associa soltanto note nuove/modificate
+Il campo facoltativo categories di update associa soltanto note nuove
 a chiavi del registro taxonomy congelato nel packet. Omissione significa nessuna
 categoria. I percorsi knowledge/tema.md sono chiavi logiche del packet/proposal. Le revisioni
-confermate nuove o modificate usano memory/knowledge/checkpoint-NNNN/[categoria]/,
+confermate nuove o modificate usano memory/knowledge/H000NNN/[categoria]/ (id della voce di HISTORY; le cartelle `checkpoint-NNNN` precedenti restano leggibili),
 senza una seconda copia piatta corrente; i workspace legacy restano invariati. Dettagli, compatibilita e formato
 del registro sono nel [contratto delle revisioni](KNOWLEDGE-REVISIONS.md).
 Una proposta senza cambiamento effettivo è rifiutata: usare `{"action":"noop"}`.
@@ -244,9 +253,8 @@ prepare esplicito, non un messaggio o un permesso ricavato dal feed.
 Qualsiasi voce in uncertainties o anomalies blocca l'apply automatico. Il checkpoint
 avanza soltanto dopo le scritture. Il confronto storico, la continuita critica e
 la verifica preliminare della copertura spettano al Curator; non esiste review
-semantica indipendente nel controller. Questo compromesso e segnalato dal
-warning CURATOR_SEMANTIC_SELF_REVIEW_ONLY: la validazione non prova completezza
-o pertinenza semantica. La review mirata e apply --confirm restano
+semantica indipendente nel controller. Questo compromesso resta: la validazione
+non prova completezza o pertinenza semantica. La review mirata e apply --confirm restano
 un percorso manuale esplicito per eccezioni e legacy, non un passo ordinario.
 Il comando passa alla sessione solo il compito del run. Sequenza/checksum del feed
 sono congelati nel run e nella ricevuta del controller.
@@ -293,15 +301,16 @@ review.json e un artefatto del run, non una seconda memoria o un registro di tas
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "proposalSha256": "SHA-256 dei byte di proposal.json",
   "summary": "Modifiche e motivazione, oppure motivazione del noop",
-  "sources": [25],
+  "sources": [25, 27],
+  "ignored": [26],
   "changes": [
     {
       "path": "STATE.md",
       "summary": "Modifica operativa, voci chiuse o rimosse",
-      "sources": [25]
+      "sources": [25, 27]
     }
   ],
   "uncertainties": [],
@@ -311,15 +320,20 @@ review.json e un artefatto del run, non una seconda memoria o un registro di tas
 
 changes contiene esattamente STATE e le note proposte; noop richiede changes vuoto.
 La voce di STATE dichiara anche decisioni, blocker o prerequisiti chiusi o rimossi.
-sources contiene sequenze positive fino al cutoff, escluse quelle amministrative
-filtrate; puo citare fonti precedenti pertinenti, non eventi futuri.
+sources (eventi usati) e ignored (eventi scartati di proposito) sono disgiunti e
+insieme coprono esattamente le sequenze del batch in packet.json, quindi escluse
+quelle amministrative filtrate: un evento dimenticato è rifiutato con
+CURATOR_REVIEW_INVALID. Su noop sources può essere vuoto e tutto sta in ignored.
+Le sequenze di changes possono citare anche fonti precedenti pertinenti, non eventi futuri.
 
+La versione 4 aggiunge ignored. Una review v3 già sigillata, per esempio di un batch
+BLOCKED in attesa di apply esplicito, resta accettata senza controllo di copertura.
 La versione 3 non ha piu la mappa `critical` riga per riga: la sceglieva il modello
 stesso, quindi un'omissione restava invisibile, e una voce persa resta comunque
 recuperabile da HISTORY e dalle revisioni immutabili. Le review v1/v2 gia scritte,
 per esempio di un batch BLOCKED in attesa di apply esplicito, restano accettate:
 `critical` deve essere una lista ma il suo contenuto non viene piu verificato.
-Il writer canonico produce solo la versione 3.
+Il writer canonico produce solo la versione 4.
 
 Validate verifica forma, corrispondenza dei documenti, citazioni e hash degli input.
 Il sigillo lega anche l'hash del rapporto; apply ricontrolla gli input e rifiuta
@@ -394,8 +408,8 @@ e sul contesto Knowledge. Il feed live e solo provenienza, non un input.
 
     <run>/draft/proposal.json      action, history, categories (senza state/knowledge)
     <run>/draft/STATE.md           testo completo del nuovo STATE (solo update)
-    <run>/draft/knowledge/<n>.md   note nuove o aggiornate (solo update)
-    <run>/draft/review.json        review (versione 3)
+    <run>/draft/knowledge/<n>.md   note nuove (solo update)
+    <run>/draft/review.json        review (versione 4)
     <CLI> curate write --run RUN
 
 Il Curator scrive file semplici con il proprio strumento di scrittura file: nessun

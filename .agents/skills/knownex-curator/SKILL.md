@@ -1,6 +1,6 @@
 ---
 name: knownex-curator
-description: Cura un batch KnowNex già preparato. Legge gli eventi, aggiorna STATE e Knowledge in una bozza e la consegna con curate write. Usala quando un incarico di curatela KnowNex indica un run preparato. Non usarla per preparare o completare checkpoint, per il recall o per la tassonomia, salvo un packet con operation taxonomy.
+description: Cura un batch KnowNex già preparato. Legge gli eventi, riscrive STATE e aggiunge note Knowledge in una bozza e la consegna con curate write. Usala quando un incarico di curatela KnowNex indica un run preparato. Non usarla per preparare o completare checkpoint, per il recall o per la tassonomia, salvo un packet con operation taxonomy.
 ---
 
 # KnowNex Curator
@@ -22,8 +22,8 @@ Trasformi un batch di eventi già congelato in memoria di progetto durevole: un 
 
 1. `WINDOW.md`. Tutti gli eventi autorizzati, ciascuno con la sua sequenza (`## E017 — tipo`). L'intestazione riporta gli artefatti citabili, le categorie approvate e l'eventuale direttiva del principale.
 2. `base/STATE.md`, lo STATE congelato: il punto di partenza da preservare.
-3. `inputs.json`, il catalogo delle Knowledge esistenti con titoli e intestazioni.
-4. `base/knowledge/<nome>.md`, solo per le note da aggiornare o necessarie alle relazioni. Leggile per intero prima di modificarle.
+3. `inputs.json`, il catalogo delle Knowledge esistenti con titoli e intestazioni, solo se ti serve una nota che lo STATE non linka.
+4. `base/knowledge/...` (percorso `path` del catalogo), solo per una nota precedente da citare o superare. Le note esistenti non si modificano.
 
 Non serve leggere `packet.json`: contiene gli stessi eventi con metadati per il runtime. Fa eccezione un run preparato prima di questa versione, il cui manifest non autorizza `WINDOW.md`: lì leggi `packet.json`. Leggi `base/HISTORY.md`, l'indice dei checkpoint, solo per un bisogno storico concreto: le finestre `history/` non sono copiate nel run. Se un output è troncato, leggi a pagine con `--offset BYTE --limit N --sha256 HASH_DEL_DOCUMENTO`, seguendo `nextOffset` finché `complete` è `true`. Il feed live non è un input: gli eventi successivi al cutoff appartengono al prossimo batch.
 
@@ -31,7 +31,9 @@ Non serve leggere `packet.json`: contiene gli stessi eventi con metadati per il 
 
 Lavora per argomenti e relazioni tra messaggi, non per turni isolati. Per ogni nucleo informativo sostanziale individua le sequenze di provenienza, lo stato e la destinazione in memoria.
 
-Conserva fatti e specifiche, vincoli, risultati con condizioni e denominatori, decisioni e motivazioni, alternative rilevanti anche non approvate, esperimenti e fallimenti diagnostici, ipotesi, incertezze, eccezioni, negazioni circoscritte, problemi aperti e dettagli secondari riutilizzabili. Tieni distinti dichiarato, proposto, approvato, osservato e verificato: un successo dichiarato non è una verifica, e un risultato parziale resta parziale.
+Conserva fatti e specifiche, vincoli, risultati con condizioni e denominatori, decisioni e motivazioni, alternative rilevanti anche non approvate, esperimenti e fallimenti diagnostici, ipotesi, incertezze, eccezioni, negazioni circoscritte, problemi aperti e dettagli secondari riutilizzabili. Tieni distinti proposto, approvato e smentito; un risultato parziale resta parziale.
+
+Il feed contiene la conversazione, mai l'output degli strumenti: i risultati sono quelli riportati nei messaggi. Dillo una volta per documento (in STATE e in ogni nota), non in ogni frase. Marca esplicitamente solo le eccezioni: ciò che l'utente ha verificato di persona e ciò che è stato smentito o corretto in seguito.
 
 Escludi i convenevoli, l'amministrazione del checkpoint senza conseguenze, le ripetizioni e i passaggi transitori risolti senza valore diagnostico. Decidi per contenuto, non per ruolo, lunghezza o parole chiave: una frase breve può contenere un vincolo essenziale.
 
@@ -45,33 +47,34 @@ Con il tuo strumento di scrittura file, in UTF-8, crea in `draft/`:
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `proposal.json`       | `{"action": "update", "history": {...}}` più l'eventuale `categories`, senza `state` né `knowledge`. Se non c'è niente da conservare: `{"action": "noop"}` |
 | `STATE.md`            | il testo completo del nuovo STATE (solo su update)                                                                                                         |
-| `knowledge/<nome>.md` | il testo completo di ogni nota nuova o modificata (solo su update)                                                                                         |
+| `knowledge/<nome>.md` | il testo completo di ogni nota nuova (solo su update)                                                                                                      |
 | `review.json`         | il rapporto (sezione 4)                                                                                                                                    |
 
 `history` contiene `summary` (descrizione ricercabile), `topics` (array di argomenti) e `transition` (che cosa cambia e perché). Sono stringhe non vuote su una sola riga. HISTORY la genera il runtime: non scriverla.
 
-**STATE.md** è la radice operativa per riprendere il progetto: titolo Markdown, obiettivo, situazione, decisioni attive, vincoli, prerequisiti, blocker, attività aperte e prossime azioni, con link descrittivi verso le Knowledge. Ogni decisione, blocker o prerequisito dello STATE congelato deve risultare preservato, aggiornato, chiuso con evidenza o superato da una decisione successiva. L'assenza dai nuovi messaggi non ne prova la chiusura. Non c'è un limite di dimensione, ma il dettaglio va nelle Knowledge.
+**STATE.md** è la radice operativa per riprendere il progetto e l'unico documento cumulativo: titolo Markdown, obiettivo, situazione, decisioni attive, vincoli, prerequisiti, blocker, attività aperte e prossime azioni, con link descrittivi verso le note, vecchie o nuove, che contengono la verità attuale. Ogni decisione, blocker o prerequisito dello STATE congelato deve risultare preservato, aggiornato, chiuso con evidenza o superato da una decisione successiva. L'assenza dai nuovi messaggi non ne prova la chiusura. Non c'è un limite di dimensione, ma il dettaglio va nelle Knowledge.
 
-**Knowledge** sono note tematiche autonome. Aggiorna prima quelle esistenti pertinenti, integrando il contenuto ancora valido invece di sostituirlo con le sole novità. Crea una nota nuova solo per un argomento distinto, che meriti una consultazione a sé. Nomi: `knowledge/<nome-minuscolo>.md`. Scrivi la nota senza frontmatter, partendo dal titolo: `curate write` aggiunge l'identità (`id` della nota esistente, oppure uno nuovo per una nota nuova). Se copi una nota esistente con il suo frontmatter, lascialo invariato.
+**Knowledge** è un diario di bordo. Le note esistenti non si riscrivono mai: ogni checkpoint scrive solo note nuove, autonome, con ciò che quel checkpoint introduce, una per argomento che meriti una consultazione a sé. Se una decisione o un fatto cambia, la nota nuova dice la nuova verità e linka la nota che supera, che resta com'è: così si legge l'evoluzione. Per linkare una nota esistente copia il suo link dallo STATE così com'è: funziona sia nel nuovo STATE sia in una nota nuova. Nomi delle note nuove: `knowledge/<nome-minuscolo>.md` (minuscole, cifre e trattini singoli); il runtime le colloca nella cartella del checkpoint, quindi il nome può ripetersi tra checkpoint. Scrivi la nota senza frontmatter, partendo dal titolo: `curate write` aggiunge l'identità.
 
-**Provenienza e riferimenti.** STATE e ogni nota citano almeno un evento con la sola etichetta tra parentesi quadre, `[E017]` o un intervallo `[E015–E016]`, senza link: il feed sta fuori dalla memoria. `curate write` riduce a etichetta i link al feed copiati da note esistenti. Le etichette usano `E` più almeno tre cifre (`E001`, `E1000`) e citano solo sequenze del batch o precedenti, entro il cutoff. Codice e artefatti si citano come percorso dalla radice del workspace in backtick (`src/feed.ts`), non come link. I link Markdown servono solo tra documenti della memoria: relativi inline, senza immagini né link di riferimento, spazi codificati come `%20`, con target e anchor esistenti. Per le note usa le chiavi logiche `knowledge/<nome>.md`: il runtime colloca le revisioni e fissa i link.
+**Provenienza e riferimenti.** STATE e ogni nota citano almeno un evento con la sola etichetta tra parentesi quadre, `[E017]` o un intervallo `[E015–E016]`, senza link: il feed sta fuori dalla memoria. `curate write` riduce a etichetta i link al feed copiati dallo STATE precedente. Le etichette usano `E` più almeno tre cifre (`E001`, `E1000`) e citano solo sequenze del batch o precedenti, entro il cutoff. Codice e artefatti si citano come percorso dalla radice del workspace in backtick (`src/feed.ts`), non come link. I link Markdown servono solo tra documenti della memoria: relativi inline, senza immagini né link di riferimento, spazi codificati come `%20`, con target e anchor esistenti. Per le note nuove usa `knowledge/<nome>.md`, per quelle esistenti il link copiato dallo STATE: il runtime colloca le revisioni e fissa i link.
 
-**Categorie.** Se `WINDOW.md` elenca categorie approvate, `categories` associa note nuove o modificate solo a chiavi già approvate. Senza una categoria adatta, omettila.
+**Categorie.** Se `WINDOW.md` elenca categorie approvate, `categories` associa note nuove solo a chiavi già approvate. Senza una categoria adatta, omettila.
 
 ## 4. Rapporto (draft/review.json)
 
-Prima di scriverlo confronta i nuclei durevoli del batch con la loro destinazione e verifica la continuità di decisioni, blocker e prerequisiti del vecchio STATE. Riapri le fonti solo per dubbi specifici.
+Prima di scriverlo confronta i nuclei durevoli del batch con la loro destinazione, conta ogni evento in `sources` o in `ignored` e verifica la continuità di decisioni, blocker e prerequisiti del vecchio STATE. Riapri le fonti solo per dubbi specifici.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "summary": "Esito sintetico, o ragione del noop",
-  "sources": [25],
+  "sources": [25, 27],
+  "ignored": [26],
   "changes": [
     {
       "path": "STATE.md",
       "summary": "Modifica e motivazione, incluse le voci chiuse o rimosse",
-      "sources": [25]
+      "sources": [25, 27]
     }
   ],
   "uncertainties": [],
@@ -79,7 +82,8 @@ Prima di scriverlo confronta i nuclei durevoli del batch con la loro destinazion
 }
 ```
 
-- `sources`: sequenze reali del batch.
+- `sources`: sequenze del batch usate nella bozza.
+- `ignored`: sequenze del batch scartate di proposito (convenevoli, ripetizioni, amministrazione senza conseguenze). `sources` e `ignored` sono disgiunti e insieme coprono esattamente tutte le sequenze di `WINDOW.md`: nessun evento resta senza destinazione. Su noop `sources` è `[]` e tutte le sequenze stanno in `ignored`.
 - `changes`: una voce per `STATE.md` e una per ogni nota scritta; `[]` su noop. Nella voce di `STATE.md` indica le decisioni, i blocker o i prerequisiti chiusi o rimossi e su quale evidenza. `proposalSha256` lo aggiunge la CLI.
 - `uncertainties` e `anomalies`: contraddizioni, lacune, identità dubbie, limiti di accesso. Qualsiasi voce blocca la pubblicazione automatica, ed è l'esito corretto quando il rischio è reale: non nasconderle per ottenere la pubblicazione. Non serve bloccare per un'incoerenza che STATE o una nota registrano già come problema aperto, con le sue fonti: pubblicarla non rende la memoria scorretta.
 
@@ -91,14 +95,15 @@ Se l'incarico chiede una risposta JSON unica (comando `knownex checkpoint`), non
 
 Altrimenti esegui `<CLI> curate write --run RUN`. La CLI assembla la bozza, applica gli stessi controlli della pubblicazione e, solo se passano, sostituisce la consegna precedente. Su errore non scrive nulla: leggi il codice, correggi la bozza e riesegui.
 
-| Codice                                               | Correzione tipica                                                                                                        |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `CURATOR_REVIEW_INVALID`                             | `changes` che non coincide con i file scritti, sequenze fuori dal batch, campi mancanti o in più, `version` diversa da 3 |
-| `CURATOR_PROPOSAL_INVALID`, `CURATOR_DRAFT_INVALID`  | campi di `proposal.json` o JSON non valido                                                                               |
-| `CURATOR_EMPTY_UPDATE`                               | nessun cambiamento effettivo: usa `{"action": "noop"}`                                                                   |
-| `CURATOR_NOTE_METADATA`, `CURATOR_NOTE_ID_CHANGED`   | frontmatter scritto a mano errato, oppure `id` di una nota esistente cambiato                                            |
-| `CURATOR_PROVENANCE_INVALID`, `CURATOR_LINK_INVALID` | nessuna citazione `[E###]`, etichetta errata, sequenza fuori cutoff, link o anchor inesistente                           |
-| `CURATOR_CONTEXT_INVALID`                            | modifica di una nota non presente tra gli input congelati                                                                |
+| Codice                                               | Correzione tipica                                                                                                                                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CURATOR_REVIEW_INVALID`                             | `changes` che non coincide con i file scritti, sequenze fuori dal batch, `sources` e `ignored` sovrapposti o che non coprono tutte le sequenze, campi mancanti o in più, `version` diversa da 4 |
+| `CURATOR_PROPOSAL_INVALID`, `CURATOR_DRAFT_INVALID`  | campi di `proposal.json` o JSON non valido                                                                                                                                                      |
+| `CURATOR_EMPTY_UPDATE`                               | nessun cambiamento effettivo: usa `{"action": "noop"}`                                                                                                                                          |
+| `CURATOR_NOTE_ID_DUPLICATE`                          | nota con l'identità di una nota esistente: le note non si riscrivono; scrivila senza frontmatter e linka la nota che superi                                                                     |
+| `CURATOR_UNSAFE_PATH`                                | nome di nota non valido: solo `knowledge/<nome>.md`, con minuscole, cifre e trattini singoli                                                                                                    |
+| `CURATOR_NOTE_METADATA`                              | frontmatter scritto a mano errato: scrivi la nota senza frontmatter                                                                                                                             |
+| `CURATOR_PROVENANCE_INVALID`, `CURATOR_LINK_INVALID` | nessuna citazione `[E###]`, etichetta errata, sequenza fuori cutoff, link o anchor inesistente                                                                                                  |
 
 Con `DESTINATION_BUSY` riesegui `write` una volta; con `CURATOR_CHECKPOINT_RETRY_FORBIDDEN` la consegna è già stata presa in carico: fermati.
 

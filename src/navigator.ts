@@ -40,6 +40,7 @@ export interface MemoryResult {
   section?: { anchor: string; title: string };
   category?: string;
   checkpoint?: number;
+  history?: string;
   thematicCategories?: string[];
   date?: string;
   events?: { from: number; through: number };
@@ -72,11 +73,17 @@ const headings = (text: string) =>
   [...text.matchAll(/^#{1,6} +([^\r\n]+)$/gm)].map((m) => m[1]!).join('\n');
 function revisionPlacement(file?: string): {
   checkpoint?: number;
+  history?: string;
   category?: string;
 } {
-  const m = file?.match(/^checkpoint-(\d+)\/(?:([^/]+)\/)?[^/]+\.md$/);
+  const m = file?.match(
+    /^(?:checkpoint-(\d+)|(H\d{6,}))\/(?:([^/]+)\/)?[^/]+\.md$/,
+  );
   return m
-    ? { checkpoint: Number(m[1]), ...(m[2] ? { category: m[2] } : {}) }
+    ? {
+        ...(m[1] ? { checkpoint: Number(m[1]) } : { history: m[2]! }),
+        ...(m[3] ? { category: m[3] } : {}),
+      }
     : {};
 }
 
@@ -291,10 +298,19 @@ async function knowledgeEntries(
     throw error;
   }
   const result: Entry[] = [],
-    ids = new Set<string>();
-  for (const name of (await readdir(folder)).sort()) {
+    ids = new Set<string>(),
+    names: string[] = [];
+  // Notes are flat (legacy) or filed per checkpoint in knowledge/H000004/.
+  for (const name of (await readdir(folder)).sort())
+    if (!/^H\d{6,}$/.test(name)) names.push(name);
+    else
+      for (const note of (
+        await readdir(await insidePath(root, 'knowledge/' + name, true))
+      ).sort())
+        names.push(name + '/' + note);
+  for (const name of names) {
     if (!name.toLowerCase().endsWith('.md')) continue;
-    if (!/^[a-z0-9-]+\.md$/.test(name)) fail('MEMORY_INVALID');
+    if (!/^(?:H\d{6,}\/)?[a-z0-9-]+\.md$/.test(name)) fail('MEMORY_INVALID');
     const path = 'knowledge/' + name,
       content = await textAt(root, path);
     let id: string;
@@ -599,11 +615,15 @@ export async function memoryRead(
   }
   const window = /^history\/(H\d{6,})\.md$/.exec(id);
   if (window) id = window[1]!;
-  const notePath = /^knowledge\/[a-z0-9-]+\.md$/.test(id) ? id : undefined;
   const archived =
-    /^(?:\.\.\/revisions\/|knowledge\/)((?:checkpoint-\d{4,}\/(?:[a-z0-9-]+\/)?(?:[a-z0-9-]+?--)?)?(kn-[0-9a-f-]{36})--([br]-\d+-\d+-[0-9a-f-]{36})\.md)$/.exec(
+    /^(?:\.\.\/revisions\/|knowledge\/)((?:(?:checkpoint-\d{4,}|H\d{6,})\/(?:[a-z0-9-]+\/)?(?:[a-z0-9-]+?--)?)?(kn-[0-9a-f-]{36})--([br]-\d+-\d+-[0-9a-f-]{36})\.md)$/.exec(
       id,
     );
+  // A logical note path (`knowledge/x.md`, `knowledge/H000004/x.md`), never an archived file.
+  const notePath =
+    !archived && /^knowledge\/(?:H\d{6,}\/)?[a-z0-9-]+\.md$/.test(id)
+      ? id
+      : undefined;
   if (archived) id = archived[2] + '@' + archived[3];
   const [logical, revision, ...extra] = id.split('@');
   if (

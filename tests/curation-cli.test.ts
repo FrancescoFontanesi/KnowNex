@@ -97,9 +97,10 @@ async function fixture(t: TestContext, source = unicode) {
       },
     },
     review: {
-      version: 3,
+      version: 4,
       summary: 'Synthetic review',
       sources: [1],
+      ignored: [2],
       changes: [{ path: 'STATE.md', summary: 'Updated.', sources: [1] }],
       uncertainties: [],
       anomalies: [],
@@ -416,6 +417,11 @@ test('write rejects every draft complete would reject, persists nothing, and the
       'CURATOR_REVIEW_INVALID',
     ],
     [
+      'event neither used nor ignored',
+      (p) => (p.review.ignored = []),
+      'CURATOR_REVIEW_INVALID',
+    ],
+    [
       'unknown review field',
       (p) => (p.review.extra = true),
       'CURATOR_REVIEW_INVALID',
@@ -621,7 +627,7 @@ const uuidV4 =
 const noteId = (text: string) =>
   /^---\nid: (\S+)\ntype: knowledge\n---\n/.exec(text)?.[1];
 
-test('write gives new notes fresh v4 identities and an updated note its frozen one across checkpoints', async (t) => {
+test('write gives new notes fresh v4 identities, lets a later checkpoint reuse a name and refuses to rewrite a note', async (t) => {
   const f = await fixture(t);
   const first = structuredClone(f.payload) as any;
   first.proposal.knowledge = {
@@ -641,26 +647,31 @@ test('write gives new notes fresh v4 identities and an updated note its frozen o
   assert.match(beta, uuidV4);
   assert.notEqual(alfa, beta);
   assert.equal(cli(['complete', '--run', f.run]).status, 'SUCCESS');
-  // Second checkpoint: the Curator rewrites alfa without frontmatter, as the skill says.
+  // Second checkpoint: alfa changes. Knowledge is a log: keeping alfa's identity is a rewrite, refused...
   await f.append('user_message', 'two', 'Alfa cambia.');
   await f.append('assistant_final', 'two', 'Confermato.');
   const next = cli(['prepare', '--work', f.work, '--autonomous']).run as string;
-  const base = await readFile(join(next, 'base/knowledge/alfa.md'), 'utf8');
-  assert.equal(noteId(base), alfa);
   const before = cli(['read', '--run', next, '--input', 'base/STATE.md']).text;
+  // An existing note stays readable in the run under its checkpoint folder.
+  assert.match(
+    cli(['read', '--run', next, '--input', 'base/knowledge/H000001/alfa.md'])
+      .text,
+    /Prima versione/,
+  );
   const second = {
     proposal: {
       action: 'update',
       state: before + '\nAlfa aggiornata. [E003]\n',
       knowledge: {
-        'knowledge/alfa.md': '# Alfa\n\nSeconda versione. [E003]\n',
-      },
+        'knowledge/alfa.md': `---\nid: ${alfa}\ntype: knowledge\n---\n# Alfa\n\nSeconda versione. [E003]\n`,
+      } as Record<string, string>,
       history: { summary: 'Alfa', topics: ['Alfa'], transition: 'Alfa.' },
     },
     review: {
-      version: 3,
+      version: 4,
       summary: 'Alfa aggiornata.',
       sources: [3],
+      ignored: [4],
       changes: [
         { path: 'STATE.md', summary: 'Alfa.', sources: [3] },
         { path: 'knowledge/alfa.md', summary: 'Alfa.', sources: [3] },
@@ -669,22 +680,54 @@ test('write gives new notes fresh v4 identities and an updated note its frozen o
       anomalies: [],
     },
   };
-  // A hand-written frontmatter that changes an existing id is still rejected.
-  const forged = structuredClone(second);
-  forged.proposal.knowledge['knowledge/alfa.md'] =
-    '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n' +
-    second.proposal.knowledge['knowledge/alfa.md'];
-  await writeDraft(next, forged);
+  await writeDraft(next, second);
   assert.equal(
     JSON.parse(command(['write', '--run', next]).stderr).code,
-    'CURATOR_NOTE_ID_CHANGED',
+    'CURATOR_NOTE_ID_DUPLICATE',
   );
+  await assertNothingPersisted(next);
+  // ...while the same name with a fresh identity is a new note of this checkpoint: it says the
+  // new truth and links the one it supersedes (its logical key here), which stays as it was.
+  second.proposal.knowledge = {
+    'knowledge/alfa.md':
+      '# Alfa\n\nSeconda versione; supera [Alfa](knowledge/H000001/alfa.md). [E003]\n',
+  };
+  await rm(join(next, 'draft'), { recursive: true, force: true });
   await writeDraft(next, second);
-  const updated = cli(['write', '--run', next]);
-  const note = JSON.parse(await readFile(updated.proposal.path, 'utf8'))
-    .knowledge['knowledge/alfa.md'];
-  assert.equal(noteId(note), alfa);
+  const written2 = JSON.parse(
+    await readFile(cli(['write', '--run', next]).proposal.path, 'utf8'),
+  ).knowledge;
+  assert.match(
+    written2['knowledge/alfa.md'],
+    /supera \[Alfa\]\(H000001\/alfa\.md\)/,
+  );
+  const revisione = noteId(written2['knowledge/alfa.md'])!;
+  assert.match(revisione, uuidV4);
+  assert.notEqual(revisione, alfa);
   assert.equal(cli(['complete', '--run', next]).status, 'SUCCESS');
+  assert.deepEqual(
+    Object.keys(
+      JSON.parse(await readFile(join(f.work, 'checkpoint.json'), 'utf8'))
+        .knowledgeVersions.heads,
+    ).sort(),
+    [
+      'knowledge/H000001/alfa.md',
+      'knowledge/H000001/beta.md',
+      'knowledge/H000002/alfa.md',
+    ],
+  );
+  // Both entries are published: the old one unchanged, the new one in its own folder.
+  const published = await Promise.all(
+    (await readdir(join(f.memory, 'knowledge'), { recursive: true }))
+      .filter((n) => n.endsWith('.md'))
+      .map((n) => readFile(join(f.memory, 'knowledge', n), 'utf8')),
+  );
+  assert.ok(published.some((t) => t.includes('Prima versione. [E001]')));
+  assert.ok(
+    published.some((t) =>
+      /Seconda versione; supera \[Alfa\]\(\.\.\/H000001\/alfa--kn-/.test(t),
+    ),
+  );
 });
 
 test('each checkpoint adds one index line and an immutable window, and runs never copy windows', async (t) => {
@@ -715,7 +758,7 @@ test('each checkpoint adds one index line and an immutable window, and runs neve
   ];
   assert.deepEqual(
     notes.map((m) => m[1]),
-    ['knowledge/alfa.md'],
+    ['knowledge/H000001/alfa.md'],
   );
   const revision = await readFile(
     resolve(join(f.memory, 'history'), decodeURIComponent(notes[0]![2]!)),
@@ -747,9 +790,10 @@ test('each checkpoint adds one index line and an immutable window, and runs neve
       history: { summary: 'Passo', topics: ['Passo'], transition: 'Avanti.' },
     },
     review: {
-      version: 3,
+      version: 4,
       summary: 'Passo.',
       sources: [3],
+      ignored: [4],
       changes: [{ path: 'STATE.md', summary: 'Passo.', sources: [3] }],
       uncertainties: [],
       anomalies: [],
@@ -822,6 +866,8 @@ test('event citations stay bare labels, legacy feed links are reduced in every f
     summary: 'Nota.',
     sources: [2],
   });
+  payload.review.sources = [1, 2];
+  payload.review.ignored = [];
   // A bare label is checked like a link was: after the cutoff it is refused.
   const late = structuredClone(payload);
   late.proposal.state = '# Bare\n\nFuturo [E099].\n';

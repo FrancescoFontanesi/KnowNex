@@ -123,7 +123,7 @@ export const feedIdentity = (event: FeedInput) =>
     ...(event.type === 'assistant_commentary' ? [event.messageId] : []),
   ]);
 
-function recover(bytes: Buffer, sessionId?: string) {
+function recover(bytes: Buffer) {
   const events = new Map<string, FeedEvent>();
   let previous: string | null = null,
     confirmed = 0,
@@ -147,7 +147,6 @@ function recover(bytes: Buffer, sessionId?: string) {
       if (
         !isFeedInput(event) ||
         !object(event) ||
-        (sessionId !== undefined && event.sessionId !== sessionId) ||
         event.sequence !== sequence + 1 ||
         !Number.isSafeInteger(event.sequence) ||
         typeof event.capturedAt !== 'string' ||
@@ -166,11 +165,11 @@ function recover(bytes: Buffer, sessionId?: string) {
   return { events, previous, confirmed, sequence };
 }
 
-// Well inside the 10 s hook timeout.
-const FEED_LOCK_WAIT_MS = 3000;
+// The hook wrapper kills the writer at 7.5 s: leave margin for read and fsync.
+const FEED_LOCK_WAIT_MS = 6000;
 
 /**
- * Append under sha256(sessionId).jsonl, or project.jsonl in explicit project mode.
+ * Append to the single project.jsonl feed shared by every session.
  * Native identity is type/session/turn; commentary also requires messageId.
  * Identical text for that identity is a no-op; changed text conflicts.
  * LF commits the whole checksummed frame. Recovery discards only an incomplete
@@ -182,7 +181,6 @@ const FEED_LOCK_WAIT_MS = 3000;
 export async function appendFeedEvent(
   directory: string,
   input: FeedInput,
-  project = false,
   lockWaitMs = FEED_LOCK_WAIT_MS,
 ) {
   if (!isFeedInput(input)) throw new FeedError('FEED_INVALID_EVENT');
@@ -202,10 +200,7 @@ export async function appendFeedEvent(
       : {}),
   };
   await mkdir(directory, { recursive: true });
-  const destination = join(
-    await realpath(directory),
-    project ? 'project.jsonl' : hash(value.sessionId) + '.jsonl',
-  );
+  const destination = join(await realpath(directory), 'project.jsonl');
   const deadline = Date.now() + lockWaitMs;
   let release;
   for (;;) {
@@ -228,7 +223,7 @@ export async function appendFeedEvent(
     const initial = await file.stat({ bigint: true });
     if (!initial.isFile()) throw new FeedError('FEED_CHANGED');
     const bytes = await file.readFile();
-    const state = recover(bytes, project ? undefined : value.sessionId);
+    const state = recover(bytes);
     const existing = state.events.get(feedIdentity(value));
     if (existing && existing.text !== value.text)
       throw new FeedError('FEED_CONFLICT');

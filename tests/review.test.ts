@@ -11,7 +11,7 @@ import {
   prepareCurator,
   validateCurator,
 } from '../src/curator.ts';
-import { writeCurationArtifacts } from '../src/curation-io.ts';
+import { writeCurationDraft } from '../src/curation-io.ts';
 import { appendFeedEvent } from '../src/feed.ts';
 
 const hash = (text: string | Buffer) =>
@@ -41,7 +41,7 @@ async function fixture(t: test.TestContext) {
     text: 'Grazie.',
     hook: 'UserPromptSubmit',
   });
-  await initCurator(work, memory, join(feed, hash('s') + '.jsonl'), 0);
+  await initCurator(work, memory, join(feed, 'project.jsonl'), 0);
   const prepared = await prepareCurator(work, undefined, {
     through: 2,
     autonomous: true,
@@ -193,17 +193,27 @@ test('the review stays bound to frozen inputs, proposal bytes and the seal', asy
   await applyCurator(f.work, v.seal);
 });
 
-test('the canonical writer only produces v4 reviews', async (t) => {
+test('the delivery writer only produces v4 reviews', async (t) => {
   const f = await fixture(t);
-  const proposal = JSON.parse(
-    await readFile(join(f.dir, 'proposal.json'), 'utf8'),
-  );
+  const {
+    state,
+    knowledge: _k,
+    ...meta
+  } = JSON.parse(await readFile(join(f.dir, 'proposal.json'), 'utf8'));
   await rm(join(f.dir, 'proposal.json'));
   const { proposalSha256: _, ignored: __, ...review } = f.review;
+  const draft = join(f.dir, 'draft');
+  await mkdir(draft, { recursive: true });
+  await writeFile(join(draft, 'proposal.json'), JSON.stringify(meta));
+  await writeFile(join(draft, 'STATE.md'), state);
+  const deliver = async (r: Record<string, unknown>) => {
+    await writeFile(join(draft, 'review.json'), JSON.stringify(r));
+    return writeCurationDraft(f.dir);
+  };
   await assert.rejects(
-    writeCurationArtifacts(f.dir, proposal, { ...review, version: 3 }),
+    deliver({ ...review, version: 3 }),
     /CURATOR_REVIEW_INVALID/,
   );
-  await writeCurationArtifacts(f.dir, proposal, { ...review, ignored: [2] });
+  await deliver({ ...review, ignored: [2] });
   await applyCurator(f.work, (await validateCurator(f.work)).seal);
 });

@@ -44,7 +44,7 @@ function command(args: string[], input?: string | Buffer) {
     windowsHide: true,
     timeout: 20000,
     maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, KNOWNEX_CODEX_BIN: 'no-provider-is-available' },
+    env: process.env,
   });
 }
 function cli(args: string[], input?: string | Buffer) {
@@ -73,11 +73,13 @@ async function fixture(t: TestContext, source = unicode) {
     turnId: string,
     text: string,
   ) =>
-    appendFeedEvent(
-      feed,
-      { type, turnId, text, sessionId: 'external-source', hook: 'portable' },
-      true,
-    );
+    appendFeedEvent(feed, {
+      type,
+      turnId,
+      text,
+      sessionId: 'external-source',
+      hook: 'portable',
+    });
   await append('user_message', 'one', source);
   await append('assistant_final', 'one', 'Confirmed.');
   const prepared = cli(['prepare', '--work', work, '--autonomous']);
@@ -549,7 +551,7 @@ test('the Curator reads the whole batch from a frozen WINDOW.md that is smaller 
   const turns = new Set(
     packet.events.map((e: any) => e.sessionId + ' ' + e.turnId),
   );
-  assert.equal(window.text.split('Sessione: ').length - 1, turns.size);
+  assert.equal(window.text.split('Session: ').length - 1, turns.size);
   assert.ok(packet.events.length > turns.size);
   // What the Curator actually ingests: the transported CLI output.
   const transported = (name: string) =>
@@ -769,8 +771,7 @@ test('each checkpoint adds one index line and an immutable window, and runs neve
   const state1 = await readFile(join(f.memory, 'STATE.md'), 'utf8');
   assert.ok(
     window1.endsWith(
-      '## STATE risultante\n\n' +
-        state1.replace(/\]\((?![a-z]+:|#)/gi, '](../'),
+      '## Resulting STATE\n\n' + state1.replace(/\]\((?![a-z]+:|#)/gi, '](../'),
     ),
   );
   await f.append('user_message', 'two', 'Secondo passo.');
@@ -810,7 +811,7 @@ test('each checkpoint adds one index line and an immutable window, and runs neve
   );
   assert.match(
     await readFile(join(f.memory, 'history/H000002.md'), 'utf8'),
-    /## Note scritte\n\n- nessuna\n/,
+    /## Notes written\n\n- none\n/,
   );
   // The timeline is listed newest first, without window bodies.
   const listed = spawnSync(
@@ -827,7 +828,7 @@ test('each checkpoint adds one index line and an immutable window, and runs neve
       ['H000001', 'history/H000001.md'],
     ],
   );
-  assert.ok(!listed.stdout.includes('STATE risultante'));
+  assert.ok(!listed.stdout.includes('Resulting STATE'));
 });
 
 test('write keeps hand-written frontmatter byte for byte', async (t) => {

@@ -2,10 +2,12 @@ import { sessionContext, workspaceDirectory } from './runtime.ts';
 
 try {
   let input = '';
+  let bytes = 0;
   process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) {
     input += chunk;
-    if (Buffer.byteLength(input) > 1024 * 1024) throw new Error();
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > 1024 * 1024) throw new Error();
   }
   const payload = JSON.parse(input);
   if (payload?.hook_event_name !== 'SessionStart') throw new Error();
@@ -25,7 +27,7 @@ try {
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         additionalContext:
-          'KnowNex: memoria/pending non verificati. Non assumere uno stato confermato; nessuna riparazione automatica. Esegui knownex runtime per diagnosticare.',
+          'KnowNex: memory/pending not verified. Do not assume a confirmed state; no automatic repair. Run knownex runtime to diagnose.',
       },
     }) + '\n',
   );

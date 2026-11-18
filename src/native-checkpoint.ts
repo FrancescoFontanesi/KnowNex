@@ -8,7 +8,6 @@ import {
   writeAtomicText,
   writeExclusiveFiles,
 } from './artifact-io.ts';
-import { curatorRequest } from './curator-request-data.ts';
 import { readCurationRun } from './curation-io.ts';
 import {
   finishPreparedCheckpoint,
@@ -18,6 +17,8 @@ import {
 export interface PreparedCheckpointOptions {
   stage: 'prepare' | 'complete';
   run?: string;
+  /** prepare: last feed sequence of a new batch (default: everything pending). */
+  through?: number;
 }
 export interface DelegationResult extends Omit<CheckpointResult, 'status'> {
   status: 'SUCCESS' | 'BLOCKED' | 'ERROR';
@@ -44,6 +45,9 @@ export function delegationResult(result: CheckpointResult): DelegationResult {
 function fail(code: string): never {
   throw Object.assign(new Error(code), { code });
 }
+/** A fault of the machine (a held lock, an errno), not of the delivery: a later run may succeed. */
+export const transient = (code: string) =>
+  code === 'DESTINATION_BUSY' || /^E[A-Z]+$/.test(code);
 const json = async (p: string) => JSON.parse((await readArtifact(p)).text);
 
 /** Principal coordinates prepare/complete; Curator only materializes the frozen run. */
@@ -87,6 +91,7 @@ export async function preparedCheckpoint(
       phase = 'prepare';
       const prepared = await prepareCurator(work, undefined, {
         autonomous: true,
+        ...(options.through !== undefined ? { through: options.through } : {}),
       });
       if (!prepared.run)
         return delegationResult({ status: 'applied', through, action: 'noop' });
@@ -117,13 +122,6 @@ export async function preparedCheckpoint(
             text: jsonText(receipt, 2) + '\n',
           },
         ]);
-      const request = await curatorRequest(run);
-      const requestFile = join(run, 'request.txt');
-      if (existing) {
-        if ((await readArtifact(requestFile)).text !== request.text)
-          fail('CURATOR_INPUTS_CHANGED');
-      } else
-        await writeExclusiveFiles([{ path: requestFile, text: request.text }]);
       return {
         status: 'READY' as const,
         version: 1,
@@ -131,7 +129,6 @@ export async function preparedCheckpoint(
         workspace,
         runId: record.id,
         run,
-        requestFile,
         from: prepared.from,
         through: prepared.through,
       };
@@ -231,11 +228,23 @@ export async function preparedCheckpoint(
     } catch {
       through = null;
     }
+    // A busy lock or an I/O fault says nothing about the delivery: the batch stays prepared.
+    // In apply only a busy lock qualifies, since it stops applyCurator before apply.json exists.
+    const retryable =
+      transient(code) && (phase !== 'apply' || code === 'DESTINATION_BUSY');
     if (run && receipt)
       try {
         await writeAtomicText(
           join(run, 'controller.json'),
-          jsonText({ ...receipt, status: 'failed', phase, code }, 2) + '\n',
+          jsonText(
+            {
+              ...receipt,
+              status: retryable ? 'prepared' : 'failed',
+              phase,
+              code,
+            },
+            2,
+          ) + '\n',
         );
       } catch {
         /* Diagnostic persistence cannot authorize publication. */
@@ -245,9 +254,12 @@ export async function preparedCheckpoint(
       through,
       code,
       phase,
-      cause: 'Checkpoint stopped; no worker retry is authorized.',
-      action:
-        'Inspect internal evidence; withdraw an uncommitted batch before explicitly preparing a new one.',
+      cause: retryable
+        ? 'Checkpoint stopped by a transient failure; the batch stays prepared.'
+        : 'Checkpoint stopped; no worker retry is authorized.',
+      action: retryable
+        ? 'Run the checkpoint again.'
+        : 'Inspect internal evidence; withdraw an uncommitted batch before explicitly preparing a new one.',
       ...(run ? { evidence: run } : {}),
     });
   } finally {

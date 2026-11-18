@@ -48,7 +48,7 @@ test('S3 exact empty seed initializes at zero without rewriting the original see
   );
   assert.match(
     await memoryState(join(work, 'memory')),
-    /Nessuna informazione materializzata/,
+    /Nothing materialized yet/,
   );
 });
 
@@ -68,10 +68,7 @@ async function fixture(t: TestContext, twoNotes = false) {
     });
   }
   for (const turn of ['one', 'two', 'three']) await event(turn);
-  const feed = join(
-    feedDir,
-    createHash('sha256').update('s').digest('hex') + '.jsonl',
-  );
+  const feed = join(feedDir, 'project.jsonl');
   const directive = join(root, 'directive.md');
   await writeFile(
     directive,
@@ -867,7 +864,7 @@ function crashApply(
 const up = (text: string) => text.replace(/\]\((?![a-z]+:|#)/gi, '](../');
 async function windowState(memory: string, id: string) {
   const text = await readFile(join(memory, 'history', id + '.md'), 'utf8'),
-    heading = '## STATE risultante\n\n';
+    heading = '## Resulting STATE\n\n';
   return text.slice(text.indexOf(heading) + heading.length);
 }
 async function snapshot(work: string) {
@@ -1275,7 +1272,7 @@ test('process crashes across promotion boundaries recover the authorized generat
   );
   assert.equal(
     expected.tree[window]!.slice(
-      expected.tree[window]!.indexOf('## STATE risultante\n\n') + 21,
+      expected.tree[window]!.indexOf('## Resulting STATE\n\n') + 20,
     ),
     up(expected.tree['STATE.md']!),
   );
@@ -1484,11 +1481,11 @@ test('authorized original artifacts and new thematic Knowledge are linked withou
   );
   // The Curator's reading copy lists artifacts as workspace paths (not the feed) and the directive.
   const window = await readFile(join(prep.run, 'WINDOW.md'), 'utf8');
-  assert.match(window, /^- Artefatti citabili [^\n]*experiment\.csv`$/m);
+  assert.match(window, /^- Citable artifacts [^\n]*experiment\.csv`$/m);
   assert.ok(!window.includes(packet.feed.split('/').at(-1)));
   assert.ok(packet.directive.trim());
   assert.ok(
-    window.includes('## Direttiva del principale\n\n' + packet.directive),
+    window.includes('## Main session directive\n\n' + packet.directive),
   );
   const original = await readFile(join(f.memory, 'knowledge/topic.md'));
   const artifact =

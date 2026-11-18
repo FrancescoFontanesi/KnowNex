@@ -65,6 +65,7 @@ export function historySegments(text: string, through: number) {
       !body.includes('\n### STATE precedente\n\n> ')
     )
       fail();
+    // Inline segments are a legacy format written in Italian: their labels stay as written.
     // Fonte (a feed link) only exists in segments written before provenance became a label.
     for (const label of ['Argomenti', 'Descrizione', 'Transizione'])
       if (!new RegExp('^- ' + label + ': .+$', 'm').test(body)) fail();
@@ -139,12 +140,12 @@ export function historyWindow(
       (history.endsWith('\n') ? '' : '\n') +
       `- [${id}](${name}) · \`${date}\` · \`${range}\` · ${topics} — ${details.summary}\n`,
     text:
-      `# ${id} — ${topics}\n\n- Data: \`${date}\`\n- Eventi: \`${range}\`\n` +
-      `- Argomenti: ${topics}\n- Descrizione: ${details.summary}\n` +
-      `- Transizione: ${details.transition}\n\n## Note scritte\n\n` +
+      `# ${id} — ${topics}\n\n- Date: \`${date}\`\n- Events: \`${range}\`\n` +
+      `- Topics: ${topics}\n- Description: ${details.summary}\n` +
+      `- Transition: ${details.transition}\n\n## Notes written\n\n` +
       (notes.length
         ? notes.map(([label, href]) => `- [${label}](${href})`).join('\n')
-        : '- nessuna') +
-      `\n\n## STATE risultante\n\n${state}`,
+        : '- none') +
+      `\n\n## Resulting STATE\n\n${state}`,
   };
 }

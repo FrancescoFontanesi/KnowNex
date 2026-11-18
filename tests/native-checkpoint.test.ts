@@ -23,12 +23,25 @@ import {
   delegationResult,
   type DelegationResult,
 } from '../src/native-checkpoint.ts';
-import {
-  readCurationInput,
-  writeCurationArtifacts,
-  writeCurationDraft,
-} from '../src/curation-io.ts';
-import { nativeFixture } from './native-fixture.ts';
+import { readCurationInput, writeCurationDraft } from '../src/curation-io.ts';
+import { jsonText, sha256, writeExclusiveFiles } from '../src/artifact-io.ts';
+
+/** A raw delivery past curate write's checks: what complete itself must still refuse. */
+async function deliverRaw(
+  run: string,
+  proposal: unknown,
+  review: Record<string, unknown>,
+) {
+  const text = jsonText(proposal, 2) + '\n';
+  const written = await writeExclusiveFiles([
+    {
+      path: join(run, 'review.json'),
+      text: jsonText({ ...review, proposalSha256: sha256(text) }, 2) + '\n',
+    },
+    { path: join(run, 'proposal.json'), text },
+  ]);
+  return { proposal: written.at(-1)! };
+}
 
 async function fixture(t: test.TestContext, authorized = true) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'knownex-native-')));
@@ -39,14 +52,6 @@ async function fixture(t: test.TestContext, authorized = true) {
   await mkdir(memory, { recursive: true });
   for (const [name, text] of Object.entries(emptyMemory))
     await writeFile(join(memory, name), text);
-  const peer = await nativeFixture(feed);
-  peer.set('native-fixture', ['facts', 'authorization']);
-  const prior = process.env.KNOWNEX_CODEX_BIN;
-  process.env.KNOWNEX_CODEX_BIN = process.execPath;
-  t.after(() => {
-    if (prior === undefined) delete process.env.KNOWNEX_CODEX_BIN;
-    else process.env.KNOWNEX_CODEX_BIN = prior;
-  });
   for (const [type, turnId, text] of [
     ['user_message', 'facts', 'SOURCE_SENTINEL: persist confirmed facts.'],
     ['assistant_final', 'facts', 'Confirmed.'],
@@ -54,19 +59,15 @@ async function fixture(t: test.TestContext, authorized = true) {
       ? [['user_message', 'authorization', '$knownex-checkpoint']]
       : []),
   ])
-    await appendFeedEvent(
-      feed,
-      {
-        type: type as 'user_message' | 'assistant_final',
-        sessionId: 'native-fixture',
-        nativeThreadId: 'native-fixture',
-        turnId: turnId!,
-        text: text!,
-        hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
-      },
-      true,
-    );
-  return { root, memory, work, feed, peer };
+    await appendFeedEvent(feed, {
+      type: type as 'user_message' | 'assistant_final',
+      sessionId: 'native-fixture',
+      nativeThreadId: 'native-fixture',
+      turnId: turnId!,
+      text: text!,
+      hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
+    });
+  return { root, memory, work, feed };
 }
 async function begin(work: string) {
   const r = await preparedCheckpoint(work, {
@@ -80,7 +81,7 @@ async function produce(run: string, kind = 'valid') {
   const p = JSON.parse((await readCurationInput(run, 'packet.json')).text);
   const state =
     '# Native result\n\nMEMORY_SENTINEL\n\n[E002](' + p.feed + ')\n';
-  return writeCurationArtifacts(
+  return deliverRaw(
     run,
     kind === 'noop'
       ? { action: 'noop' }
@@ -137,34 +138,18 @@ test('principal prepares and completes, one simulated Curator only materializes 
     operation: 'checkpoint',
     workspace: f.root,
     runId: p.runId,
-    requestFile: p.requestFile,
+    run: p.run,
     workerMode: 'materialize-only',
     skill: '.agents/skills/knownex-curator/SKILL.md',
   };
   const delegate = async (task: typeof assignment) => {
     delegations++;
     assert.equal(task.workspace, f.root);
-    const text = await readFile(task.requestFile, 'utf8');
-    assert.ok(!text.includes('SOURCE_SENTINEL'));
-    const request = JSON.parse(text.split('INPUT_REFERENCES_JSON\n')[1]!);
-    assert.equal(request.workerMode, 'materialize-only');
-    assert.equal(request.run, p.run);
-    assert.ok(!text.includes('--stage complete'));
+    assert.ok(!JSON.stringify(task).includes('SOURCE_SENTINEL'));
     const record = JSON.parse(await readFile(join(p.run, 'run.json'), 'utf8'));
     assert.equal(record.authorization, undefined);
     assert.equal(record.last.event.sequence, 2);
-    const prior = process.env.KNOWNEX_CODEX_BIN;
-    let receipts;
-    process.env.KNOWNEX_CODEX_BIN = join(f.root, 'no-app-server-for-curator');
-    try {
-      receipts = await produce(request.run);
-    } finally {
-      process.env.KNOWNEX_CODEX_BIN = prior;
-    }
-    await assert.rejects(readFile(join(f.feed, 'native-calls.jsonl')), {
-      code: 'ENOENT',
-    });
-    return receipts;
+    return produce(task.run);
   };
   await delegate(assignment);
   const result = await finish(f.work, p.runId);
@@ -183,9 +168,6 @@ test('principal prepares and completes, one simulated Curator only materializes 
       'MEMORY_SENTINEL',
     ),
   );
-  await assert.rejects(readFile(join(f.feed, 'native-calls.jsonl')), {
-    code: 'ENOENT',
-  });
   const consumed = await preparedCheckpoint(f.work, {
     stage: 'prepare',
   });
@@ -297,8 +279,10 @@ test('prepare and CLI complete expose only compact coordination results', async 
     );
   const p = await begin(f.work);
   const prepared = { stdout: JSON.stringify(p) };
-  assert.equal(typeof p.requestFile, 'string');
   assert.ok(!('request' in p));
+  // No request file any more: the launcher builds the prompt from the frozen run.
+  assert.ok(!('requestFile' in p));
+  await assert.rejects(stat(join(p.run, 'request.txt')), { code: 'ENOENT' });
   const receipts = await produce(p.run);
   // The removed hash arguments are rejected before the run is touched.
   const legacy = cli(
@@ -356,17 +340,13 @@ test('native apply crash recovers the same authorization without another delegat
     { encoding: 'utf8' },
   );
   assert.equal(child.status, 73, child.stderr + child.stdout);
-  await appendFeedEvent(
-    f.feed,
-    {
-      type: 'user_message',
-      sessionId: 'later',
-      turnId: 'later',
-      text: 'Arrived after the apply crash.',
-      hook: 'portable-source',
-    },
-    true,
-  );
+  await appendFeedEvent(f.feed, {
+    type: 'user_message',
+    sessionId: 'later',
+    turnId: 'later',
+    text: 'Arrived after the apply crash.',
+    hook: 'portable-source',
+  });
   const result = await finish(f.work, p.runId);
   assert.equal(result.status, 'SUCCESS');
   assert.equal(result.replayed, true);
@@ -494,6 +474,35 @@ test('complete while a Curator write is in progress stops busy without consuming
   assert.equal(busy.phase, 'delivery');
   assert.equal(await controllerStatus(p.run), 'prepared');
   await assertMemoryUnchanged(f.memory);
+  assert.equal((await finish(f.work, p.runId)).status, 'SUCCESS');
+});
+
+test('a busy feed lock at apply stops without burning the batch, and the next complete publishes', async (t) => {
+  const f = await fixture(t),
+    p = await begin(f.work);
+  await draft(p.run);
+  await writeCurationDraft(p.run);
+  // Capture is appending: apply finds the feed lock held before writing its intent.
+  const release = await acquireJournalLock(
+    join(f.feed, 'project.jsonl') + '.lock',
+  );
+  const busy = await finish(f.work, p.runId);
+  await release();
+  assert.equal(busy.code, 'DESTINATION_BUSY', JSON.stringify(busy));
+  assert.equal(busy.phase, 'apply');
+  assert.equal(await controllerStatus(p.run), 'prepared');
+  await assertMemoryUnchanged(f.memory);
+  assert.equal((await finish(f.work, p.runId)).status, 'SUCCESS');
+});
+
+test('a pending run prepared with an old request.txt stays valid: the file is ignored', async (t) => {
+  const f = await fixture(t),
+    p = await begin(f.work);
+  await writeFile(join(p.run, 'request.txt'), 'older request format');
+  const again = await preparedCheckpoint(f.work, { stage: 'prepare' });
+  assert.equal(again.status, 'READY', JSON.stringify(again));
+  await draft(p.run);
+  await writeCurationDraft(p.run);
   assert.equal((await finish(f.work, p.runId)).status, 'SUCCESS');
 });
 

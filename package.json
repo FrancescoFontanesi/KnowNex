@@ -2,7 +2,7 @@
   "name": "knownex",
   "version": "0.1.0-rc.11",
   "private": true,
-  "description": "Memoria procedurale locale per workspace Codex.",
+  "description": "Memoria procedurale locale per workspace Codex e Claude Code.",
   "type": "module",
   "bin": {
     "knownex": "dist/index.js"
@@ -23,7 +23,7 @@
   },
   "scripts": {
     "dev": "node src/index.ts",
-    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.request.json",
+    "build": "node -e \"process.getBuiltinModule('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

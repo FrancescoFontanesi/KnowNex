@@ -1,21 +1,5 @@
 {
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \".codex/hooks/stop.cjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \".codex/hooks/feed.cjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -27,13 +11,13 @@
         ]
       }
     ],
-    "SessionEnd": [
+    "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \".codex/hooks/stop.cjs\"",
-            "timeout": 3
+            "command": "node \".codex/hooks/feed.cjs\"",
+            "timeout": 10
           }
         ]
       }

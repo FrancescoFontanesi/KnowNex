@@ -220,7 +220,6 @@ export async function captureCommentary(
   path: unknown,
   sessionId: string,
   turnId: string,
-  project = false,
   provider?: 'codex' | 'claude',
 ) {
   let appended = 0,
@@ -240,7 +239,6 @@ export async function captureCommentary(
           await appendFeedEvent(
             directory,
             provider ? { ...event, provider } : event,
-            project,
           )
         ).appended;
       } catch (error) {

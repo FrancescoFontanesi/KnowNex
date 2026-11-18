@@ -157,13 +157,16 @@ async function historyEntries(root: string): Promise<Entry[]> {
         const end = text.indexOf(marker, start) + marker.length;
         content = text.slice(start, end + (text[end] === '\n' ? 1 : 0));
       }
-      const field = (name: string) => {
-        const value = content.match(new RegExp('^- ' + name + ': (.+)$', 'm'));
+      // Windows written before the English labels keep the Italian ones.
+      const field = (name: string, legacy: string) => {
+        const value = content.match(
+          new RegExp('^- (?:' + name + '|' + legacy + '): (.+)$', 'm'),
+        );
         return value ? value[1]! : fail('MEMORY_INVALID');
       };
-      const topics = field('Argomenti'),
-        description = field('Descrizione'),
-        date = field('Data').replaceAll('`', '');
+      const topics = field('Topics', 'Argomenti'),
+        description = field('Description', 'Descrizione'),
+        date = field('Date', 'Data').replaceAll('`', '');
       return {
         result: {
           id: segment.id,
@@ -174,9 +177,13 @@ async function historyEntries(root: string): Promise<Entry[]> {
           date: clip(date, 64),
           events: { from: segment.from, through: segment.through },
         },
-        metadata: [segment.id, date, topics, description, field('Eventi')].join(
-          '\n',
-        ),
+        metadata: [
+          segment.id,
+          date,
+          topics,
+          description,
+          field('Events', 'Eventi'),
+        ].join('\n'),
         headings: headings(content),
         body: content,
         content,
@@ -592,6 +599,91 @@ export async function memoryFind(
   });
 }
 
+/**
+ * Order of checkpoint folders: legacy `checkpoint-NNNN` (older than HISTORY ids) come before
+ * every `H00000N`; within each family the number decides. Flat notes have no rank.
+ */
+export const folderRank = (file?: string) => {
+  const p = revisionPlacement(file);
+  return p.checkpoint !== undefined
+    ? [0, p.checkpoint]
+    : p.history
+      ? [1, Number(p.history.slice(1))]
+      : undefined;
+};
+/**
+ * Current notes in strictly newer folders that link note `id`: the diary is append-only and old
+ * notes are never rewritten, so a reader of an old note cannot know otherwise.
+ * Read-only; cost: one verified read per current note in a newer folder, nothing for flat/legacy
+ * memories. STATE and HISTORY are not scanned; a link to itself does not count.
+ */
+async function linkedByNewer(
+  root: string,
+  view: { work: string; versions?: KnowledgeVersions } | undefined,
+  id: string,
+  file: string | undefined,
+) {
+  const own = folderRank(file),
+    heads = view?.versions?.heads;
+  if (!view || !heads || !own) return {};
+  const found: { rank: number[]; item: Record<string, unknown> }[] = [];
+  for (const head of Object.values(heads)) {
+    const rank = folderRank(head.file);
+    if (
+      !rank ||
+      head.id === id ||
+      (rank[0] === own[0] ? rank[1]! <= own[1]! : rank[0]! < own[0]!)
+    )
+      continue;
+    const value = await readKnowledgeRevision(
+        view.work,
+        view.versions,
+        head.id,
+      ),
+      from = archivePath(view.work, value.file),
+      pattern = new RegExp(
+        `(?:^|/)(?:[a-z0-9-]+?--)?${id}--[br]-[0-9a-f-]+\\.md$`,
+      );
+    const linked = [
+      ...value.content.matchAll(/(?<!!)\[[^\]]*\]\(([^)\s#]+)(?:#[^)\s]*)?\)/g),
+    ].some((m) => {
+      let url: string;
+      try {
+        url = decodeURIComponent(m[1]!);
+      } catch {
+        return false;
+      }
+      if (/^[a-z]+:/i.test(url)) return false;
+      // Link pinned to a revision (archive name) or logical (key of the current head).
+      const key = relative(root, resolve(dirname(from), url))
+        .split(sep)
+        .join('/');
+      return heads[key]?.id === id || pattern.test(url);
+    });
+    if (!linked) continue;
+    const body = value.content.replace(
+      /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,
+      '',
+    );
+    found.push({
+      rank,
+      item: {
+        id: head.id,
+        title: clip(
+          body.match(/^# +([^\r\n]+)$/m)?.[1]?.trim() ?? head.id,
+          160,
+        ),
+        reference: relative(root, from).split(sep).join('/'),
+        ...revisionPlacement(head.file),
+      },
+    });
+  }
+  const items = found
+    .sort((a, b) => a.rank[0]! - b.rank[0]! || a.rank[1]! - b.rank[1]!)
+    .map((f) => f.item);
+  return items.length ? { linkedByNewer: items } : {};
+}
+
 export async function memoryRead(
   directory: string,
   id: string,
@@ -699,6 +791,9 @@ export async function memoryRead(
               }
             : {}),
           content: result.content,
+          ...(knowledge
+            ? await linkedByNewer(root, view, id, result.file)
+            : {}),
         },
         anchor,
       );
@@ -737,6 +832,9 @@ export async function memoryRead(
                 .join('/'),
               ...revisionPlacement(version.file),
             }
+          : {}),
+        ...(knowledge
+          ? await linkedByNewer(root, view, id, version?.file)
           : {}),
       },
       anchor,

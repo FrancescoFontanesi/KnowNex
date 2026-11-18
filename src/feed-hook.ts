@@ -4,18 +4,19 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendFeedEvent, isFeedInput } from './feed.ts';
 import { captureCommentary } from './commentary.ts';
-import { nativeThread } from './native-history.ts';
 
 try {
   let input = '';
+  let bytes = 0;
   process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) {
     input += chunk;
-    if (Buffer.byteLength(input) > 16 * 1024 * 1024)
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > 16 * 1024 * 1024)
       throw Object.assign(new Error(), { code: 'HOOK_PAYLOAD_TOO_LARGE' });
   }
   const payload = JSON.parse(input);
-  // Transcript-derived data (native thread, commentary) is Codex-specific.
+  // Transcript-derived commentary is read with the provider's own format.
   const codex = process.env.KNOWNEX_PROVIDER !== 'claude';
   const user = payload?.hook_event_name === 'UserPromptSubmit';
   if (!user && payload?.hook_event_name !== 'Stop')
@@ -41,14 +42,6 @@ try {
     process.env.KNOWNEX_PROVIDER === 'codex'
       ? { provider: process.env.KNOWNEX_PROVIDER }
       : {}),
-    ...(codex && typeof payload.transcript_path === 'string'
-      ? {
-          nativeThreadId: await nativeThread(
-            payload.transcript_path,
-            payload.session_id,
-          ).catch(() => null),
-        }
-      : {}),
   } as const;
   if (!isFeedInput(event))
     throw Object.assign(new Error(), { code: 'INVALID_HOOK_PAYLOAD' });
@@ -59,18 +52,13 @@ try {
         payload.transcript_path,
         payload.session_id,
         payload.turn_id,
-        process.env.KNOWNEX_PROJECT_FEED === '1',
         codex
           ? process.env.KNOWNEX_PROVIDER === 'codex'
             ? 'codex'
             : undefined
           : 'claude',
       );
-  const result = await appendFeedEvent(
-    directory,
-    event,
-    process.env.KNOWNEX_PROJECT_FEED === '1',
-  );
+  const result = await appendFeedEvent(directory, event);
   process.stdout.write(
     JSON.stringify({
       status: 'ok',

@@ -22,11 +22,7 @@ async function workspace(t: TestContext) {
   await mkdir(join(root, '.claude/hooks'), { recursive: true });
   await cp('src', join(root, 'src'), { recursive: true });
   await copyFile('package.json', join(root, 'package.json'));
-  for (const name of ['feed', 'stop'])
-    await copyFile(
-      `.codex/hooks/${name}.cjs`,
-      join(root, `.codex/hooks/${name}.cjs`),
-    );
+  await copyFile('.codex/hooks/feed.cjs', join(root, '.codex/hooks/feed.cjs'));
   // Shape of a real Claude Code transcript (records observed from a live session).
   const transcript = join(root, 'claude-transcript.jsonl');
   const user = (promptId: string, content: unknown) => ({
@@ -72,7 +68,6 @@ async function workspace(t: TestContext) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       KNOWNEX_WORKSPACE: root,
-      KNOWNEX_PROJECT_FEED: '1',
       KNOWNEX_PROVIDER: provider,
     };
     delete env.KNOWNEX_CAPTURE;
@@ -208,7 +203,7 @@ test('a Claude payload without prompt_id is reported, not invented', async (t) =
   );
 });
 
-test('Codex payloads keep turn_id and are marked codex; the Stop capture logs per provider', async (t) => {
+test('Codex payloads keep turn_id and are marked codex', async (t) => {
   const w = await workspace(t);
   const r = w.run(
     'feed',
@@ -225,10 +220,4 @@ test('Codex payloads keep turn_id and are marked codex; the Stop capture logs pe
     'codex',
   );
   assert.equal((await w.events()).length, 1);
-  const stop = w.run('stop', { hook_event_name: 'Stop' });
-  assert.equal(stop.status, 0, stop.stderr);
-  assert.equal(
-    (await w.log('.claude/hooks', 'events.jsonl'))[0].status,
-    'captured',
-  );
 });

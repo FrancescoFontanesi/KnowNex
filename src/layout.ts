@@ -45,7 +45,6 @@ export function workspaceLayout(root: string) {
       ? join(root, '.knownex/seed')
       : join(root, '.knownex/memory'),
     feed: join(internal, 'feed'),
-    captures: join(internal, 'captures'),
   };
 }
 

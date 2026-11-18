@@ -13,7 +13,6 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
 import { appendFeedEvent } from '../src/feed.ts';
-import { curatorRequest } from '../scripts/curator-request.ts';
 import {
   emptyMemory,
   initCurator,
@@ -47,17 +46,13 @@ async function fixture(t: TestContext) {
     text: string,
     sessionId = 'A',
   ) =>
-    appendFeedEvent(
-      directory,
-      {
-        type,
-        turnId,
-        text,
-        sessionId,
-        hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
-      },
-      true,
-    );
+    appendFeedEvent(directory, {
+      type,
+      turnId,
+      text,
+      sessionId,
+      hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
+    });
   await event(
     'user_message',
     'work',
@@ -230,27 +225,23 @@ test('administrative handoff turns are excluded without deleting feed or hiding 
   );
   assert.equal(packet.administrativeExcluded, 1);
   await applyCurator(f.work, (await f.noop(next)).seal);
-  await appendFeedEvent(
-    f.directory,
-    {
-      type: 'assistant_commentary',
-      sessionId: 'A',
-      turnId: 'second',
-      hook: 'Stop',
-      messageId: 'persistence-step',
-      text: 'Validazione e applicazione in corso.',
-      source: {
-        transcriptPath: join(f.root, 'synthetic.jsonl'),
-        fileId: 'synthetic',
-        snapshotHash: 'a'.repeat(64),
-        recordHash: 'b'.repeat(64),
-        recordOffset: 0,
-        recordBytes: 64,
-        turnSource: 'turn_context',
-      },
+  await appendFeedEvent(f.directory, {
+    type: 'assistant_commentary',
+    sessionId: 'A',
+    turnId: 'second',
+    hook: 'Stop',
+    messageId: 'persistence-step',
+    text: 'Validazione e applicazione in corso.',
+    source: {
+      transcriptPath: join(f.root, 'synthetic.jsonl'),
+      fileId: 'synthetic',
+      snapshotHash: 'a'.repeat(64),
+      recordHash: 'b'.repeat(64),
+      recordOffset: 0,
+      recordBytes: 64,
+      turnSource: 'turn_context',
     },
-    true,
-  );
+  });
   await f.event('assistant_final', 'second', 'Progressi salvati.');
   const bytes = await readFile(f.feed),
     cp = await readFile(join(f.work, 'checkpoint.json'));

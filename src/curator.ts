@@ -81,9 +81,21 @@ import {
 type Tree = Record<string, string>;
 export const emptyMemory: Tree = {
   'STATE.md':
-    '# Stato iniziale\n\nNessuna informazione materializzata. Gli eventi originali restano nel feed.\n',
+    '# Initial state\n\nNothing materialized yet. The original events stay in the feed.\n',
   'HISTORY.md': '# History\n',
 };
+// Seeds written by earlier (Italian) releases keep their zero-event meaning.
+const legacySeeds = [
+  '# Stato iniziale\n\nNessuna informazione materializzata. Gli eventi originali restano nel feed.\n',
+  '# Stato iniziale\n\nNessun evento e ancora rappresentato da un checkpoint curator.\n',
+];
+const seedText = (name: string, text: string | undefined) =>
+  text === emptyMemory[name] ||
+  (name === 'STATE.md' && legacySeeds.includes(text!));
+const isEmptyMemory = (t: Tree) =>
+  Object.keys(t).length === 2 &&
+  seedText('STATE.md', t['STATE.md']) &&
+  seedText('HISTORY.md', t['HISTORY.md']);
 interface Row {
   event: FeedEvent;
   checksum: string;
@@ -430,7 +442,9 @@ async function validateTree(
   )
     fail('CURATOR_HISTORY_INVALID');
   for (const name of ['HISTORY.md', ...windows])
-    for (const field of tree[name]!.matchAll(/^- Eventi: `([^`]+)`$/gm))
+    for (const field of tree[name]!.matchAll(
+      /^- (?:Events|Eventi): `([^`]+)`$/gm,
+    ))
       validateEventLabel(field[1]!, rows, cutoff);
   for (const [name, text] of Object.entries(tree)) {
     let provenance = false;
@@ -507,7 +521,7 @@ async function validateTree(
           fail('CURATOR_LINK_INVALID');
       }
     }
-    if (name !== 'HISTORY.md' && !provenance && text !== emptyMemory[name])
+    if (name !== 'HISTORY.md' && !provenance && !seedText(name, text))
       fail('CURATOR_PROVENANCE_INVALID');
   }
 }
@@ -658,7 +672,7 @@ async function applyRecord(work: string): Promise<ApplyRecord | undefined> {
     (r.before.sequence === 0 &&
       (r.before.sessionId !== '' ||
         r.before.checksum !== '' ||
-        digest(r.previous) !== digest(emptyMemory))) ||
+        !isEmptyMemory(r.previous as Tree))) ||
     digest(r.previous) !== r.before.memoryHash ||
     digest(r.next) !== r.after.memoryHash ||
     JSON.stringify(r.after) !==
@@ -925,7 +939,20 @@ export async function withConfirmedMemory<T>(
       if (!(await applyRecord(work))) return read();
     } else throw error;
   }
-  const release = await acquireJournalLock(join(work, 'curator.lock'));
+  let release;
+  // Readers wait out another reader or a short apply (about 5 s) instead of failing at once.
+  for (let attempt = 1; ; attempt++)
+    try {
+      release = await acquireJournalLock(join(work, 'curator.lock'));
+      break;
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== 'DESTINATION_BUSY' ||
+        attempt === 25
+      )
+        throw error;
+      await new Promise((done) => setTimeout(done, 200));
+    }
   try {
     const state = await stateAt(work);
     return await read({
@@ -974,7 +1001,7 @@ async function stateAt(work: string, recover = true) {
   )
     fail('CURATOR_FEED_CHANGED');
   const memory = await treeAt(memoryDirectory(work));
-  if (cp.sequence === 0 && digest(memory) !== digest(emptyMemory))
+  if (cp.sequence === 0 && !isEmptyMemory(memory))
     fail('CURATOR_CHECKPOINT_INVALID');
   if (digest(memory) !== cp.memoryHash) fail('CURATOR_MEMORY_CHANGED');
   if (cp.version === 3)
@@ -1050,7 +1077,6 @@ export async function curatorStatus(work: string, feed: string) {
               !inAdministrativeTurn(r, administrative),
           )?.event.sequence ?? through,
       activeRun: run ? join(work, 'runs', run.id) : null,
-      staleRun: false,
       memory: initialized ? memoryDirectory(work) : null,
       state: state?.memory['STATE.md'] ?? emptyMemory['STATE.md']!,
     };
@@ -1525,13 +1551,7 @@ export async function initCurator(
   // S3's untouched empty seed carries the same zero-event meaning. Preserve the
   // seed on disk; only the new curator workspace receives the current empty form.
   const baseline =
-    through === 0 &&
-    Object.keys(original).length === 2 &&
-    original['HISTORY.md'] === emptyMemory['HISTORY.md'] &&
-    original['STATE.md'] ===
-      '# Stato iniziale\n\nNessun evento e ancora rappresentato da un checkpoint curator.\n'
-      ? emptyMemory
-      : original;
+    through === 0 && isEmptyMemory(original) ? emptyMemory : original;
   if (through === 0 && digest(baseline) !== digest(emptyMemory))
     fail('CURATOR_CHECKPOINT_INVALID');
   // Importing a confirmed legacy archive requires relocation of authenticated
@@ -1792,24 +1812,24 @@ export async function prepareCurator(
     const window =
       `# Batch ${label(packet.from)}..${label(packet.through)}\n\n` +
       (cited.length
-        ? `- Artefatti citabili (percorso dalla radice del workspace): ${cited.map((a) => '`' + a + '`').join(', ')}\n`
+        ? `- Citable artifacts (path from the workspace root): ${cited.map((a) => '`' + a + '`').join(', ')}\n`
         : '') +
       (orderingIssues.length
-        ? `- Avvisi ordine: ${orderingIssues.join(', ')}\n`
+        ? `- Ordering warnings: ${orderingIssues.join(', ')}\n`
         : '') +
       (categories.length
-        ? '\n## Categorie approvate\n\n' +
+        ? '\n## Approved categories\n\n' +
           categories.map(([k, d]) => `- \`${k}\`: ${d}`).join('\n') +
           '\n'
         : '') +
       (directive?.trim()
-        ? `\n## Direttiva del principale\n\n${directive}\n`
+        ? `\n## Main session directive\n\n${directive}\n`
         : '') +
       '\n' +
       ordered
         .map((r) => {
           const via = r.event.provider ? ` (${r.event.provider})` : '';
-          const key = `Sessione: ${r.event.sessionId}${via}; turno: ${r.event.turnId}.\n\n`,
+          const key = `Session: ${r.event.sessionId}${via}; turn: ${r.event.turnId}.\n\n`,
             heading = key === turn ? '' : key;
           turn = key;
           return (
@@ -2409,6 +2429,11 @@ export async function applyCurator(work: string, seal: string) {
       record,
       checksum: sha(JSON.stringify(record)),
     });
+    // The intent is durable and recovery checks only the feed prefix up to the batch, which
+    // appends (and their torn-tail truncation) never change: capture need not wait for it.
+    const releaseNow = releaseFeed;
+    releaseFeed = undefined;
+    await releaseNow();
     await recoverApply(work);
     return {
       status: 'applied',

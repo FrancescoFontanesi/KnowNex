@@ -41,17 +41,13 @@ async function fixture(t: TestContext, largeState: boolean | number = false) {
     text: string,
     sessionId = 'A',
   ) =>
-    appendFeedEvent(
-      directory,
-      {
-        type,
-        turnId,
-        text,
-        sessionId,
-        hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
-      },
-      true,
-    );
+    appendFeedEvent(directory, {
+      type,
+      turnId,
+      text,
+      sessionId,
+      hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
+    });
   await event('user_message', 'initial', 'Decisione A; collaudo P aperto.');
   let initialState =
     '# Stato\n\nDecisione A; collaudo P aperto. ' +
@@ -128,7 +124,7 @@ test('SessionStart emits complete confirmed STATE regardless of the former thres
         const context = JSON.parse(r.stdout).hookSpecificOutput
           .additionalContext;
         assert.ok(context.endsWith(state));
-        assert.ok(context.includes(size + ' byte UTF-8'));
+        assert.ok(context.includes(size + ' UTF-8 bytes'));
       }
     }
     assert.deepEqual(await f.snapshot(), before);
@@ -145,8 +141,8 @@ test('A/B: later sessions retrieve completion and supersession sources in bounde
   await f.event('assistant_final', 'change', 'Decisione ricevuta.');
   const before = await f.snapshot();
   const context = await sessionContext(f.root);
-  assert.match(context, /confermato fino al checkpoint E1/);
-  assert.match(context, /Eventi successivi possono cambiare/);
+  assert.match(context, /confirmed up to checkpoint E1/);
+  assert.match(context, /Later events may change/);
   assert.ok(context.includes('Decisione A'));
   assert.ok(
     context.endsWith(await readFile(join(f.work, 'memory/STATE.md'), 'utf8')),

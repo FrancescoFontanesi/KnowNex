@@ -33,6 +33,7 @@ import {
   memoryRead,
   memoryState,
   memoryCategory,
+  folderRank,
 } from '../src/navigator.ts';
 import { historyAppendix } from './legacy-history.ts';
 
@@ -85,7 +86,8 @@ async function fixture(t: TestContext, restored = false) {
       text: 'Synthetic input ' + n,
       hook: 'UserPromptSubmit',
     });
-  const feed = join(feedDir, hash('s') + '.jsonl');
+  // The restored fixture keeps its historical per-session feed name.
+  const feed = join(feedDir, restored ? hash('s') + '.jsonl' : 'project.jsonl');
   if (!restored) {
     await mkdir(join(seed, 'knowledge'), { recursive: true });
     await writeFile(join(seed, 'HISTORY.md'), '# History\n');
@@ -113,6 +115,7 @@ async function fixture(t: TestContext, restored = false) {
     body?: string,
     extra?: string,
     noop = false,
+    stateLink = '',
   ) {
     const p = await prepareCurator(work, undefined, {
       through,
@@ -163,8 +166,9 @@ async function fixture(t: TestContext, restored = false) {
     body?: string,
     extra?: string,
     noop = false,
+    stateLink = '',
   ) {
-    const p = await proposal(through, body, extra, noop),
+    const p = await proposal(through, body, extra, noop, stateLink),
       v = await validateCurator(work);
     await applyCurator(work, v.seal);
     return { p, v, cp: await checkpoint() };
@@ -637,15 +641,33 @@ async function taxonomyEvent(
   text: string,
   turn: string,
 ) {
-  await appendFeedEvent(dirname(f.feed), {
+  return appendBound(f.feed, {
     type,
     sessionId: 's',
     turnId: turn,
     text,
     hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
   });
-  const rows = (await readFile(f.feed, 'utf8')).trim().split('\n');
-  return JSON.parse(rows.at(-1)!).block.event.sequence as number;
+}
+/**
+ * The restored fixture is bound to a legacy per-session feed file that the runtime no longer
+ * writes: append a valid chained frame to that exact file.
+ */
+async function appendBound(feed: string, event: Record<string, unknown>) {
+  const last = JSON.parse(
+    (await readFile(feed, 'utf8')).trim().split('\n').at(-1)!,
+  );
+  const sequence = (last.block.event.sequence as number) + 1;
+  const block = {
+    version: 1,
+    previous: last.checksum,
+    event: { ...event, sequence, capturedAt: new Date().toISOString() },
+  };
+  const checksum = createHash('sha256')
+    .update(JSON.stringify(block))
+    .digest('hex');
+  await appendFile(feed, JSON.stringify({ block, checksum }) + '\n');
+  return sequence;
 }
 async function taxonomyStart(
   f: Awaited<ReturnType<typeof fixture>>,
@@ -882,16 +904,13 @@ test('taxonomy approval is session-bound and the same journal recovers interrupt
     `Proposta ${p.id}; sigillo ${v.seal!}`,
     'display',
   );
-  await appendFeedEvent(dirname(f.feed), {
+  const wrong = await appendBound(f.feed, {
     type: 'user_message',
     sessionId: 'other',
     turnId: 'wrong-session',
     text: 'Approvo',
     hook: 'UserPromptSubmit',
   });
-  const wrong = JSON.parse(
-    (await readFile(f.feed, 'utf8')).trim().split('\n').at(-1)!,
-  ).block.event.sequence;
   await assert.rejects(applyTaxonomy(f.work, p.id, v.seal!, wrong), {
     code: 'TAXONOMY_APPROVAL_REQUIRED',
   });
@@ -1462,4 +1481,54 @@ test('memories with checkpoint-NNNN folders stay readable and the next checkpoin
     (await memoryRead(f.memory, secondId, { at: 4 })).content,
     /Independent result/,
   );
+});
+
+test('read reports newer notes linking an old note (linkedByNewer) without touching memory', async (t) => {
+  const f = await fixture(t);
+  // The same-checkpoint link (second -> note-2) and the STATE link never count as successors.
+  await f.commit(2, 'Prima decisione.', '[Evidenza](note-2.md)');
+  const first = await memoryRead(f.memory, 'knowledge/H000001/note-2.md');
+  assert.equal(first.linkedByNewer, undefined);
+  await f.commit(
+    4,
+    'Seconda decisione, supera [la prima](H000001/note-2.md).',
+    undefined,
+    false,
+    ' [Nota](knowledge/H000001/note-2.md)',
+  );
+  await f.commit(6, 'Terza, non linka nulla.');
+  const stateBefore = await memoryState(f.memory);
+  const old = await memoryRead(f.memory, 'knowledge/H000001/note-2.md');
+  assert.deepEqual(
+    (old.linkedByNewer as { id: string; history: string }[]).map((n) => [
+      n.id,
+      n.history,
+    ]),
+    [[noteId(4), 'H000002']],
+  );
+  assert.equal(old.content, first.content);
+  // The pinned reference of the old revision gets the same field; newer notes have none.
+  const exact = (await memoryRead(f.memory, noteId(2))) as {
+    versionReference: string;
+  };
+  assert.deepEqual(
+    (await memoryRead(f.memory, exact.versionReference)).linkedByNewer,
+    old.linkedByNewer,
+  );
+  assert.equal(
+    (await memoryRead(f.memory, 'knowledge/H000002/note-4.md')).linkedByNewer,
+    undefined,
+  );
+  assert.equal(await memoryState(f.memory), stateBefore);
+});
+
+test('folderRank orders legacy checkpoint-NNNN before every H folder', () => {
+  const r = (folder: string) =>
+    folderRank(folder + '/n--' + id + '--r-1-1-' + '0'.repeat(36) + '.md')!;
+  const before = (a: number[], b: number[]) =>
+    a[0]! < b[0]! || (a[0] === b[0] && a[1]! < b[1]!);
+  assert.ok(before(r('checkpoint-0009'), r('H000001')));
+  assert.ok(before(r('checkpoint-0002'), r('checkpoint-0010')));
+  assert.ok(before(r('H000002'), r('H000010')));
+  assert.equal(folderRank('topic--x.md'), undefined);
 });

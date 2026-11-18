@@ -1,4 +1,4 @@
-// Sessione curatore effimera: nessuna acquisizione né contesto.
+// Ephemeral curator session: no capture and no context.
 if (process.env.KNOWNEX_CAPTURE === '0') process.exit(0);
 const { appendFileSync, existsSync } = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -81,10 +81,12 @@ function capture(input) {
   let payload, result, failure;
   try {
     let input = '';
+    let bytes = 0;
     process.stdin.setEncoding('utf8');
     for await (const chunk of process.stdin) {
       input += chunk;
-      if (Buffer.byteLength(input) > 16 * 1024 * 1024)
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > 16 * 1024 * 1024)
         throw Object.assign(new Error(), { code: 'HOOK_PAYLOAD_TOO_LARGE' });
     }
     const value = JSON.parse(input);

@@ -12,7 +12,6 @@ import {
   validateCurator,
   applyCurator,
 } from '../src/curator.ts';
-import { curatorRequest } from '../scripts/curator-request.ts';
 
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
@@ -34,7 +33,7 @@ test('autonomous curation freezes references, binds targeted review and adds not
       text: 'SOURCE_SENTINEL_' + n,
       hook: 'UserPromptSubmit',
     });
-  await initCurator(work, memory, join(directory, hash('s') + '.jsonl'), 0);
+  await initCurator(work, memory, join(directory, 'project.jsonl'), 0);
   let previous = '';
   let priorHead: unknown;
   for (let n = 1; n <= 3; n++) {
@@ -49,8 +48,6 @@ test('autonomous curation freezes references, binds targeted review and adds not
     );
     assert.deepEqual(Object.keys(packet.context), ['STATE.md']);
     assert.equal(packet.events.length, 1);
-    const request = await curatorRequest(run);
-    assert.ok(!request.text.includes('SOURCE_SENTINEL'));
     if (n > 1) {
       assert.equal(manifest.knowledge.length, n - 1);
       previous = await readFile(
@@ -63,7 +60,6 @@ test('autonomous curation freezes references, binds targeted review and adds not
         'utf8',
       );
       assert.ok(previous.includes('Original detail'));
-      assert.ok(!request.text.includes('Original detail'));
     }
     // A new note is filed under its checkpoint's HISTORY id: detail.md under H000001.
     const state =

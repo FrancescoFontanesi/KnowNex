@@ -1,12 +1,9 @@
 import { transportJson } from './artifact-io.ts';
-import { nativePreflight } from './native-preflight.ts';
 import { launchCheckpoint } from './checkpoint-launcher.ts';
 import { workspaceLayout } from './layout.ts';
 import { stat } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { syncSession, CaptureError } from './capture.ts';
-import { ReaderError } from './reader.ts';
 import {
   memoryState,
   memoryFind,
@@ -23,7 +20,6 @@ import {
   runtimePending,
 } from './runtime.ts';
 
-const syncUsage = 'Usage: knownex sync --source <jsonl> --destination <file>';
 const memoryUsage = [
   'Usage: knownex memory state [--memory <directory>]',
   '       knownex memory find "<query>" [--type history|knowledge] [--memory <directory>]',
@@ -35,15 +31,14 @@ const memoryUsage = [
 const initUsage =
   'Usage: knownex init [--workspace <directory>] [--provider codex|claude|codex,claude]';
 const checkpointUsage =
-  'Usage: knownex checkpoint (--codex | --claude) [-m <model>] [-r <effort>] [--workspace <directory>]';
+  'Usage: knownex checkpoint (--codex | --claude | --agy) [-m <model>] [-r <effort>] [--through <sequence>] [--workspace <directory>]';
+const runtimeUsage = 'Usage: knownex runtime [--summary]';
 const usage =
-  syncUsage +
-  '\n' +
   initUsage +
   '\n' +
   checkpointUsage +
-  '\nUsage: knownex runtime [--summary]' +
-  '\nUsage: knownex preflight [--workspace <directory>] (read-only native hook approval)' +
+  '\n' +
+  runtimeUsage +
   '\nUsage: knownex pending [--workspace <directory>] [--from <sequence> --through <sequence> | --cursor <token>] [--limit <1..20>] [--include-administrative]' +
   '\n' +
   memoryUsage +
@@ -52,56 +47,31 @@ const usage =
 
 class UsageError extends Error {}
 
-function parseCommand(args: string[]) {
-  try {
-    if (args[0] !== 'sync') throw new UsageError();
-    const { values, tokens } = parseArgs({
-      args: args.slice(1),
-      options: { source: { type: 'string' }, destination: { type: 'string' } },
-      strict: true,
-      allowPositionals: false,
-      tokens: true,
-    });
-    if (
-      tokens.filter((token) => token.kind === 'option').length !== 2 ||
-      !values.source?.trim() ||
-      !values.destination?.trim() ||
-      values.source.includes('\0') ||
-      values.destination.includes('\0')
-    )
-      throw new UsageError();
-    return {
-      source: resolve(values.source),
-      destination: resolve(values.destination),
-    };
-  } catch {
-    throw new UsageError();
-  }
-}
-
 async function main(args: string[]) {
   if (
     args.length === 0 ||
     (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) ||
     (args.length === 2 &&
-      ['sync', 'memory', 'init', 'pending', 'preflight', 'checkpoint'].includes(
+      ['memory', 'init', 'pending', 'runtime', 'checkpoint'].includes(
         args[0]!,
       ) &&
       args[1] === '--help') ||
     (args.length === 3 &&
       args[0] === 'memory' &&
-      ['state', 'find', 'read', 'category', 'history'].includes(args[1]!) &&
+      ['state', 'find', 'read', 'category', 'history', 'event'].includes(
+        args[1]!,
+      ) &&
       args[2] === '--help')
   ) {
     console.log(
-      args[0] === 'sync'
-        ? syncUsage
-        : args[0] === 'memory'
-          ? memoryUsage
-          : args[0] === 'init'
-            ? initUsage
-            : args[0] === 'checkpoint'
-              ? checkpointUsage
+      args[0] === 'memory'
+        ? memoryUsage
+        : args[0] === 'init'
+          ? initUsage
+          : args[0] === 'checkpoint'
+            ? checkpointUsage
+            : args[0] === 'runtime'
+              ? runtimeUsage
               : usage,
     );
     return;
@@ -115,8 +85,10 @@ async function main(args: string[]) {
         options: {
           codex: { type: 'boolean' },
           claude: { type: 'boolean' },
+          agy: { type: 'boolean' },
           model: { type: 'string', short: 'm' },
           effort: { type: 'string', short: 'r' },
+          through: { type: 'string' },
           workspace: { type: 'string' },
         },
       });
@@ -126,10 +98,14 @@ async function main(args: string[]) {
       values = parsed.values;
       if (
         new Set(names).size !== names.length ||
-        values.codex === values.claude ||
+        [values.codex, values.claude, values.agy].filter(Boolean).length !==
+          1 ||
         [values.model, values.effort, values.workspace].some(
           (v) => v !== undefined && (!v.trim() || v.includes('\0')),
-        )
+        ) ||
+        (values.through !== undefined &&
+          (!/^[1-9]\d*$/.test(values.through) ||
+            !Number.isSafeInteger(Number(values.through))))
       )
         throw new UsageError();
     } catch {
@@ -138,9 +114,10 @@ async function main(args: string[]) {
     const result = await launchCheckpoint(
       values.workspace ?? workspaceDirectory(),
       {
-        provider: values.codex ? 'codex' : 'claude',
+        provider: values.codex ? 'codex' : values.claude ? 'claude' : 'agy',
         ...(values.model ? { model: values.model } : {}),
         ...(values.effort ? { effort: values.effort } : {}),
+        ...(values.through ? { through: Number(values.through) } : {}),
       },
     );
     console.log(transportJson(result));
@@ -207,7 +184,7 @@ async function main(args: string[]) {
     } else console.log(transportJson(status));
     return;
   }
-  if (args[0] === 'init' || args[0] === 'preflight') {
+  if (args[0] === 'init') {
     let workspace: string;
     let providers: Provider[] | undefined;
     try {
@@ -215,16 +192,14 @@ async function main(args: string[]) {
         args: args.slice(1),
         options: {
           workspace: { type: 'string' },
-          ...(args[0] === 'init'
-            ? { provider: { type: 'string' as const } }
-            : {}),
+          provider: { type: 'string' },
         },
         strict: true,
         allowPositionals: false,
         tokens: true,
       });
       const names = tokens.map((t) => (t.kind === 'option' ? t.name : ''));
-      const provider = (values as { provider?: string }).provider;
+      const provider = values.provider;
       if (
         new Set(names).size !== names.length ||
         (values.workspace !== undefined &&
@@ -241,12 +216,7 @@ async function main(args: string[]) {
     } catch {
       throw new UsageError();
     }
-    const result =
-      args[0] === 'preflight'
-        ? await nativePreflight(workspace)
-        : await initWorkspace(workspace, providers);
-    console.log(transportJson(result));
-    if (result.status === 'blocked') process.exitCode = 1;
+    console.log(transportJson(await initWorkspace(workspace, providers)));
     return;
   }
   if (args[0] === 'memory') {
@@ -322,25 +292,7 @@ async function main(args: string[]) {
     }
     return;
   }
-  const { source, destination } = parseCommand(args);
-  if (!(await stat(source)).isFile()) {
-    throw Object.assign(new Error(), { code: 'SOURCE_NOT_FILE' });
-  }
-  if (!(await stat(dirname(destination))).isDirectory()) {
-    throw Object.assign(new Error(), {
-      code: 'DESTINATION_PARENT_NOT_DIRECTORY',
-    });
-  }
-  try {
-    if (!(await stat(destination)).isFile()) {
-      throw Object.assign(new Error(), { code: 'DESTINATION_NOT_FILE' });
-    }
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
-      throw error;
-  }
-  const { appended, recoveredBytes } = await syncSession(source, destination);
-  console.log(transportJson({ status: 'ok', appended, recoveredBytes }));
+  throw new UsageError();
 }
 
 function parseMemoryCommand(args: string[]) {
@@ -419,11 +371,7 @@ try {
         ? error.code
         : process.argv[2] === 'memory'
           ? 'MEMORY_FAILED'
-          : 'SYNC_FAILED';
-  const offset =
-    error instanceof CaptureError || error instanceof ReaderError
-      ? error.offset
-      : undefined;
+          : 'COMMAND_FAILED';
   // Never print exception messages: parsers and I/O errors may contain user data.
   const file =
     code.startsWith('BOOTSTRAP_') &&
@@ -432,7 +380,7 @@ try {
     typeof error.file === 'string'
       ? error.file
       : undefined;
-  console.error(transportJson({ status: 'error', code, offset, file }));
+  console.error(transportJson({ status: 'error', code, file }));
   process.exitCode =
     error instanceof UsageError ||
     [

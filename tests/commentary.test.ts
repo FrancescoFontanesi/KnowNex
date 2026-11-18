@@ -67,10 +67,7 @@ async function fixture(t: TestContext) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'session.jsonl'),
     directory = join(root, 'feed');
-  const destination = join(
-    directory,
-    createHash('sha256').update(sessionId).digest('hex') + '.jsonl',
-  );
+  const destination = join(directory, 'project.jsonl');
   const write = (records: unknown[]) =>
     writeFile(source, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
   const events = async (): Promise<FeedEvent[]> =>
@@ -194,34 +191,29 @@ test('legacy to paginated uses stable identity, refuses divergent content and co
 
 test('project commentary shares the cross-session feed and repeated capture is idempotent', async (t) => {
   const f = await fixture(t);
-  await appendFeedEvent(
-    f.directory,
-    {
-      type: 'user_message',
-      sessionId: 'previous-session',
-      turnId,
-      text: 'Prior pending',
-      hook: 'UserPromptSubmit',
-    },
-    true,
-  );
+  await appendFeedEvent(f.directory, {
+    type: 'user_message',
+    sessionId: 'previous-session',
+    turnId,
+    text: 'Prior pending',
+    hook: 'UserPromptSubmit',
+  });
   await f.write([
     meta(),
     message('project-commentary', 'Relevant intermediate'),
   ]);
   assert.equal(
-    (await captureCommentary(f.directory, f.source, sessionId, turnId, true))
+    (await captureCommentary(f.directory, f.source, sessionId, turnId))
       .commentaryAppended,
     1,
   );
-  const destination = join(f.directory, 'project.jsonl');
-  const bytes = await readFile(destination);
+  const bytes = await readFile(f.destination);
   assert.equal(
-    (await captureCommentary(f.directory, f.source, sessionId, turnId, true))
+    (await captureCommentary(f.directory, f.source, sessionId, turnId))
       .commentaryAppended,
     0,
   );
-  assert.deepEqual(await readFile(destination), bytes);
+  assert.deepEqual(await readFile(f.destination), bytes);
   const events = bytes
     .toString('utf8')
     .trimEnd()
@@ -234,7 +226,6 @@ test('project commentary shares the cross-session feed and repeated capture is i
       [2, sessionId, 'assistant_commentary'],
     ],
   );
-  await assert.rejects(readFile(f.destination), { code: 'ENOENT' });
 });
 
 test('wrong session, malformed source, incomplete records and inconsistent retained identity do not invent events', async (t) => {

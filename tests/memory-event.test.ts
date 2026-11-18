@@ -28,17 +28,13 @@ async function fixture(t: TestContext, events = 25) {
   for (const [name, text] of Object.entries(emptyMemory))
     await writeFile(join(memory, name), text);
   for (let n = 1; n <= events; n++)
-    await appendFeedEvent(
-      directory,
-      {
-        type: n % 2 ? 'user_message' : 'assistant_final',
-        sessionId: 's',
-        turnId: String(n),
-        text: n === 1 ? unicode : 'evento ' + n,
-        hook: n % 2 ? 'UserPromptSubmit' : 'Stop',
-      },
-      true,
-    );
+    await appendFeedEvent(directory, {
+      type: n % 2 ? 'user_message' : 'assistant_final',
+      sessionId: 's',
+      turnId: String(n),
+      text: n === 1 ? unicode : 'evento ' + n,
+      hook: n % 2 ? 'UserPromptSubmit' : 'Stop',
+    });
   await initCurator(work, memory, join(directory, 'project.jsonl'), 0);
   const directive = join(root, 'directive.md');
   await writeFile(directive, 'Synthetic protocol test only.');

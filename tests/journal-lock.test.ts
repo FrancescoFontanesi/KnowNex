@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
   mkdtemp,
@@ -25,11 +25,16 @@ async function fixture(t: TestContext) {
   return { root, lock: join(root, 'capture.jsonl.lock') };
 }
 
-test('un lock pubblicato contiene sempre il proprietario completo e blocca altri scrittori', async (t) => {
+test('a published lock always holds the full owner and blocks other writers', async (t) => {
   const { root, lock } = await fixture(t);
   const release = await acquireJournalLock(lock);
   try {
-    assert.equal(JSON.parse(await readFile(lock, 'utf8')).pid, process.pid);
+    const published = JSON.parse(await readFile(lock, 'utf8'));
+    assert.equal(published.pid, process.pid);
+    assert.equal(
+      new Date(published.acquiredAt).toISOString(),
+      published.acquiredAt,
+    );
     await assert.rejects(acquireJournalLock(lock), {
       code: 'DESTINATION_BUSY',
     });
@@ -40,44 +45,8 @@ test('un lock pubblicato contiene sempre il proprietario completo e blocca altri
   assert.deepEqual(await readdir(root), []);
 });
 
-test('la CLI in un altro processo rispetta il lock e non modifica il registro occupato', async (t) => {
-  const { root, lock } = await fixture(t);
-  const source = join(root, 'source.jsonl'),
-    destination = join(root, 'capture.jsonl');
-  await writeFile(source, '{"id":1}\n');
-  await writeFile(destination, '');
-  const release = await acquireJournalLock(lock);
-  const args = [
-    resolve('src/index.ts'),
-    'sync',
-    '--source',
-    source,
-    '--destination',
-    destination,
-  ];
-  try {
-    const result = spawnSync(process.execPath, args, {
-      encoding: 'utf8',
-      timeout: 5000,
-    });
-    assert.ifError(result.error);
-    assert.equal(result.status, 1);
-    assert.equal(JSON.parse(result.stderr).code, 'DESTINATION_BUSY');
-    assert.equal(await readFile(destination, 'utf8'), '');
-  } finally {
-    await release();
-  }
-  const result = spawnSync(process.execPath, args, {
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).appended, 1);
-});
-
 test(
-  'lock lasciato da un processo interrotto viene recuperato; una recovery occupata resta conservativa',
+  'a lock left by an interrupted process is recovered; a busy recovery stays conservative',
   { timeout: 10000 },
   async (t) => {
     const { root, lock } = await fixture(t);
@@ -111,7 +80,7 @@ test(
   },
 );
 
-test('lock malformati o modificati non vengono eliminati silenziosamente', async (t) => {
+test('malformed or modified locks are not deleted silently', async (t) => {
   const { root, lock } = await fixture(t);
   await writeFile(lock, '{broken');
   await assert.rejects(acquireJournalLock(lock), { code: 'LOCK_CORRUPT' });

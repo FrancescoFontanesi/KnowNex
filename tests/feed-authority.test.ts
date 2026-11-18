@@ -13,7 +13,6 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { appendFeedEvent } from '../src/feed.ts';
-import { nativeThread } from '../src/native-history.ts';
 import {
   emptyMemory,
   initCurator,
@@ -28,12 +27,6 @@ async function fixture(t: TestContext) {
     await mkdtemp(join(tmpdir(), 'knownex-feed-authority-')),
   );
   t.after(() => rm(root, { recursive: true, force: true }));
-  const prior = process.env.KNOWNEX_CODEX_BIN;
-  process.env.KNOWNEX_CODEX_BIN = join(root, 'no-codex.exe');
-  t.after(() => {
-    if (prior === undefined) delete process.env.KNOWNEX_CODEX_BIN;
-    else process.env.KNOWNEX_CODEX_BIN = prior;
-  });
   const directory = join(root, '.knownex/feed'),
     feed = join(directory, 'project.jsonl'),
     work = join(root, '.knownex/curator'),
@@ -54,18 +47,14 @@ async function fixture(t: TestContext) {
     type: 'user_message' | 'assistant_final' = 'user_message',
     nativeThreadId: string | null = 'original-thread',
   ) =>
-    appendFeedEvent(
-      directory,
-      {
-        type,
-        sessionId: 'original-session',
-        nativeThreadId,
-        turnId,
-        text,
-        hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
-      },
-      true,
-    );
+    appendFeedEvent(directory, {
+      type,
+      sessionId: 'original-session',
+      nativeThreadId,
+      turnId,
+      text,
+      hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
+    });
   const pair = async (turn: string) => {
     await event(turn, 'Persist ' + turn);
     await event(turn, 'Confirmed ' + turn, 'assistant_final', null);
@@ -107,23 +96,7 @@ async function fixture(t: TestContext) {
     proposal,
   };
 }
-test('capture reads only local native header; missing history never invents identity', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'knownex-header-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const source = join(root, 'source.jsonl');
-  await writeFile(
-    source,
-    JSON.stringify({
-      type: 'session_meta',
-      payload: { id: 'fork', session_id: 'tree' },
-    }) + '\n',
-  );
-  assert.equal(await nativeThread(source, 'tree'), 'fork');
-  await assert.rejects(nativeThread(source, 'different'), {
-    code: 'FEED_NATIVE_IDENTITY_INVALID',
-  });
-});
-test('recorded feed is authoritative with nativeHistory metadata and unavailable Codex', async (t) => {
+test('recorded feed is authoritative with legacy nativeHistory metadata', async (t) => {
   const f = await fixture(t);
   await f.pair('first');
   await f.pair('second');

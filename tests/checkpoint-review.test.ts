@@ -32,7 +32,7 @@ async function fixture(t: test.TestContext) {
     text: 'Preserve the open prerequisite.',
     hook: 'UserPromptSubmit',
   });
-  await initCurator(work, memory, join(feed, hash('s') + '.jsonl'), 0);
+  await initCurator(work, memory, join(feed, 'project.jsonl'), 0);
   const prepared = await prepareCurator(work, undefined, {
     through: 1,
     autonomous: true,

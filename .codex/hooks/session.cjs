@@ -1,4 +1,4 @@
-// Sessione curatore effimera: nessuna acquisizione né contesto.
+// Ephemeral curator session: no capture and no context.
 if (process.env.KNOWNEX_CAPTURE === '0') process.exit(0);
 const { existsSync } = require('node:fs');
 const { spawn } = require('node:child_process');

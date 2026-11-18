@@ -43,17 +43,13 @@ async function fixture(t: TestContext) {
   await initCurator(work, memory, join(feed, 'project.jsonl'), 0);
   let n = 0;
   const append = (text: string) =>
-    appendFeedEvent(
-      feed,
-      {
-        type: 'user_message',
-        sessionId: 'portable-source',
-        turnId: String(++n),
-        text,
-        hook: 'source-acquisition',
-      },
-      true,
-    );
+    appendFeedEvent(feed, {
+      type: 'user_message',
+      sessionId: 'portable-source',
+      turnId: String(++n),
+      text,
+      hook: 'source-acquisition',
+    });
   return {
     root,
     memory,
@@ -160,13 +156,8 @@ test('native prepare without an authorization argument is idempotent and returns
     assert.equal(repeated.runId, p.runId);
     assert.equal(repeated.through, 1);
   }
-  const request = JSON.parse(
-    (await readFile(p.requestFile, 'utf8')).split(
-      'INPUT_REFERENCES_JSON\n',
-    )[1]!,
-  );
-  assert.equal(request.packet.path, join(p.run, 'packet.json'));
-  assert.equal(request.manifest.path, join(p.run, 'inputs.json'));
+  for (const name of ['packet.json', 'inputs.json', 'WINDOW.md', 'SKILL.md'])
+    assert.ok((await readdir(p.run)).includes(name), name);
 });
 
 test('a frozen prefix edit blocks publication even if a suffix was appended', async (t) => {

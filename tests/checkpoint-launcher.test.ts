@@ -24,8 +24,8 @@ import {
 import { writeCurationDraft } from '../src/curation-io.ts';
 import { emptyMemory } from '../src/curator.ts';
 import { appendFeedEvent } from '../src/feed.ts';
+import { acquireJournalLock } from '../src/journal-lock.ts';
 import { memoryFind, memoryRead } from '../src/navigator.ts';
-import { nativeFixture } from './native-fixture.ts';
 
 async function fixture(t: test.TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'knownex-launch-')));
@@ -35,30 +35,18 @@ async function fixture(t: test.TestContext) {
   await mkdir(memory, { recursive: true });
   for (const [name, text] of Object.entries(emptyMemory))
     await writeFile(join(memory, name), text);
-  const peer = await nativeFixture(feed);
-  peer.set('launch', ['facts']);
-  const prior = process.env.KNOWNEX_CODEX_BIN;
-  process.env.KNOWNEX_CODEX_BIN = process.execPath;
-  t.after(() => {
-    if (prior === undefined) delete process.env.KNOWNEX_CODEX_BIN;
-    else process.env.KNOWNEX_CODEX_BIN = prior;
-  });
   for (const [type, text] of [
     ['user_message', 'SOURCE_SENTINEL: persist confirmed facts.'],
     ['assistant_final', 'Confirmed.'],
   ] as const)
-    await appendFeedEvent(
-      feed,
-      {
-        type,
-        sessionId: 'launch',
-        nativeThreadId: 'launch',
-        turnId: 'facts',
-        text,
-        hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
-      },
-      true,
-    );
+    await appendFeedEvent(feed, {
+      type,
+      sessionId: 'launch',
+      nativeThreadId: 'launch',
+      turnId: 'facts',
+      text,
+      hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
+    });
   return { root, memory };
 }
 
@@ -92,17 +80,20 @@ function curator(
     if (outcome === 'fail') return { exitCode: 1, error: 'provider crashed' };
     // A session that ends normally without an answer (as seen once in a real run).
     if (outcome === 'silent')
-      return {
-        exitCode: 0,
-        output: 'Leggo la skill.\nNon trovo la CLI KnowNex.\n',
-      };
+      return codexReply('Leggo la skill.\nNon trovo la CLI KnowNex.\n');
     // First answer cites an event after the batch; the corrected one is valid.
     const bad =
       outcome === 'stubborn' || (outcome === 'fix' && prompts.length === 1);
-    return { exitCode: 0, output: answer(bad ? [99] : [1]) };
+    return codexReply(answer(bad ? [99] : [1]));
   };
   return run;
 }
+
+/** A finished codex session whose last message is `text`. */
+const codexReply = (text: string) => ({
+  exitCode: 0,
+  output: codexEvents(text),
+});
 
 const codexEvents = (text: string, input = 1000) =>
   [
@@ -117,6 +108,39 @@ const codexEvents = (text: string, input = 1000) =>
         cached_input_tokens: 400,
         output_tokens: 50,
         reasoning_output_tokens: 7,
+      },
+    },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join('\n') + '\n';
+
+/** agy stream-json: init, steps, an earlier turn's result and the final cumulative one. */
+const agyEvents = (response: string, status = 'SUCCESS', error?: string) =>
+  [
+    { event: 'init', conversation_id: 'c', init: { tools: [] } },
+    { event: 'step_update', step_update: { text_delta: '{"proposal":' } },
+    {
+      event: 'result',
+      result: {
+        status: 'SUCCESS',
+        response: 'prima',
+        usage: { input_tokens: 1 },
+      },
+    },
+    {
+      event: 'result',
+      result: {
+        status,
+        response,
+        ...(error ? { error } : {}),
+        num_turns: 1,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 60,
+          thinking_tokens: 20,
+          cache_read_tokens: 300,
+          total_tokens: 1060,
+        },
       },
     },
   ]
@@ -148,11 +172,83 @@ test('the final message and token use are read from each provider structured out
       tokens: { input: 1002, cached: 700, output: 40, reasoning: 5 },
     },
   );
-  // Plain text (or an unexpected shape) is the message itself, with no token claim.
-  assert.deepEqual(readReply('codex', 'solo testo'), { message: 'solo testo' });
-  assert.deepEqual(readReply('claude', '{"proposal":{}}'), {
-    message: '{"proposal":{}}',
+  // agy: the last cumulative result; input_tokens leaves cache reads out.
+  assert.deepEqual(readReply('agy', agyEvents('FINALE è')), {
+    message: 'FINALE è',
+    tokens: { input: 1300, cached: 300, output: 60, reasoning: 20 },
   });
+  assert.deepEqual(readReply('agy', agyEvents('', 'ERROR', 'quota')), {
+    message: '',
+    tokens: { input: 1300, cached: 300, output: 60, reasoning: 20 },
+    error: 'quota',
+  });
+  // The schema-checked object wins over the response text.
+  assert.equal(
+    readReply(
+      'agy',
+      agyEvents('{"proposal":').replace(
+        '"num_turns":1',
+        '"num_turns":1,"structured_output":{"proposal":{"action":"noop"}}',
+      ),
+    ).message,
+    '{"proposal":{"action":"noop"}}',
+  );
+  // Cut or empty output: no result is a failure, never a message parsed from the events.
+  assert.deepEqual(readReply('agy', agyEvents('X').split('\n')[0]!), {
+    message: '',
+    error: 'AGY_RESULT_MISSING',
+  });
+  // Raw stdout is never the message: no agent message or result is a failure.
+  assert.deepEqual(readReply('codex', 'solo testo'), {
+    message: '',
+    error: 'CODEX_MESSAGE_MISSING',
+  });
+  assert.deepEqual(readReply('claude', 'solo testo'), {
+    message: '',
+    error: 'CLAUDE_RESULT_MISSING',
+  });
+  assert.deepEqual(readReply('claude', '{"proposal":{}}'), {
+    message: '',
+    error: 'CLAUDE_RESULT_MISSING',
+  });
+  // claude reports a failed turn with is_error, its text in result.
+  assert.deepEqual(
+    readReply(
+      'claude',
+      JSON.stringify({ is_error: true, subtype: 'success', result: 'quota' }),
+    ),
+    { message: '', error: 'quota' },
+  );
+  assert.equal(
+    readReply('claude', JSON.stringify({ is_error: true, subtype: 'error_x' }))
+      .error,
+    'claude error_x',
+  );
+  // codex: turn.failed fails even after a message; a stream error only explains a missing one.
+  const failed = readReply(
+    'codex',
+    codexEvents('{"proposal":{}}') +
+      JSON.stringify({
+        type: 'turn.failed',
+        error: { message: 'x'.repeat(9000) },
+      }),
+  );
+  assert.equal(failed.error, 'x'.repeat(500), 'bounded');
+  const events = (...e: object[]) => e.map((x) => JSON.stringify(x)).join('\n');
+  assert.deepEqual(
+    readReply('codex', events({ type: 'error', message: 'stream lost' })),
+    { message: '', error: 'stream lost' },
+  );
+  assert.deepEqual(
+    readReply(
+      'codex',
+      events(
+        { type: 'error', message: 'Reconnecting... 1/5' },
+        { item: { type: 'agent_message', text: 'FINALE' } },
+      ),
+    ),
+    { message: 'FINALE' },
+  );
 });
 
 test('provider argv is non-interactive, unpersisted and minimal-context, and rejects unsafe values', () => {
@@ -190,7 +286,7 @@ test('provider argv is non-interactive, unpersisted and minimal-context, and rej
     'features.unified_exec=false',
   ])
     assert.ok(overrides.includes(c), c);
-  assert.match(overrides[0]!, /^instructions="Sei il Curator di KnowNex\./);
+  assert.match(overrides[0]!, /^instructions="You are the KnowNex Curator./);
   // A feature unknown to another Codex version must not fail the launch: never --disable.
   assert.ok(!args.includes('--disable'));
   assert.deepEqual(
@@ -208,7 +304,7 @@ test('provider argv is non-interactive, unpersisted and minimal-context, and rej
         '--safe-mode',
         '--strict-mcp-config',
         '--system-prompt',
-        "Sei il Curator di KnowNex. Il messaggio dell'utente contiene l'incarico completo e il formato della risposta.",
+        "You are the KnowNex Curator. The user's message holds the whole task and the answer format.",
         '--tools',
         '',
         '--model',
@@ -217,6 +313,42 @@ test('provider argv is non-interactive, unpersisted and minimal-context, and rej
         'high',
       ],
     ],
+  );
+  // agy: `--flag=value` only, so no value is taken for the prompt; the curator agent drops tools.
+  assert.deepEqual(
+    providerCommand(
+      { provider: 'agy', model: 'gemini-4-hydrogen', effort: 'high' },
+      'W',
+    ),
+    [
+      'agy',
+      [
+        '--agent=knownex-curator',
+        '--input-format=stream-json',
+        '--output-format=stream-json',
+        '--print=',
+        '--disable-slash-commands',
+        `--json-schema=${JSON.stringify({
+          type: 'object',
+          properties: {
+            proposal: { type: 'object' },
+            state: { type: 'string' },
+            knowledge: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+            },
+            review: { type: 'object' },
+          },
+          additionalProperties: false,
+        })}`,
+        '--model=gemini-4-hydrogen',
+        '--effort=high',
+      ],
+    ],
+  );
+  assert.throws(
+    () => providerCommand({ provider: 'agy', model: '--print=x' }, 'W'),
+    { code: 'CHECKPOINT_ARGUMENT_INVALID' },
   );
   // Without model/effort the provider defaults apply.
   assert.ok(!providerCommand({ provider: 'codex' }, 'W')[1].includes('-m'));
@@ -308,21 +440,32 @@ test('the prompt carries the whole task so one call suffices: skill, events and 
     '===== WINDOW.md',
     'SOURCE_SENTINEL: persist confirmed facts.',
     '===== base/STATE.md =====',
-    'per superarne una copia il suo link dallo STATE',
-    'Rispondi con un unico oggetto JSON',
-    'qui sei il Curator e segui solo questo incarico',
-    'non hai strumenti',
-    '## 2. Decidi cosa conservare',
-    '## 5. Consegna',
+    'to supersede one, copy its link from STATE',
+    'Answer with a single JSON object',
+    'here you are the Curator and follow only this task',
+    'you have no tools',
+    '## 2. Decide what to keep',
+    '## 3. Draft content',
+    '## 4. Report',
+    '## 5. Rejection codes',
   ])
     assert.ok(prompt!.includes(part), part);
   // Already inline, so not resent: skill frontmatter and the steps to read the batch with tools.
-  // The session has no tools, so nothing invites it to read files.
+  // The session has no tools, so nothing invites it to read or write files, run the CLI or
+  // answer with anything but the JSON.
   for (const part of [
     'name: knownex-curator',
-    '## 1. Leggi il batch',
+    '## 1. Read the batch',
+    '## 6.',
     'curate read',
-    'Catalogo',
+    'catalog',
+    'RUN/draft',
+    'draft/',
+    'file writing tool',
+    'curate write',
+    '<CLI>',
+    'one line of outcome',
+    'DESTINATION_BUSY',
   ])
     assert.ok(!prompt!.includes(part), part);
   assert.deepEqual(calls, ['codex']);
@@ -330,10 +473,10 @@ test('the prompt carries the whole task so one call suffices: skill, events and 
 
 test('the answer is found among text around it, braces included', async (t) => {
   const f = await fixture(t);
-  const chatty: RunProvider = async () => ({
-    exitCode: 0,
-    output: `Ecco la curatela:\n\`\`\`json\n${answer()}\n\`\`\`\nNota: le chiavi seguono {proposal, state}.`,
-  });
+  const chatty: RunProvider = async () =>
+    codexReply(
+      `Ecco la curatela:\n\`\`\`json\n${answer()}\n\`\`\`\nNota: le chiavi seguono {proposal, state}.`,
+    );
   const outcome = await launchCheckpoint(f.root, { provider: 'codex' }, chatty);
   assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
 });
@@ -351,24 +494,20 @@ test('a new note reuses an earlier name under its own checkpoint and supersedes 
       summary: 'Nota.',
       sources: [1],
     });
-    return { exitCode: 0, output: JSON.stringify(a) };
+    return codexReply(JSON.stringify(a));
   };
   assert.equal(
     (await launchCheckpoint(f.root, { provider: 'codex' }, withNote)).status,
     'SUCCESS',
   );
-  await appendFeedEvent(
-    join(f.root, '.knownex/internal/feed'),
-    {
-      type: 'user_message',
-      sessionId: 'launch',
-      nativeThreadId: 'launch',
-      turnId: 'more',
-      text: 'Altro lavoro.',
-      hook: 'UserPromptSubmit',
-    },
-    true,
-  );
+  await appendFeedEvent(join(f.root, '.knownex/internal/feed'), {
+    type: 'user_message',
+    sessionId: 'launch',
+    nativeThreadId: 'launch',
+    turnId: 'more',
+    text: 'Altro lavoro.',
+    hook: 'UserPromptSubmit',
+  });
   // The next checkpoint writes notes with the same name and a new sibling: the old note's
   // link is copied from the frozen STATE, into the new STATE and into the new note.
   const supersede: RunProvider = async (_c, _a, _w, input) => {
@@ -392,7 +531,7 @@ test('a new note reuses an earlier name under its own checkpoint and supersedes 
         `vedi [Extra](knowledge/extra.md) [E003]\n`,
       'knowledge/extra.md': '# Extra\n\nEXTRA [E003]\n',
     };
-    return { exitCode: 0, output: JSON.stringify(a) };
+    return codexReply(JSON.stringify(a));
   };
   const outcome = await launchCheckpoint(
     f.root,
@@ -424,7 +563,7 @@ test('a new note reuses an earlier name under its own checkpoint and supersedes 
     assert.ok(state.includes(`](knowledge/${heads[key].file})`), key);
   assert.ok(
     (await readFile(join(f.memory, 'history/H000002.md'), 'utf8')).includes(
-      `- Transizione: Nuova [Nota](../knowledge/${heads['knowledge/H000002/nota.md'].file}).`,
+      `- Transition: Nuova [Nota](../knowledge/${heads['knowledge/H000002/nota.md'].file}).`,
     ),
   );
   // Inside the new note: the old note one folder up, the sibling in the same folder.
@@ -467,7 +606,7 @@ test('a rejected answer gets exactly one retry with its error code, and the fix 
   assert.equal(calls.length, 2);
   assert.match(
     prompts[1]!,
-    /TENTATIVO PRECEDENTE RIFIUTATO =====\nCodice: CURATOR_REVIEW_INVALID\./,
+    /PREVIOUS ATTEMPT REJECTED =====\nCode: CURATOR_REVIEW_INVALID\./,
   );
   assert.ok(prompts[1]!.includes('"sources":[99]'));
 });
@@ -489,12 +628,46 @@ test('token use of every attempt is summed into the outcome', async (t) => {
   });
 });
 
+test('agy delivers through its last result; a failed result fails the session even on exit 0', async (t) => {
+  const f = await fixture(t);
+  const failed = await launchCheckpoint(
+    f.root,
+    { provider: 'agy' },
+    async () => ({
+      exitCode: 0,
+      output: agyEvents('', 'ERROR', 'quota esaurita'),
+    }),
+  );
+  assert.equal(failed.code, 'CHECKPOINT_PROVIDER_FAILED');
+  assert.equal(failed.cause, 'quota esaurita');
+  assert.equal(failed.tokens?.input, 1300);
+  assert.equal(
+    await readFile(join(f.memory, 'STATE.md'), 'utf8'),
+    emptyMemory['STATE.md'],
+  );
+  const done = await launchCheckpoint(
+    f.root,
+    { provider: 'agy' },
+    async () => ({
+      exitCode: 0,
+      output: agyEvents(answer()),
+    }),
+  );
+  assert.equal(done.status, 'SUCCESS', JSON.stringify(done));
+  assert.deepEqual(done.tokens, {
+    input: 1300,
+    cached: 300,
+    output: 60,
+    reasoning: 20,
+  });
+});
+
 test('a BLOCKED batch comes with its report and two ready commands that really accept or discard it', async (t) => {
   const f = await fixture(t);
   const doubtful: RunProvider = async () => {
     const a = JSON.parse(answer());
     a.review.uncertainties = ['Fonte non verificabile.'];
-    return { exitCode: 0, output: JSON.stringify(a) };
+    return codexReply(JSON.stringify(a));
   };
   const cli = (line: string) => {
     const args = line
@@ -548,9 +721,9 @@ async function revise(
     if (prompts.length === 1) {
       a.review.uncertainties = [point];
       a.state = '# Stato\n\nPRIMO_STATO [E001]\n';
-      return { exitCode: 0, output: JSON.stringify(a) };
+      return codexReply(JSON.stringify(a));
     }
-    return { exitCode: 0, output: revision(a) };
+    return codexReply(revision(a));
   };
   const outcome = await launchCheckpoint(
     f.root,
@@ -615,19 +788,18 @@ test('a partial revision merges notes by name over the previous answer', async (
         summary: 'A.',
         sources: [1],
       });
-      return { exitCode: 0, output: JSON.stringify(a) };
+      return codexReply(JSON.stringify(a));
     }
     a.review.changes.push(
       { path: 'knowledge/nota-a.md', summary: 'A.', sources: [1] },
       { path: 'knowledge/nota-b.md', summary: 'B.', sources: [1] },
     );
-    return {
-      exitCode: 0,
-      output: JSON.stringify({
+    return codexReply(
+      JSON.stringify({
         knowledge: { 'knowledge/nota-b.md': note('Nota B') },
         review: a.review,
       }),
-    };
+    );
   };
   const outcome = await launchCheckpoint(
     f.root,
@@ -679,7 +851,7 @@ test('note names chosen by the model never write outside the draft', async (t) =
     const hostile: RunProvider = async () => {
       const a = JSON.parse(answer());
       a.knowledge = { [name]: '# Evil\n\nX [E001]\n' };
-      return { exitCode: 0, output: JSON.stringify(a) };
+      return codexReply(JSON.stringify(a));
     };
     const outcome = await launchCheckpoint(
       f.root,
@@ -721,6 +893,94 @@ test('two rejected answers stop with the rejection code and leave the batch retr
   );
 });
 
+test('a busy lock while delivering stops without a model retry and leaves the batch for the next launch', async (t) => {
+  const f = await fixture(t),
+    calls: string[] = [];
+  let release: (() => Promise<void>) | undefined;
+  const busy: RunProvider = async (...args) => {
+    // Another reader holds the curator lock while the answer is checked.
+    release ??= await acquireJournalLock(
+      join(f.root, '.knownex/internal/curator/curator.lock'),
+    );
+    return curator(calls)(...args);
+  };
+  const stopped = await launchCheckpoint(f.root, { provider: 'codex' }, busy);
+  await release!();
+  assert.equal(stopped.status, 'ERROR');
+  assert.equal(stopped.code, 'DESTINATION_BUSY', JSON.stringify(stopped));
+  assert.deepEqual(calls, ['codex'], 'no retry for a fault of the machine');
+  assert.equal(
+    (await launchCheckpoint(f.root, { provider: 'codex' }, curator(calls)))
+      .status,
+    'SUCCESS',
+  );
+});
+
+test('an update without STATE is an invalid answer the model gets back, not a missing file', async (t) => {
+  const f = await fixture(t),
+    prompts: string[] = [];
+  const stateless: RunProvider = async (_c, _a, _w, input) => {
+    prompts.push(input);
+    const a = JSON.parse(answer());
+    if (prompts.length === 1) delete a.state;
+    return codexReply(JSON.stringify(a));
+  };
+  const outcome = await launchCheckpoint(
+    f.root,
+    { provider: 'codex' },
+    stateless,
+  );
+  assert.equal(outcome.status, 'SUCCESS', JSON.stringify(outcome));
+  assert.match(prompts[1]!, /Code: CHECKPOINT_RESPONSE_INVALID\./);
+});
+
+test('through curates a long backlog in parts, one batch per launch', async (t) => {
+  const f = await fixture(t),
+    prompts: string[] = [];
+  const parts: RunProvider = async (_c, _a, _w, input) => {
+    prompts.push(input);
+    return codexReply(
+      prompts.length === 1
+        ? answer([1], [])
+        : JSON.stringify({
+            proposal: { action: 'noop' },
+            review: {
+              version: 4,
+              summary: 'Niente di nuovo.',
+              sources: [],
+              ignored: [2],
+              changes: [],
+              uncertainties: [],
+              anomalies: [],
+            },
+          }),
+    );
+  };
+  const first = await launchCheckpoint(
+    f.root,
+    { provider: 'codex', through: 1 },
+    parts,
+  );
+  assert.equal(first.status, 'SUCCESS', JSON.stringify(first));
+  assert.equal(first.through, 1);
+  assert.ok(prompts[0]!.includes('## E001 —'));
+  assert.ok(!prompts[0]!.includes('## E002 —'));
+  const rest = await launchCheckpoint(f.root, { provider: 'codex' }, parts);
+  assert.equal(rest.status, 'SUCCESS', JSON.stringify(rest));
+  assert.equal(rest.through, 2);
+});
+
+test('memory reads wait for a short curator lock instead of failing at once', async (t) => {
+  const f = await fixture(t);
+  await launchCheckpoint(f.root, { provider: 'codex' }, curator([]));
+  const release = await acquireJournalLock(
+    join(f.root, '.knownex/internal/curator/curator.lock'),
+  );
+  const timer = setTimeout(() => void release(), 500);
+  t.after(() => clearTimeout(timer));
+  assert.ok(Array.isArray(await memoryFind(f.memory, 'Stato', 'knowledge')));
+});
+
 test('a session that exits normally without delivering is reported with its own last words, kept in the run', async (t) => {
   const f = await fixture(t),
     calls: string[] = [];
@@ -734,12 +994,13 @@ test('a session that exits normally without delivering is reported with its own 
   // Not JSON twice: the code says why, the session log keeps the words.
   assert.equal(silent.cause, 'CHECKPOINT_RESPONSE_INVALID');
   const [run] = await readdir(join(f.root, '.knownex/internal/curator/runs'));
-  assert.equal(
-    await readFile(
-      join(f.root, '.knownex/internal/curator/runs', run!, 'session.log'),
-      'utf8',
-    ),
-    'Leggo la skill.\nNon trovo la CLI KnowNex.\n',
+  assert.ok(
+    (
+      await readFile(
+        join(f.root, '.knownex/internal/curator/runs', run!, 'session.log'),
+        'utf8',
+      )
+    ).includes(JSON.stringify('Leggo la skill.\nNon trovo la CLI KnowNex.\n')),
   );
   assert.equal(
     (await launchCheckpoint(f.root, { provider: 'codex' }, curator(calls)))
@@ -861,9 +1122,15 @@ test('the CLI accepts exactly one provider and rejects bad arguments before touc
   for (const args of [
     [],
     ['--codex', '--claude'],
+    ['--claude', '--agy'],
     ['--codex', '--model'],
     ['--codex', '--bogus'],
     ['--codex', '-m', ' '],
+    ['--codex', '--through', '0'],
+    ['--codex', '--through', '-1'],
+    ['--codex', '--through', '1.5'],
+    ['--codex', '--through', 'x'],
+    ['--codex', '--through', '99999999999999999999'],
   ]) {
     const r = spawnSync(
       process.execPath,
@@ -873,5 +1140,22 @@ test('the CLI accepts exactly one provider and rejects bad arguments before touc
     assert.equal(r.status, 2, args.join(' '));
     assert.equal(JSON.parse(r.stderr).code, 'INVALID_ARGUMENTS');
   }
+  // --agy alone is accepted: it gets as far as the missing workspace.
+  const agy = spawnSync(
+    process.execPath,
+    [
+      'src/index.ts',
+      'checkpoint',
+      '--agy',
+      '-r',
+      'high',
+      '--through',
+      '7',
+      '--workspace',
+      root,
+    ],
+    { encoding: 'utf8', windowsHide: true },
+  );
+  assert.equal(JSON.parse(agy.stdout).code, 'KNOWNEX_WORKSPACE_REQUIRED');
   assert.deepEqual(await readdir(root), []);
 });

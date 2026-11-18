@@ -23,12 +23,8 @@ import {
   prepareCurator,
   validateCurator,
 } from '../src/curator.ts';
-import {
-  readCurationInput,
-  transportJson,
-  writeCurationArtifacts,
-} from '../src/curation-io.ts';
-import { nativeFixture } from './native-fixture.ts';
+import { readCurationInput, writeCurationDraft } from '../src/curation-io.ts';
+import { transportJson } from '../src/artifact-io.ts';
 const sample = "Caffè, già; l'ASCII e l’apostrofo, ≥ ≤, 漢字 😀, e\u0301";
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
@@ -44,32 +40,21 @@ async function fixture(t: test.TestContext, sourceText = sample) {
   await mkdir(memory, { recursive: true });
   for (const [name, text] of Object.entries(emptyMemory))
     await writeFile(join(memory, name), text);
-  const peer = await nativeFixture(feed),
-    previous = process.env.KNOWNEX_CODEX_BIN;
+  await mkdir(feed, { recursive: true });
   await writeFile(join(feed, 'project.jsonl'), '');
-  process.env.KNOWNEX_CODEX_BIN = process.execPath;
-  t.after(() => {
-    if (previous === undefined) delete process.env.KNOWNEX_CODEX_BIN;
-    else process.env.KNOWNEX_CODEX_BIN = previous;
-  });
-  peer.set('io-session', ['one', 'two', 'consent-one', 'consent-two']);
   const append = (
     turnId: string,
     text: string,
     type: 'user_message' | 'assistant_final' = 'user_message',
   ) =>
-    appendFeedEvent(
-      feed,
-      {
-        type,
-        sessionId: 'io-session',
-        nativeThreadId: 'io-session',
-        turnId,
-        text,
-        hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
-      },
-      true,
-    );
+    appendFeedEvent(feed, {
+      type,
+      sessionId: 'io-session',
+      nativeThreadId: 'io-session',
+      turnId,
+      text,
+      hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
+    });
   await initCurator(work, memory, join(feed, 'project.jsonl'), 0);
   async function prepare(n: number, autonomous = true) {
     const turn = n === 1 ? 'one' : 'two';
@@ -211,6 +196,30 @@ function artifacts(
   };
 }
 
+/** The Curator's plain draft files for a proposal and review. */
+async function draft(
+  run: string,
+  proposal: Record<string, unknown>,
+  review: unknown,
+) {
+  const { state, knowledge: _, ...meta } = proposal;
+  const dir = join(run, 'draft');
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'proposal.json'), JSON.stringify(meta));
+  if (typeof state === 'string') await writeFile(join(dir, 'STATE.md'), state);
+  await writeFile(join(dir, 'review.json'), JSON.stringify(review));
+}
+/** Draft, then the production writer (curate write). */
+async function deliver(
+  run: string,
+  proposal: Record<string, unknown>,
+  review: unknown,
+) {
+  await draft(run, proposal, review);
+  return writeCurationDraft(run);
+}
+
 test('production writer creates v4 artifacts on consecutive checkpoints, binds actual hashes and preserves consecutive confirmed states', async (t) => {
   const f = await fixture(t);
   for (const version of [1, 2]) {
@@ -235,7 +244,7 @@ test('production writer creates v4 artifacts on consecutive checkpoints, binds a
       version,
       before,
     );
-    const r = await writeCurationArtifacts(p.run, proposal, review);
+    const r = await deliver(p.run, proposal, review);
     const proposalBytes = await readFile(r.proposal.path),
       reviewBytes = await readFile(r.review!.path);
     assert.equal(r.proposal.sha256, hash(proposalBytes));
@@ -244,21 +253,14 @@ test('production writer creates v4 artifacts on consecutive checkpoints, binds a
       JSON.parse(reviewBytes.toString('utf8')).proposalSha256,
       hash(proposalBytes),
     );
-    await assert.rejects(
-      writeCurationArtifacts(p.run, proposal, review),
-      /EEXIST/,
-    );
-    assert.deepEqual(await readFile(r.proposal.path), proposalBytes);
     const v = await validateCurator(f.work);
     assert.equal(v.review!.sha256, r.review!.sha256);
     await applyCurator(f.work, v.seal);
-    const published = state.replaceAll(
-      packet.feed,
-      relative(f.memory, join(f.feed, 'project.jsonl')).split(sep).join('/'),
-    );
+    // curate write reduces the link to the feed to its bare label.
+    const published = state.replace('](' + packet.feed + ')', ']');
     assert.equal(await readFile(join(f.memory, 'STATE.md'), 'utf8'), published);
     await assert.rejects(
-      writeCurationArtifacts(p.run, proposal, review),
+      deliver(p.run, proposal, review),
       /ENOENT|CURATOR_IO_RUN_NOT_PENDING/,
     );
   }
@@ -284,6 +286,7 @@ test('I/O failures do not publish partial pairs, consume another authorization o
   const authority = join(f.feed, 'project.jsonl.curator.json'),
     authorityBytes = await readFile(authority),
     pendingBytes = await readFile(join(f.work, 'pending.json'));
+  await draft(p.run, proposal, review);
   const handle = await open(join(f.root, 'probe'), 'w'),
     proto = Object.getPrototypeOf(handle);
   await handle.close();
@@ -303,7 +306,7 @@ test('I/O failures do not publish partial pairs, consume another authorization o
       return original.call(this, bytes);
     },
   );
-  await assert.rejects(writeCurationArtifacts(p.run, proposal, review), /EIO/);
+  await assert.rejects(writeCurationDraft(p.run), /EIO/);
   mock.mock.restore();
   assert.ok(!(await readdir(p.run)).includes('proposal.json'));
   assert.ok(!(await readdir(p.run)).includes('review.json'));
@@ -316,10 +319,7 @@ test('I/O failures do not publish partial pairs, consume another authorization o
   );
   await assert.rejects(validateCurator(f.work), /ENOENT/);
   await assert.rejects(
-    writeCurationArtifacts(p.run, proposal, {
-      ...review,
-      proposalSha256: 'wrong',
-    }),
+    deliver(p.run, proposal, { ...review, proposalSha256: 'wrong' }),
     /CURATOR_IO_PROPOSAL_HASH_MISMATCH/,
   );
   await assert.rejects(
@@ -334,48 +334,6 @@ test('I/O failures do not publish partial pairs, consume another authorization o
   );
 });
 
-test('Node runtime without optional encoding globals can write the real artifacts and validate them', async (t) => {
-  const f = await fixture(t),
-    p = await f.prepare(1),
-    packet = JSON.parse((await readCurationInput(p.run, 'packet.json')).text);
-  const { proposal, review } = artifacts(
-    packet,
-    p.sequence,
-    '# Project\n\n' + sample + '\n\n[E001](' + packet.feed + ')\n',
-    1,
-  );
-  const module = pathToFileURL(join(process.cwd(), 'src/curation-io.ts')).href;
-  const code = `globalThis.TextEncoder=undefined;globalThis.TextDecoder=undefined;globalThis.Buffer=undefined;globalThis.process=undefined;const io=await import(${JSON.stringify(module)});const r=await io.writeCurationArtifacts(${JSON.stringify(p.run)},${JSON.stringify(proposal)},${JSON.stringify(review)});console.log(io.transportJson(r));`;
-  const child = spawnSync(
-    process.execPath,
-    ['--input-type=module', '-e', code],
-    { encoding: 'utf8', windowsHide: true },
-  );
-  assert.equal(child.status, 0, child.stderr);
-  const receipts = JSON.parse(child.stdout);
-  assert.equal(
-    receipts.proposal.sha256,
-    hash(await readFile(receipts.proposal.path)),
-  );
-  await applyCurator(f.work, (await validateCurator(f.work)).seal);
-});
-
-test('legacy pending batches can use the canonical writer without acquiring a new review format', async (t) => {
-  const f = await fixture(t),
-    p = await f.prepare(1, false);
-  const r = await writeCurationArtifacts(p.run, { action: 'noop' });
-  assert.equal(r.review, undefined);
-  const bytes = await readFile(r.proposal.path);
-  const v = await validateCurator(f.work);
-  assert.equal(v.review, undefined);
-  await applyCurator(f.work, v.seal);
-  assert.deepEqual(await readFile(r.proposal.path), bytes);
-  assert.equal(
-    await readFile(join(f.memory, 'STATE.md'), 'utf8'),
-    emptyMemory['STATE.md'],
-  );
-});
-
 test('a writer killed after publishing review leaves an unvalidatable pair and the confirmed state intact', async (t) => {
   const f = await fixture(t),
     p = await f.prepare(1),
@@ -387,8 +345,9 @@ test('a writer killed after publishing review leaves an unvalidatable pair and t
     1,
   );
   const authority = await readFile(join(f.feed, 'project.jsonl.curator.json'));
+  await draft(p.run, proposal, review);
   const module = pathToFileURL(join(process.cwd(), 'src/curation-io.ts')).href;
-  const code = `const fs=await import('node:fs/promises');const h=await fs.open(${JSON.stringify(join(f.root, 'probe'))},'w');const p=Object.getPrototypeOf(h),sync=p.sync;await h.close();let n=0;p.sync=async function(){if(++n===3)process.exit(72);return sync.call(this)};const io=await import(${JSON.stringify(module)});await io.writeCurationArtifacts(${JSON.stringify(p.run)},${JSON.stringify(proposal)},${JSON.stringify(review)});`;
+  const code = `const fs=await import('node:fs/promises');const h=await fs.open(${JSON.stringify(join(f.root, 'probe'))},'w');const p=Object.getPrototypeOf(h),sync=p.sync;await h.close();let n=0;p.sync=async function(){if(++n===3)process.exit(72);return sync.call(this)};const io=await import(${JSON.stringify(module)});await io.writeCurationDraft(${JSON.stringify(p.run)});`;
   const child = spawnSync(
     process.execPath,
     ['--input-type=module', '-e', code],

@@ -36,7 +36,7 @@ function readerError(code: ReaderError['code'], offset?: number) {
   };
 }
 
-test('prima lettura conserva ogni valore JSON e le righe originali, inclusi CRLF e numeri grandi', async (t) => {
+test('first read keeps every JSON value and the original lines, CRLF and big numbers included', async (t) => {
   const lines = [
     ' {"n":9007199254740993,"text":"città 🧠"} \r',
     'null',
@@ -61,7 +61,7 @@ test('prima lettura conserva ogni valore JSON e le righe originali, inclusi CRLF
   assert.equal(after.size, before.size);
 });
 
-test('append e riavvio con cursore serializzato restituiscono solo nuovi record senza mutare il cursore', async (t) => {
+test('append and restart with a serialized cursor return only new records without mutating the cursor', async (t) => {
   const path = await fixture(t, '{"id":1}\n');
   const first = await readJsonl(path);
   const cursor = Object.freeze(
@@ -81,7 +81,7 @@ test('append e riavvio con cursore serializzato restituiscono solo nuovi record 
   assert.deepEqual(unchanged.cursor, restarted);
 });
 
-test('file vuoto e JSON valido senza LF non avanzano; LF completa il record', async (t) => {
+test('an empty file and valid JSON without LF do not advance; LF completes the record', async (t) => {
   const path = await fixture(t);
   const empty = await readJsonl(path);
   assert.equal(empty.cursor.offset, 0);
@@ -97,7 +97,7 @@ test('file vuoto e JSON valido senza LF non avanzano; LF completa il record', as
   );
 });
 
-test('coda incompleta con carattere UTF-8 spezzato viene riletta dal confine corretto', async (t) => {
+test('an incomplete tail with a split UTF-8 character is re-read from the right boundary', async (t) => {
   const first = Buffer.from('{"id":1}\n');
   const next = Buffer.from('{"text":"🧠è"}\n');
   const split = next.indexOf(Buffer.from('🧠')) + 2;
@@ -117,7 +117,7 @@ test('coda incompleta con carattere UTF-8 spezzato viene riletta dal confine cor
   assert.equal(completed.cursor.offset, first.length + next.length);
 });
 
-test('troncamento segnala FILE_CHANGED e non riparte silenziosamente', async (t) => {
+test('truncation reports FILE_CHANGED and does not restart silently', async (t) => {
   const path = await fixture(t, '{"id":1}\n{"id":2}\n');
   const { cursor } = await readJsonl(path);
   await truncate(path, 0);
@@ -127,7 +127,7 @@ test('troncamento segnala FILE_CHANGED e non riparte silenziosamente', async (t)
   );
 });
 
-test('sostituzione con contenuto identico segnala FILE_CHANGED', async (t) => {
+test('replacement with identical content reports FILE_CHANGED', async (t) => {
   const source = '{"id":1}\n';
   const path = await fixture(t, source);
   const { cursor } = await readJsonl(path);
@@ -139,7 +139,7 @@ test('sostituzione con contenuto identico segnala FILE_CHANGED', async (t) => {
   );
 });
 
-test('riscritture sullo stesso file, anche ricresciuto, invalidano il prefisso consumato', async (t) => {
+test('rewrites of the same file, even grown again, invalidate the consumed prefix', async (t) => {
   for (const replacement of ['{"id":9}\n', '{"id":9}\n{"id":2}\n']) {
     const path = await fixture(t, '{"id":1}\n');
     const { cursor } = await readJsonl(path);
@@ -151,7 +151,7 @@ test('riscritture sullo stesso file, anche ricresciuto, invalidano il prefisso c
   }
 });
 
-test('JSON completo malformato segnala offset byte esatto e non modifica dati o cursore', async (t) => {
+test('complete malformed JSON reports the exact byte offset and changes neither data nor cursor', async (t) => {
   const first = '{"text":"è"}\n';
   const path = await fixture(t, first);
   const { cursor } = await readJsonl(path);
@@ -166,7 +166,7 @@ test('JSON completo malformato segnala offset byte esatto e non modifica dati o 
   assert.deepEqual(await readFile(path), Buffer.from(source));
 });
 
-test('riga vuota, BOM e UTF-8 non valido non vengono ignorati o sostituiti', async (t) => {
+test('empty line, BOM and invalid UTF-8 are not ignored or replaced', async (t) => {
   for (const data of [
     Buffer.from('\n'),
     Buffer.from('\uFEFF{}\n'),
@@ -177,7 +177,7 @@ test('riga vuota, BOM e UTF-8 non valido non vengono ignorati o sostituiti', asy
   }
 });
 
-test('coda malformata senza LF resta sospesa fino alla terminazione della riga', async (t) => {
+test('a malformed tail without LF stays pending until the line ends', async (t) => {
   const path = await fixture(t, '{}\ninvalid');
   const { cursor, records } = await readJsonl(path);
   assert.equal(records.length, 1);
@@ -189,7 +189,7 @@ test('coda malformata senza LF resta sospesa fino alla terminazione della riga',
   );
 });
 
-test('cursori invalidi e file mancanti sono errori espliciti', async (t) => {
+test('invalid cursors and missing files are explicit errors', async (t) => {
   const path = await fixture(t, '{}\n');
   const { cursor } = await readJsonl(path);
   for (const changed of [
@@ -206,14 +206,14 @@ test('cursori invalidi e file mancanti sono errori espliciti', async (t) => {
   await assert.rejects(readJsonl(path + '.missing'), { code: 'ENOENT' });
 });
 
-test('il cursore non può essere riutilizzato su un altro file identico', async (t) => {
+test('the cursor cannot be reused on another identical file', async (t) => {
   const path = await fixture(t, '{}\n');
   const other = await fixture(t, '{}\n');
   const { cursor } = await readJsonl(path);
   await assert.rejects(readJsonl(other, cursor), readerError('FILE_CHANGED'));
 });
 
-test('prefissi oltre 64 KiB restano verificabili dopo append e una modifica lontana dal cursore è rilevata', async (t) => {
+test('prefixes over 64 KiB stay verifiable after append and a change far from the cursor is detected', async (t) => {
   const source = JSON.stringify({ text: 'a'.repeat(70000) }) + '\n';
   const path = await fixture(t, source);
   const first = await readJsonl(path);

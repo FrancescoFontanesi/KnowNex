@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   cp,
   copyFile,
@@ -57,12 +56,14 @@ function invoke(script: string, payload: unknown) {
       });
       child.on('error', reject);
       child.on('close', (code) => resolve({ code, stdout, stderr }));
+      // A refused oversized payload closes stdin before the write completes.
+      child.stdin.on('error', () => {});
       child.stdin.end(JSON.stringify(payload));
     },
   );
 }
 
-test('payload stdin originale, quattro eventi, replay e log privi di contenuto', async (t) => {
+test('original stdin payload, four events, replay and logs without content', async (t) => {
   const { root, script } = await fixture(t);
   const session = 'synthetic-feed-session',
     secret = 'PRIVATE_SYNTHETIC_CONTENT\nè 🧠';
@@ -86,8 +87,9 @@ test('payload stdin originale, quattro eventi, replay e log privi di contenuto',
     assert.equal(result.stderr, '');
     assert.deepEqual(JSON.parse(result.stdout), {});
   }
-  const name = createHash('sha256').update(session).digest('hex') + '.jsonl';
-  const bytes = await readFile(join(root, '.knownex/internal/feed', name));
+  const bytes = await readFile(
+    join(root, '.knownex/internal/feed/project.jsonl'),
+  );
   const frames = bytes
     .toString('utf8')
     .trimEnd()
@@ -116,7 +118,7 @@ test('payload stdin originale, quattro eventi, replay e log privi di contenuto',
   );
 });
 
-test('campo finale o turno mancanti: nessun evento inventato, errore non bloccante e diagnostico', async (t) => {
+test('missing final field or turn: no invented event, a non-blocking diagnostic error', async (t) => {
   const { root, script } = await fixture(t);
   for (const [payload, code] of [
     [
@@ -197,11 +199,7 @@ test('Stop captures two commentary messages before native final; replay is byte-
     transcript_path: source,
   };
   assert.deepEqual(JSON.parse((await invoke(script, stop)).stdout), {});
-  const destination = join(
-    root,
-    '.knownex/internal/feed',
-    createHash('sha256').update(session_id).digest('hex') + '.jsonl',
-  );
+  const destination = join(root, '.knownex/internal/feed/project.jsonl');
   const bytes = await readFile(destination);
   assert.deepEqual(
     bytes
@@ -229,6 +227,8 @@ test('Stop captures two commentary messages before native final; replay is byte-
     .split('\n')
     .map((l) => JSON.parse(l).block.event);
   assert.equal(frames.at(-1).type, 'assistant_final');
+  // The transcript header is no longer read for a native thread identity.
+  assert.ok(frames.every((e) => !('nativeThreadId' in e)));
   const logs = await readFile(
     join(root, '.codex/hooks/feed-events.jsonl'),
     'utf8',
@@ -243,4 +243,21 @@ test('Stop captures two commentary messages before native final; replay is byte-
     [2, 0],
   );
   assert.ok(entries.at(-1).commentaryIssues.includes('ENOENT'));
+});
+
+test('a payload over 16 MiB of UTF-8 bytes is refused before any write', async (t) => {
+  const { root, script } = await fixture(t);
+  // 8.5 M two-byte characters: under the limit in characters, over it in bytes.
+  const result = await invoke(script, {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 's',
+    turn_id: 't',
+    prompt: 'è'.repeat(8.5 * 1024 * 1024),
+  });
+  assert.equal(result.code, 0);
+  assert.match(
+    JSON.parse(result.stdout).systemMessage,
+    /HOOK_PAYLOAD_TOO_LARGE/,
+  );
+  await assert.rejects(readdir(join(root, '.knownex')), { code: 'ENOENT' });
 });

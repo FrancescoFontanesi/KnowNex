@@ -10,7 +10,6 @@ import {
 } from './artifact-io.ts';
 import { checkCurationDraft } from './curator.ts';
 import { acquireJournalLock } from './journal-lock.ts';
-export { transportJson } from './artifact-io.ts';
 
 function fail(code: string): never {
   throw Object.assign(new Error(code), { code });
@@ -179,15 +178,6 @@ const receipts = (
   proposal: written.at(-1)!,
   ...(review !== undefined ? { review: written[0]! } : {}),
 });
-/** Canonical writer shared by the CLI and programmatic clients. */
-export async function writeCurationArtifacts(
-  run: string,
-  proposal: unknown,
-  review?: unknown,
-) {
-  const entries = await curationEntries(run, proposal, review);
-  return receipts(await writeExclusiveFiles(entries), review);
-}
 /** Serializes proposal and review exactly as persisted; review is bound to the proposal bytes. */
 async function curationEntries(
   run: string,

@@ -33,13 +33,11 @@ const entries = [
     'feed',
     { hook_event_name: 'Stop', last_assistant_message: 'a', turn_id: 't' },
   ],
-  ['stop', { hook_event_name: 'Stop', last_assistant_message: 'a' }],
-  ['stop', { hook_event_name: 'SessionEnd' }],
   ['session', { hook_event_name: 'SessionStart' }],
 ] as const;
 
 for (const [name, extra] of entries) {
-  test(`KNOWNEX_CAPTURE=0: ${name}.cjs ${extra.hook_event_name} non scrive né emette contesto`, async (t) => {
+  test(`KNOWNEX_CAPTURE=0: ${name}.cjs ${extra.hook_event_name} writes nothing and emits no context`, async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'knownex optout '));
     t.after(() => rm(root, { recursive: true, force: true }));
     await mkdir(join(root, '.codex/hooks'), { recursive: true });
@@ -73,7 +71,7 @@ for (const [name, extra] of entries) {
     assert.equal(off.status, 0);
     assert.equal(off.stdout, '');
     assert.deepEqual(await snapshot(root), before);
-    // Controllo: senza variabile il comportamento resta quello attuale.
+    // Control: without the variable the behavior stays the current one.
     const on = run();
     assert.equal(on.status, 0);
     if (name === 'session') assert.match(on.stdout, /additionalContext/);

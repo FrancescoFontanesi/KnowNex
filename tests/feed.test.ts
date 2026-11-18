@@ -27,7 +27,7 @@ const input: FeedInput = {
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'knownex-feed-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  return { directory, file: join(directory, sha(input.sessionId) + '.jsonl') };
+  return { directory, file: join(directory, 'project.jsonl') };
 }
 
 function verified(bytes: Buffer) {
@@ -53,7 +53,7 @@ function verified(bytes: Buffer) {
   return events;
 }
 
-test('contenuto esatto, ordine di acquisizione e quattro eventi distinti per due turni', async (t) => {
+test('exact content, capture order and four distinct events for two turns', async (t) => {
   const { directory, file } = await fixture(t);
   const values: FeedInput[] = [
     input,
@@ -89,7 +89,7 @@ test('contenuto esatto, ordine di acquisizione e quattro eventi distinti per due
   );
 });
 
-test('ripetizioni sono no-op, conflitti preservano il registro e sessioni diverse restano separate', async (t) => {
+test('repetitions are no-ops, conflicts preserve the log and every session writes to the project feed', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const before = await readFile(file);
@@ -104,12 +104,17 @@ test('ripetizioni sono no-op, conflitti preservano il registro e sessioni divers
     ...input,
     sessionId: '../../other-session',
   });
-  assert.equal((await readdir(directory)).length, 2);
-  const other = join(directory, sha('../../other-session') + '.jsonl');
-  assert.equal(verified(await readFile(other))[0].text, input.text);
+  assert.deepEqual(await readdir(directory), ['project.jsonl']);
+  assert.deepEqual(
+    verified(await readFile(file)).map((e) => [e.sequence, e.sessionId]),
+    [
+      [1, input.sessionId],
+      [2, '../../other-session'],
+    ],
+  );
 });
 
-test('recovery da transazione interrotta o commit con esito incerto preserva gli eventi confermati', async (t) => {
+test('recovery from an interrupted transaction or a commit with uncertain outcome preserves the confirmed events', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const before = await readFile(file);
@@ -145,7 +150,7 @@ test('recovery da transazione interrotta o commit con esito incerto preserva gli
   assert.deepEqual(await readFile(file), before);
 });
 
-test('corruzione completa e conflitto con coda incompleta non vengono cancellati', async (t) => {
+test('full corruption and a conflict with an incomplete tail are not deleted', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const before = await readFile(file);
@@ -169,10 +174,6 @@ test('corruzione completa e conflitto con coda incompleta non vengono cancellati
       f.block.previous = '0'.repeat(64);
       f.checksum = sha(JSON.stringify(f.block));
     },
-    (f: typeof original) => {
-      f.block.event.sessionId = 'other';
-      f.checksum = sha(JSON.stringify(f.block));
-    },
   ]) {
     const frame = structuredClone(original);
     change(frame);
@@ -185,14 +186,14 @@ test('corruzione completa e conflitto con coda incompleta non vengono cancellati
   }
 });
 
-test('il lock condiviso rifiuta uno scrittore concorrente senza modificare dati', async (t) => {
+test('the shared lock rejects a concurrent writer without changing data', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const before = await readFile(file);
   const release = await acquireJournalLock(file + '.lock');
   try {
     await assert.rejects(
-      appendFeedEvent(directory, { ...input, turnId: 'next' }, false, 150),
+      appendFeedEvent(directory, { ...input, turnId: 'next' }, 150),
       { code: 'DESTINATION_BUSY' },
     );
     assert.deepEqual(await readFile(file), before);
@@ -205,12 +206,13 @@ test('il lock condiviso rifiuta uno scrittore concorrente senza modificare dati'
   );
 });
 
-test('append attende un lock occupato brevemente e scrive una sola volta', async (t) => {
+// The default wait outlasts a lock held beyond 3 s (curation may hold it briefly).
+test('append waits for a briefly busy lock and writes once', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const release = await acquireJournalLock(file + '.lock');
   const pending = appendFeedEvent(directory, { ...input, turnId: 'next' });
-  await new Promise((r) => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 3500));
   await release();
   assert.equal((await pending).appended, 1);
   const events = verified(await readFile(file));
@@ -218,7 +220,7 @@ test('append attende un lock occupato brevemente e scrive una sola volta', async
   assert.equal(events.length, 2);
 });
 
-test('oltre il limite di attesa fallisce con DESTINATION_BUSY e il registro resta invariato', async (t) => {
+test('past the wait limit it fails with DESTINATION_BUSY and the log stays unchanged', async (t) => {
   const { directory, file } = await fixture(t);
   await appendFeedEvent(directory, input);
   const before = await readFile(file);
@@ -226,7 +228,7 @@ test('oltre il limite di attesa fallisce con DESTINATION_BUSY e il registro rest
   try {
     const start = Date.now();
     await assert.rejects(
-      appendFeedEvent(directory, { ...input, turnId: 'next' }, false, 200),
+      appendFeedEvent(directory, { ...input, turnId: 'next' }, 200),
       { code: 'DESTINATION_BUSY' },
     );
     assert.ok(Date.now() - start >= 200);
@@ -236,7 +238,7 @@ test('oltre il limite di attesa fallisce con DESTINATION_BUSY e il registro rest
   }
 });
 
-test('due append concorrenti di eventi diversi ottengono sequenze consecutive', async (t) => {
+test('two concurrent appends of different events get consecutive sequences', async (t) => {
   const { directory, file } = await fixture(t);
   await Promise.all([
     appendFeedEvent(directory, { ...input, turnId: 'a' }),

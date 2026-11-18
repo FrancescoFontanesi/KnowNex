@@ -9,7 +9,6 @@ import { historyAppendix } from './legacy-history.ts';
 import { memoryFind, memoryHistory, memoryRead } from '../src/navigator.ts';
 import { initCurator } from '../src/curator.ts';
 import { appendFeedEvent } from '../src/feed.ts';
-import { createHash } from 'node:crypto';
 
 const date = '2026-11-03T12:00:00.000Z';
 const details = (topic: string) => ({
@@ -211,7 +210,7 @@ test('an imported memory must index every window, and every indexed window must 
     const init = initCurator(
       join(root, 'work'),
       memory,
-      join(feed, createHash('sha256').update('s').digest('hex') + '.jsonl'),
+      join(feed, 'project.jsonl'),
       2,
     );
     if (code) await assert.rejects(init, { code }, name);

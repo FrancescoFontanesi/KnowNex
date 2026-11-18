@@ -55,7 +55,12 @@ export async function acquireJournalLock(
 ): Promise<() => Promise<void>> {
   const mine: Owner = { pid: process.pid, token: randomUUID() };
   const candidate = `${path}.${mine.token}.tmp`;
-  await writeFile(candidate, JSON.stringify(mine), { flag: 'wx', mode: 0o600 });
+  // acquiredAt is diagnostic only: ownership checks never read it.
+  await writeFile(
+    candidate,
+    JSON.stringify({ ...mine, acquiredAt: new Date().toISOString() }),
+    { flag: 'wx', mode: 0o600 },
+  );
   let acquired = false;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {

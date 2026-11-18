@@ -197,11 +197,11 @@ export function thematicIndexes(
   const files: Record<string, string> = {};
   const clean = (text: string) => text.replace(/[\[\]<>\r\n]/g, ' ');
   let home =
-    '# Temi KnowNex\n\nVista derivata ricostruibile. Le classificazioni non modificano fatti o decisioni storiche.\n\n';
+    '# KnowNex themes\n\nDerived, rebuildable view. Classifications do not change historical facts or decisions.\n\n';
   for (const key of Object.keys(taxonomy).sort()) {
     const name = 'topics/category-' + key + '.md';
     home += `- [${key}](category-${key}.md): ${clean(taxonomy[key]!)}\n`;
-    let text = `# ${key}\n\n${taxonomy[key]}\n\nVista tematica derivata; le associazioni retroattive sono organizzazione successiva, non fatti storici.\n`;
+    let text = `# ${key}\n\n${taxonomy[key]}\n\nDerived topic view; retroactive associations are later organization, not historical facts.\n`;
     let through = -1;
     for (const r of revisions)
       if (

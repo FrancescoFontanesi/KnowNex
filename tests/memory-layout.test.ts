@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import {
   mkdir,
   mkdtemp,
@@ -28,7 +27,6 @@ import {
   memoryCategory,
 } from '../src/navigator.ts';
 import { archivePath } from '../src/knowledge-revisions.ts';
-const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const ids = [
   'kn-00000000-0000-4000-8000-000000000001',
   'kn-00000000-0000-4000-8000-000000000002',
@@ -59,7 +57,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
       text: 'Input ' + n,
       hook: 'UserPromptSubmit',
     });
-  const feed = join(directory, hash('s') + '.jsonl');
+  const feed = join(directory, 'project.jsonl');
   await initCurator(work, memory, feed, 0);
   const cp = async () =>
     JSON.parse(await readFile(join(work, 'checkpoint.json'), 'utf8'));
@@ -271,7 +269,7 @@ test('a flat archived revision linked from canonical STATE is a link, not a logi
       text: 'Input ' + n,
       hook: 'UserPromptSubmit',
     });
-  await initCurator(work, memory, join(directory, hash('s') + '.jsonl'), 0);
+  await initCurator(work, memory, join(directory, 'project.jsonl'), 0);
   // A run prepared before the chronological layout publishes knowledge/kn-…--r-….md.
   const first = await prepareCurator(work, undefined, { through: 1 });
   const record = JSON.parse(

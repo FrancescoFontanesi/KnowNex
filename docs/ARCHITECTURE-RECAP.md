@@ -1,45 +1,45 @@
-# KnowNex rc.11 — recap verificato
+# KnowNex rc.11 — verified recap
 
-Questa release integra funzionalita esistenti senza un nuovo modello di memoria,
-MCP o dipendenze runtime. Matrice riferita al codice distribuito; i test usano
-contenuti sintetici e non dimostrano la fedelta semantica di un modello.
+This release integrates existing features without a new memory model,
+MCP or runtime dependencies. The matrix refers to the shipped code; tests use
+synthetic content and do not prove the semantic fidelity of a model.
 
-| Componente            | Implementazione effettiva                                                                                                                                                                            | Verifica deterministica                                                                     | Limite reale                                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Acquisizione          | Hook Stop/SessionEnd e Capture in `capture.ts`; prompt, commentary verificabili e finali nel feed di progetto tramite `feed-hook.ts`/`feed.ts`                                                       | Byte Unicode, ordine, replay, code incomplete, checksum e lock                              | Esecuzione degli hook e approvazione dipendono dal runtime Codex                                                                               |
-| Curatela              | `curator.ts`, `curator-request.ts` e skill curator: batch congelato, sessione effimera del provider, bozza, `curate write` e complete                                                                | Preparazione esplicita, staging, linkage, provenance, no retry automatico                   | Scelta dei milestone, selezione e completezza semantica richiedono sessioni reali                                                              |
-| Autorizzazione        | Solo il comando `knownex checkpoint` avviato dall'utente avvia un batch ordinario; vecchio handoff non autorizza nuove operazioni                                                                    | Invocazioni testuali/IDE/native, consumo, fallimenti, ritiro e ripresa                      | La validazione strutturale non dimostra completezza semantica                                                                                  |
-| Cold start            | `runtime.ts`/`session-hook.ts` emettono STATE confermato intero; bootstrap configura SessionStart con `additionalContextLimit: 0`; nessuna emissione dopo compact                                    | Seed, STATE oltre la vecchia soglia, pending tra sessioni, compact                          | Wrapper senza cap dimensionale; validazione prima dell’emissione, memoria O(payload), timeout figlio 7,5 s. Consegna al modello non verificata |
-| Memoria               | STATE operativo e collegato, Knowledge dettagliate, HISTORY come indice con finestre `history/H…md`                                                                                                  | Link/anchor, identita, provenance e continuita strutturale                                  | Nessun controllo lessicale dimostra completezza della conoscenza                                                                               |
-| Revisioni             | `knowledge-revisions.ts`: snapshot integrali immutabili, ricevute e predecessori; HEAD per nota, nessuna copia piatta                                                                                | Baseline, noop, catene, hash, correzioni, collisioni e riferimenti storici                  | Immutabilita di protocollo, non ACL contro scrittori esterni                                                                                   |
-| Archivio fisico       | `memory/knowledge/H000NNN/[categoria]/<nome>--kn-ID--REV.md` (id della voce di HISTORY; le vecchie cartelle `checkpoint-NNNN` restano leggibili); compatibilita con archivio piatto e run precedenti | Percorsi annidati, link ribasati, journal e symlink/junction                                | Nessuna migrazione automatica degli archivi confermati                                                                                         |
-| Navigazione           | `navigator.ts` e CLI: state/find/read/history, sezioni, revisioni precise e checkpoint; find corrente AND lessicale                                                                                  | Ranking riproducibile, output limitato, piu note/checkpoint, nessuna traversata implicita   | Read integrale puo essere esteso; la ricerca non valuta validita semantica o sinonimi                                                          |
-| Tassonomia            | `taxonomy.ts`, `taxonomy-cli.ts`, skill esplicita: registro minimale e associazioni a revisioni esatte                                                                                               | Proposta/noop, modifica utente, sigillo, sessione, stale, replay e recovery                 | Il principale interpreta l'assenso libero; CLI verifica eventi e associazione, non il significato                                              |
-| Esplorazione tematica | `memory category`, paginazione cronologica e `topics/*.md` ricostruibili                                                                                                                             | Revisioni di piu checkpoint, link relativi, ricostruzione senza riscrivere Markdown storici | Solo revisioni gia versionate; viste da ricostruire dopo checkpoint ordinari quando necessario                                                 |
-| Integrita             | Lock e `apply.json`: v1 legacy, v2 revisioni, v3 organizzazione; recovery senza nuova sessione                                                                                                       | Crash/EIO e modello di persistenza dichiarato, replay idempotente, blocco su corruzione     | Durabilita fisica non dimostrata; assunzioni NTFS/flush nel contratto storage                                                                  |
-| Installazione         | `bootstrap.ts`, npm tgz e quattro skill; config/hooks locali, manifest degli hash                                                                                                                    | Installazione isolata, conflitti, idempotenza e preservazione dati                          | Config personalizzate in conflitto richiedono confronto esplicito; nessun aggiornamento globale                                                |
+| Component            | Actual implementation                                                                                                                                                                    | Deterministic check                                                                                 | Real limit                                                                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Capture              | UserPromptSubmit/Stop hooks: prompt, verifiable commentary and finals into the project feed via `feed-hook.ts`/`feed.ts`                                                                 | Unicode bytes, order, replay, incomplete tail, checksum and lock                                    | Execution and approval of the hooks depend on the provider                                                                       |
+| Curation             | `curator.ts`, `checkpoint-launcher.ts` and the curator skill: frozen batch, ephemeral provider session, draft, `curate write` and complete                                               | Explicit preparation, staging, linkage, provenance, at most one re-proposal                         | Choice of milestones, selection and semantic completeness require real sessions                                                  |
+| Authorization        | Only the user-started `knownex checkpoint` command starts an ordinary batch; an old handoff does not authorize new operations                                                            | Textual/IDE/native invocations, consumption, failures, withdrawal and resume                        | Structural validation does not prove semantic completeness                                                                       |
+| Cold start           | `runtime.ts`/`session-hook.ts` emit the whole confirmed STATE; bootstrap configures SessionStart with `additionalContextLimit: 0`; no emission after compact                             | Seed, STATE beyond the old threshold, pending between sessions, compact                             | Wrapper without size cap; validation before emission, O(payload) memory, child timeout 7.5 s. Delivery to the model not verified |
+| Memory               | Operational, linked STATE, detailed Knowledge, HISTORY as an index with `history/H…md` windows                                                                                           | Links/anchors, identity, provenance and structural continuity                                       | No lexical check proves completeness of the knowledge                                                                            |
+| Revisions            | `knowledge-revisions.ts`: immutable full snapshots, receipts and predecessors; HEAD per note, no flat copy                                                                               | Baseline, noop, chains, hashes, corrections, collisions and historical references                   | Protocol immutability, not an ACL against external writers                                                                       |
+| Physical archive     | `memory/knowledge/H000NNN/[category]/<name>--kn-ID--REV.md` (id of the HISTORY entry; the old `checkpoint-NNNN` folders stay readable); compatibility with flat archive and earlier runs | Nested paths, rebased links, journal and symlink/junction                                           | No automatic migration of confirmed archives                                                                                     |
+| Navigation           | `navigator.ts` and CLI: state/find/read/history, sections, precise revisions and checkpoints; current find is lexical AND                                                                | Reproducible ranking, limited output, multiple notes/checkpoints, no implicit traversal             | Full read can be extended; search does not evaluate semantic validity or synonyms                                                |
+| Taxonomy             | `taxonomy.ts`, `taxonomy-cli.ts`, explicit skill: minimal registry and associations to exact revisions                                                                                   | Proposal/noop, user change, seal, session, stale, replay and recovery                               | The main session interprets free consent; CLI verifies events and association, not meaning                                       |
+| Thematic exploration | `memory category`, chronological pagination and rebuildable `topics/*.md`                                                                                                                | Revisions across several checkpoints, relative links, rebuild without rewriting historical Markdown | Only already versioned revisions; views to be rebuilt after ordinary checkpoints when needed                                     |
+| Integrity            | Lock and `apply.json`: v1 legacy, v2 revisions, v3 organization; recovery without a new session                                                                                          | Crash/EIO and declared persistence model, idempotent replay, block on corruption                    | Physical durability not proven; NTFS/flush assumptions in the storage contract                                                   |
+| Installation         | `bootstrap.ts`, npm tgz and three skills; local hooks, hash manifest, withdrawal of resources no longer shipped                                                                          | Isolated installation, conflicts, idempotence and data preservation                                 | Conflicting custom configs require explicit comparison; no global update                                                         |
 
-## Contratti e compatibilita
+## Contracts and compatibility
 
-- [Memoria](MEMORY-CONTRACT.md), [curator](CURATOR.md), [revisioni](KNOWLEDGE-REVISIONS.md).
-- [Navigatore](NAVIGATOR.md), [tassonomia](TAXONOMY.md), [runtime](RUNTIME.md).
-- [Autorizzazione](CHECKPOINT-CONSENT.md), [durabilita](STORAGE-DURABILITY.md).
+- [Memory](MEMORY-CONTRACT.md), [Curator](CURATOR.md), [revisions](KNOWLEDGE-REVISIONS.md).
+- [Navigator](NAVIGATOR.md), [taxonomy](TAXONOMY.md), [runtime](RUNTIME.md).
+- [Checkpoint and authorization](CURATION-WORKFLOW.md), [durability](STORAGE-DURABILITY.md).
 
-Aggiornare il package e rieseguire init; aprire una nuova chat per caricare le
-istruzioni correnti. I dati non vengono migrati/spostati. I feed legacy per-sessione
-restano conservati e segnalati come bloccanti; copie standalone della sola memory
-non comprendono lo storico versionato. Un workspace spostato puo conservare percorsi
-assoluti nei propri checkpoint: il pacchetto non dipende dal repository originale,
-ma non offre una migrazione generale dei dati tra directory.
+Update the package and rerun init; open a new chat to load the current
+instructions. Data is not migrated/moved. Legacy per-session feeds
+stay preserved and reported as blocking; standalone copies of the memory alone
+do not include the versioned history. A moved workspace may keep absolute paths
+in its checkpoints: the package does not depend on the original repository,
+but does not offer a general migration of data between directories.
 
-Le chiavi tassonomiche rimangono stabili: aggiunte/riassegnazioni esplicite sostituiscono
-rinomine o fusioni automatiche. La tassonomia non altera fatti storici e non avanza
-il cutoff conversazionale. Il vecchio nome della skill handoff non viene distribuito.
+Taxonomy keys stay stable: explicit additions/reassignments replace
+automatic renames or merges. The taxonomy does not alter historical facts and does not advance
+the conversational cutoff. The old name of the handoff skill is not shipped.
 
-## Verifica della versione corrente
+## Checking the current version
 
-`npm run check` esegue suite nativa, typecheck, formattazione e build.
-Installazione e reinstallazione dal tgz si verificano con la procedura in
-[RELEASE-CANDIDATE](RELEASE-CANDIDATE.md). Le evidenze storiche restano esterne
-al pacchetto e non sono prerequisiti di uso o compilazione. I test offline
-non dimostrano completezza semantica, benefici economici o durabilita fisica.
+`npm run check` runs the native suite, typecheck, formatting and build.
+Installation and reinstallation from the tgz are verified with the procedure in
+[INSTALL](INSTALL.md#checks-and-limits), which also lists the open limits. Historical
+evidence and evaluation harnesses stay outside the package. Offline tests
+do not prove semantic completeness, economic benefits or physical durability.

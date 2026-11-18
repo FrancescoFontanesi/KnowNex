@@ -1,235 +1,225 @@
-# Runtime KnowNex
+# KnowNex runtime
 
-## Comando e input ordinari
+## Ordinary command and inputs
 
-Il checkpoint e il comando `knownex checkpoint` ([dettagli](CURATION-WORKFLOW.md#comando-knownex-checkpoint)); `$knownex-checkpoint` e rimosso. `prepare --work .knownex/internal/curator` riceve STATE
-ed eventi senza richiedere una direttiva o creare `.knownex/directive.md`.
-Indicazioni aggiuntive sono facoltative e non sostituiscono le fonti.
-Il vecchio nome `$knownex-handoff` non autorizza nuovi batch; resta leggibile per
-filtrare amministrazione storica e completare batch gia autorizzati. Journal,
-sigilli, consumo singolo e recovery non vengono riscritti dalla rinomina.
+The checkpoint is the `knownex checkpoint` command ([details](CURATION-WORKFLOW.md#knownex-checkpoint-command)); `$knownex-checkpoint` is removed. `prepare --work .knownex/internal/curator` receives STATE
+and events without requiring a directive or creating `.knownex/directive.md`.
+Additional guidance is optional and does not replace the sources.
+The old name `$knownex-handoff` does not authorize new batches; it stays readable to
+filter historical administration and to complete already authorized batches. Journal,
+seals, single consumption and recovery are not rewritten by the renaming.
 
-## Integrita degli eventi acquisiti
+## Integrity of captured events
 
-Il feed JSONL degli hook e la fonte autorevole. Runtime, pending e checkpoint
-usano soltanto gli eventi registrati e la memoria locale, senza App Server o RPC
-alla history Codex. L'identita nativa letta dall'intestazione locale durante la
-cattura e metadato di provenienza, non una verifica dei turni attualmente retained.
+The JSONL feed of the hooks is the authoritative source. Runtime, pending and
+checkpoint use only the recorded events and the local memory, without querying the
+provider history.
 
-Prepare congela il batch dopo il cutoff confermato. Complete verifica il feed,
-i checksum del cutoff, input congelati, ricevute, proposta e
-review prima dell'apply sotto il lock esistente. Un'append successiva al cutoff
-resta per il prossimo batch; corruzione, troncamento o modifica del prefisso
-necessario non autorizzano una pubblicazione. Il trigger e il comando prepare esplicito, non un permesso nel feed.
+Prepare freezes the batch after the confirmed cutoff. Complete verifies the feed,
+the cutoff checksums, frozen inputs, receipts, proposal and
+review before the apply under the existing lock. An append after the cutoff
+stays for the next batch; corruption, truncation or modification of the necessary
+prefix do not authorize a publication. The trigger is the explicit prepare command, not a permission in the feed.
 
-I metadati storici nativeHistory e nativeThreadId non attivano letture esterne.
-Le esclusioni gia registrate nei checkpoint/run restano decisioni congelate:
-non vengono rimosse, ricostruite o ampliate consultando Codex. I cursori pending
-continuano a verificare feed, cutoff, selezione e paginazione.
+The historical metadata nativeHistory and nativeThreadId (no longer written) do not
+trigger external reads.
+The exclusions already recorded in the checkpoints/runs stay frozen decisions:
+they are not removed, rebuilt or widened by consulting Codex. The pending cursors
+keep verifying feed, cutoff, selection and pagination.
 
-Modifiche o eliminazioni retroattive della conversazione non acquisite dagli
-hook non sono rilevate automaticamente. La memoria conserva gli eventi registrati,
-non una replica certificata della history Codex. La catena SHA-256 verifica
-coerenza interna, non completezza, autenticita indipendente o resistenza a chi
-controlla sia feed sia metadati del workspace. Nessuna ricostruzione retroattiva.
+Retroactive edits or deletions of the conversation not captured by the
+hooks are not detected automatically. The memory keeps the recorded events,
+not a certified replica of the Codex history. The SHA-256 chain verifies
+internal consistency, not completeness, independent authenticity or resistance to
+whoever controls both feed and workspace metadata. No retroactive reconstruction.
 
-La recovery completa esclusivamente apply gia autorizzati. Gli hook continuano
-a catturare deterministicamente senza LLM; solo l'invocazione esplicita autorizza
-la materializzazione. Il checkpoint non richiede un eseguibile Codex nel PATH.
+Recovery completes only already authorized applies. The hooks keep capturing
+deterministically with no LLM; only explicit invocation authorizes
+materialization. The checkpoint does not require a Codex executable in the PATH.
 
 ## Lifecycle
 
-| Evento                               | Effetto deterministico                                                                        | LLM     |
-| ------------------------------------ | --------------------------------------------------------------------------------------------- | ------- |
-| SessionStart, escluso source=compact | Verifica memoria, recovery autorizzata, conteggio pending e STATE selettivo                   | Nessuno |
-| UserPromptSubmit                     | Acquisisce prompt nel feed di progetto; nessuna reiniezione STATE                             | Nessuno |
-| Stop                                 | Capture originale, commentary verificabile e finale deduplicato; restituisce `{}` al successo | Nessuno |
-| SessionEnd                           | Solo Capture originale, entro il timeout esistente                                            | Nessuno |
+| Event                               | Deterministic effect                                                    | LLM  |
+| ----------------------------------- | ----------------------------------------------------------------------- | ---- |
+| SessionStart, except source=compact | Verifies memory, authorized recovery, pending count and selective STATE | None |
+| UserPromptSubmit                    | Captures the prompt in the project feed; no STATE re-injection          | None |
+| Stop                                | Verifiable commentary and deduplicated final; returns `{}` on success   | None |
 
-SessionStart emette integralmente lo STATE confermato in additionalContext,
-all'avvio, resume e clear, senza omissioni o troncamenti dimensionali di KnowNex;
-con source=compact non emette nulla (il riassunto contiene già il contesto). Il prefisso dichiara i byte UTF-8 emessi e distingue emissione da
-consegna al modello. Non carica HISTORY o Knowledge; il pending rimane selettivo.
-La dimensione non vincola prepare, validate, apply, noop o letture legacy.
-Errori d'integrita producono un avviso esplicito, mai uno stato misto confermato.
+SessionStart emits the confirmed STATE in full in additionalContext,
+at startup, resume and clear, with no omissions or size truncations by KnowNex;
+with source=compact it emits nothing (the summary already contains the context). The prefix declares the UTF-8 bytes emitted and distinguishes emission from
+delivery to the model. It does not load HISTORY or Knowledge; the pending stays selective.
+Size does not constrain prepare, validate, apply, noop or legacy reads.
+Integrity errors produce an explicit warning, never a mixed confirmed state.
 
-### Confine dell'harness
+### Harness boundary
 
-La [documentazione ufficiale degli hook](https://learn.chatgpt.com/docs/hooks#large-hook-output),
-consultata il 2026-11-06, descrive una soglia predefinita approssimativa di 2500
-token per ciascun messaggio di output visibile al modello. Oltre soglia Codex puo
-salvare il testo completo in un file temporaneo e mostrare un'anteprima con
-percorso; se la scrittura fallisce puo rimanere soltanto l'anteprima troncata.
-Questa gestione, detta spilling, non e il precedente limite KnowNex di 6144 byte.
+The [official hooks documentation](https://learn.chatgpt.com/docs/hooks#large-hook-output),
+consulted on 2026-11-06, describes an approximate default threshold of 2500
+tokens for each output message visible to the model. Beyond the threshold Codex can
+save the full text in a temporary file and show a preview with the
+path; if the write fails only the truncated preview may remain.
+This handling, called spilling, is not the previous KnowNex limit of 6144 bytes.
 
-Per le versioni compatibili, additionalContextLimit sul command handler configura
-il comportamento: 0 richiede il contesto completo direttamente, senza spilling
-dimensionale dell'additionalContext. Knownex init imposta questo valore soltanto
-sul proprio SessionStart, in configurazione locale del progetto. Non modifica
-configurazioni globali o il limite di altri hook. Un aggiornamento gestito tramite
-init preserva le modifiche utente secondo i controlli di conflitto esistenti;
-workspace non aggiornati possono mantenere il default di Codex.
+For compatible versions, additionalContextLimit on the command handler configures
+the behavior: 0 requests the complete context directly, without size spilling
+of the additionalContext. Knownex init sets this value only
+on its own SessionStart, in the project's local configuration. It does not change
+global configurations or the limit of other hooks. An update managed through
+init preserves user changes according to the existing conflict checks;
+workspaces not updated may keep the Codex default.
 
-Non esiste qui una prova di consegna al modello: timeout, approvazione degli hook,
-supporto della versione e finestra effettiva del modello restano limiti esterni.
-Un contesto molto esteso occupa la finestra disponibile; impostare 0 non la rende
-illimitata. La documentazione consiglia cautela per questo motivo. Se Codex
-segnala spilling, errore o contesto incompleto, non dichiarare continuita completa.
+There is no proof of delivery to the model here: timeout, hook approval,
+version support and the model's actual window remain external limits.
+A very large context occupies the available window; setting 0 does not make it
+unlimited. The documentation advises caution for this reason. If Codex
+reports spilling, an error or incomplete context, do not claim full continuity.
 
-Il wrapper distribuito `.codex/hooks/session.cjs` usa spawn asincrono e consuma
-incrementalmente stdout in byte, senza maxBuffer o altra soglia dimensionale.
-Conserva il payload fino a close con exit 0, valida UTF-8, JSON e forma SessionStart,
-poi emette gli stessi byte. Non inoltra stderr ne prefissi da processi falliti.
-Timeout del figlio: 7,5 secondi, seguito da terminazione e diagnosi SESSION_TIMEOUT;
-errori di processo/stream o payload invalidi producono diagnosi distinte.
-Una chiusura anticipata di stdout del figlio non basta: servono exit riuscita e
-payload completo valido. Se si interrompe il canale verso Codex, il wrapper termina
-con errore senza accodare una diagnosi a un payload gia iniziato.
-La raccolta e la validazione richiedono memoria proporzionale all'output; limiti
-Buffer/string/heap di Node, memoria OS, timeout e problemi del canale rimangono
-vincoli tecnici, non soglie di STATE. Un arresto OOM non e sempre intercettabile.
-Il wrapper non impone un limite interno di 64 KiB.
-Le fixture verificano stdout JSON integro, byte e configurazione, senza un LLM.
+The distributed wrapper `.codex/hooks/session.cjs` uses asynchronous spawn and
+consumes stdout incrementally in bytes, with no maxBuffer or other size threshold.
+It keeps the payload until close with exit 0, validates UTF-8, JSON and SessionStart shape,
+then emits the same bytes. It forwards neither stderr nor prefixes from failed processes.
+Child timeout: 7.5 seconds, followed by termination and the SESSION_TIMEOUT diagnosis;
+process/stream errors or invalid payloads produce distinct diagnoses.
+An early close of the child's stdout is not enough: a successful exit and a
+complete valid payload are required. If the channel to Codex is interrupted, the wrapper terminates
+with an error without appending a diagnosis to a payload already started.
+Collection and validation require memory proportional to the output; Node
+Buffer/string/heap limits, OS memory, timeouts and channel problems remain
+technical constraints, not STATE thresholds. An OOM stop is not always catchable.
+The wrapper imposes no internal limit of 64 KiB.
+The fixtures verify intact JSON stdout, bytes and configuration, with no LLM.
 
-La [documentazione ufficiale hooks](https://learn.chatgpt.com/docs/hooks),
-consultata il 2026-11-04, supporta PreCompact e PostCompact; i loro output
-non forniscono l'iniezione di contesto di SessionStart. SessionStart con
-`source=compact` viene eseguito prima della continuazione del modello anche
-dopo compattazione automatica. Si riusa questo evento: nessun hook aggiuntivo,
-nessun blocco della compattazione, nessuna garanzia di delega LLM a PreCompact.
+The [official hooks documentation](https://learn.chatgpt.com/docs/hooks),
+consulted on 2026-11-04, supports PreCompact and PostCompact; their outputs
+do not provide the context injection of SessionStart. SessionStart with
+`source=compact` runs before the model continues, also
+after automatic compaction. This event is reused: no additional hook,
+no blocking of the compaction, no guarantee of LLM delegation at PreCompact.
 
-## Vista temporanea degli eventi acquisiti S4.3
+## Pending without checkpoint
 
-S4/S4.2 espongono gia cutoff e conteggio pending, S4.4 distingue arretrato da
-progresso, S4.6 conserva batch falliti ed eventi. Il packet esistente rende leggibile
-solo una finestra gia preparata: non copriva il pending senza creare un batch e
-creare un batch. La primitiva read-only aggiunta riusa lo stesso feed, lock,
-validazione dei frame e checkpoint, senza staging o seconda copia del feed.
+The packet makes readable only a window already prepared. `knownex pending` instead
+reads the events after the cutoff without creating a batch: it reuses the same feed, lock,
+frame validation and checkpoint, with no staging or second copy of the feed.
 
-STATE e autorevole fino all'ultimo checkpoint confermato; eventi successivi possono
-modificare decisioni, risultati, blocker e attivita. SessionStart lo dichiara e
-non carica automaticamente il pending. Quando il task richiede continuita:
+STATE is authoritative up to the last confirmed checkpoint; later events can
+change decisions, results, blockers and activities. SessionStart declares this and
+does not load the pending automatically. When the task requires continuity:
 
 ```powershell
 npm exec --offline -- knownex pending --limit 5
 npm exec --offline -- knownex pending --from 12 --through 18
 npm exec --offline -- knownex pending --cursor TOKEN
-# Per una copia locale: aggiungere --workspace PERCORSO.
+# For a local copy: add --workspace PATH.
 ```
 
-Il default inizia dopo il cutoff, congelando l'estremo della finestra corrente.
-I cursori vincolano feed, checkpoint, estremo e checksum del prefisso: nuovi append
-non spostano le pagine; un checkpoint cambiato o un prefisso diverso rende il
-cursore obsoleto. Intervalli e limiti sono validati; limit default 5, massimo 20.
-Ogni risposta JSON, newline compreso, resta entro 16384 byte UTF-8. Eventi lunghi
-sono frammentati: textOffset usa unita UTF-16 dichiarate e non separa coppie
-surrogate; ricomporre text nello stesso ordine di sequence/textOffset. Nessuna
-normalizzazione. complete indica fine finestra, textComplete fine evento;
-pendingComplete richiede copertura fino al feed attuale senza coda incompleta.
-Questi flag non provano che l'agente abbia letto o compreso le pagine precedenti.
-newerEvents e incompleteTailBytes segnalano altro contesto non coperto.
+The default starts after the cutoff, freezing the end of the current window.
+The cursors bind feed, checkpoint, end and prefix checksum: new appends
+do not shift the pages; a changed checkpoint or a different prefix makes the
+cursor stale. Ranges and limits are validated; limit default 5, maximum 20.
+Every JSON response, newline included, stays within 16384 UTF-8 bytes. Long events
+are fragmented: textOffset uses declared UTF-16 units and does not split surrogate
+pairs; recompose text in the same order of sequence/textOffset. No
+normalization. complete indicates the end of the window, textComplete the end of the event;
+pendingComplete requires coverage up to the current feed with no incomplete tail.
+These flags do not prove that the agent read or understood the previous pages.
+newerEvents and incompleteTailBytes signal other context not covered.
 
-L'ordinamento restituito e quello della sequenza fisica del feed; sessione, turno,
-timestamp, identita messaggio e metadati sorgente restano disponibili. Ogni frammento
-porta checksum e intervallo byte del frame originale nel file indicato, risolvibile
-in .knownex/internal/feed/. Il lungo percorso transcript non viene duplicato nell'output:
-sourcePathOmitted lo dichiara; la provenienza completa rimane nel frame originale.
-Il backend scansiona il Markdown/feed pertinente con gli helper esistenti; non
-introduce un indice e non promette I/O proporzionale alla sola pagina.
+The order returned is that of the physical sequence of the feed; session, turn,
+timestamp, message identity and source metadata stay available. Each fragment
+carries the checksum and byte range of the original frame in the file indicated, resolvable
+in .knownex/internal/feed/. The long transcript path is not duplicated in the output:
+sourcePathOmitted declares it; the full provenance stays in the original frame.
+The backend scans the relevant Markdown/feed with the existing helpers; it does not
+introduce an index and does not promise I/O proportional to the page alone.
 
-La lettura non inizializza curator, non consuma grant e non modifica feed, memoria,
-checkpoint, autorizzazione o batch; usa soltanto lock transitori. Se trova un apply da
-recuperare, restituisce CURATOR_RECOVERY_REQUIRED senza eseguire recovery. Journal
-corrotti bloccano la lettura. Il runtime/navigatore esistente puo completare un
-apply gia autorizzato: quella e una fase di storage separata, non riconciliazione.
-Si riprende la lettura soltanto con memoria coerente; i feed legacy restano
-segnalati e non vengono migrati o ignorati implicitamente.
+The read does not initialize the curator, does not consume a grant and does not change feed, memory,
+checkpoint, authorization or batch; it uses only transient locks. If it finds an apply to
+recover, it returns CURATOR_RECOVERY_REQUIRED without running recovery. Corrupt
+journals block the read. The existing runtime/navigator can complete an
+already authorized apply: that is a separate storage phase, not reconciliation.
+The read resumes only with a consistent memory; legacy feeds stay
+flagged and are not migrated or implicitly ignored.
 
-Il principale usa STATE e le pagine pertinenti per aggiornare solo il proprio
-contesto temporaneo. Distingue direttive autorevoli, dichiarazioni, ipotesi e
-verifiche; conserva elementi critici finche non esistono giustificazioni pertinenti.
-Con STATE non consegnato integralmente o pending esaminato solo in parte dichiara il limite.
-Non crea WORKING.md, non richiede Si/No per leggere. Una futura
-materializzazione permanente richiede l'avvio utente di `knownex checkpoint`.
+The main session uses STATE and the relevant pages to update only its own temporary
+context. It distinguishes authoritative directives, statements, hypotheses and
+verifications; it keeps critical items until relevant justifications exist.
+With STATE not delivered in full or the pending examined only in part, it declares the limit.
+It does not create WORKING.md and does not require Yes/No to read. A future
+permanent materialization requires the user to start `knownex checkpoint`.
 
-Le fixture sintetiche verificano disponibilita di completamento/supersession da A
-in B, recupero dopo No, limiti di STATE e pagine Unicode, append durante lettura,
-cursore obsoleto e letture senza cambiamenti ai file confermati o all'autorizzazione.
-Le verifiche controllano byte, provenienza, ordine e lifecycle, non comprensione
-semantica del modello; quella resta da validare nella simulazione reale.
+The synthetic fixtures verify availability of completion/supersession from A
+in B, recovery after No, STATE limits and Unicode pages, appends during reading,
+stale cursor and reads with no changes to the confirmed files or to the authorization.
+The checks verify bytes, provenance, order and lifecycle, not the model's semantic
+understanding; that remains to be validated in the real simulation.
 
-## Milestone e salvaguardie
+## Milestones and safeguards
 
-Il principale riconosce semanticamente decisioni/supersession, avanzamenti
-verificati, cambio di focus, handoff e compattazione imminente significativa.
-Segue il comando `knownex checkpoint`: suggerimento, avvio utente,
-prepare, sessione effimera del provider, `curate write` del Curator e complete;
-validate e apply con sigillo restano il percorso manuale. Il workflow editoriale e le
-verifiche restano invariati. Nessun checkpoint per turno o per tempo trascorso.
+The main session semantically recognizes decisions/supersessions, verified
+progress, change of focus, handoff and significant imminent compaction.
+It follows the `knownex checkpoint` command: suggestion, user start,
+prepare, ephemeral provider session, the Curator's `curate write` and complete;
+validate and apply with the seal remain the manual path. The editorial workflow and the
+checks remain unchanged. No checkpoint per turn or per elapsed time.
 
-Le salvaguardie deterministiche sono feed/checksum e identita sessione/turno,
-checkpoint, cutoff congelato, singolo pending e lock del curator. Un seed vuoto
-si inizializza a sequenza zero senza inventare eventi. `readyThrough` indica
-l'ultima risposta finale acquisita; non certifica semanticamente completezza o
-veridicita del contenuto. I messaggi del turno corrente non ancora acquisiti
-restano per un futuro batch. Una sessione abbandonata senza finale conserva i
-prompt: il successivo batch puo includerli senza considerarli risultati verificati.
+The deterministic safeguards are feed/checksum and session/turn identity,
+checkpoint, frozen cutoff, single pending and the curator lock. An empty seed
+is initialized at sequence zero without inventing events. `readyThrough` indicates
+the last final response captured; it does not semantically certify completeness or
+truthfulness of the content. The messages of the current turn not yet captured
+stay for a future batch. A session abandoned with no final keeps the
+prompts: the next batch can include them without treating them as verified results.
 
-Se manca il curator o fallisce la proposta, il batch e gli eventi rimangono.
-Un batch gia attivo non provoca altre deleghe automatiche; nessun retry LLM.
-La recovery di un apply gia autorizzato resta deterministica e idempotente.
-Un fallimento prima dell'autorizzazione richiede una risoluzione esplicita del
-batch; non viene cancellato o sostituito automaticamente per forzare progresso.
-Stop non richiede continuazioni, non crea checkpoint e non genera ricorsione.
-SessionEnd non puo promettere elaborazione dopo la chiusura.
+If the curator is missing or the proposal fails, the batch and the events remain.
+An already active batch triggers no further automatic delegations. The command
+re-proposes the task to the provider at most once in the same run
+([details](CURATION-WORKFLOW.md#knownex-checkpoint-command)); no other LLM retry.
+The recovery of an already authorized apply remains deterministic and idempotent.
+A failure before authorization requires an explicit resolution of the
+batch; it is not deleted or replaced automatically to force progress.
+Stop requires no continuations, creates no checkpoint and generates no recursion.
 
-## Continuita e compatibilita
+## Continuity and compatibility
 
-Nuovi workspace usano solo `.knownex/internal/feed/project.jsonl`: stesso formato di
-frame, una sequenza globale e identita native per sessione. Capture resta la
-fonte originale, non un secondo archivio creato da S4. Il comportamento API
-precedente per feed per-sessione resta disponibile; non viene migrato.
+New workspaces use only `.knownex/internal/feed/project.jsonl`: same frame
+format, one global sequence and native identities per session. The legacy
+per-session feeds are no longer written or migrated.
 
-In presenza di journal legacy `<sha256-sessione>.jsonl`, il runtime segnala
-`LEGACY_SESSION_FEEDS` e riferimenti risolvibili, preservando tutti i dati.
-Non ignora pending precedente e non lo copia in un archivio parallelo.
-L'adozione su workspace legacy richiede una revisione esplicita, fuori da S4.
-AGENTS.md conserva testo esterno a `knownex:start/end` e aggiorna solo quel
-blocco; marker ambigui sono rifiutati. Altri conflitti restano espliciti.
+In the presence of legacy `<sha256-session>.jsonl` journals, the runtime flags
+`LEGACY_SESSION_FEEDS` and resolvable references, preserving all data.
+It does not ignore earlier pending and does not copy it into a parallel archive.
+Adoption on a legacy workspace requires an explicit revision.
+AGENTS.md keeps text outside `knownex:start/end` and updates only that
+block; ambiguous markers are rejected. Other conflicts stay explicit.
 
-## Evidenza offline e controllo reale residuo
+## Offline evidence
 
-`tests/bootstrap.test.ts` normalmente copia il payload compilato in un workspace
-temporaneo esterno. S5 usa la stessa fixture con l'archivio npm realmente installato
-offline, includendo reinstallazione e aggiornamento delle risorse S3. In entrambi
-i percorsi nega ai processi runtime
-l'accesso ai sorgenti. Verifica hook/skill/politica, contesto limitato, A→B con
-pending, Stop ripetuto, inizializzazione zero, proposta invalida, apply/recovery,
-replay senza HISTORY duplicata, checkpoint tra sessioni, bootstrap idempotente,
-blocco legacy e rifiuto di memoria alterata. Le suite esistenti verificano gli
-altri confini di acquisizione e recovery. Sono payload sintetici, senza LLM.
+`tests/bootstrap.test.ts` copies the compiled payload into an external temporary
+workspace, or installs the npm archive with `KNOWNEX_INSTALL_ARCHIVE`, and denies the
+runtime processes access to the sources. It verifies hook, skill, policy, pending
+across sessions, repeated Stop, invalid proposal, apply and recovery, replay with no
+duplicate HISTORY, idempotent bootstrap, retirement of resources no longer
+distributed, legacy block and rejection of altered memory, with synthetic payloads and
+no LLM. Hook approval, delivery of STATE to the model, recognition
+of milestones and the semantic behavior of the agent require a real
+session. Physical durability remains subject to the limits in
+[Storage](STORAGE-DURABILITY.md).
 
-In una futura chat reale: approvare gli hook; verificare contesto SessionStart,
-milestone riconosciuto senza nominarlo, esecuzione del comando di checkpoint e
-un solo batch valido; chiudere A con pending e riprendere in B; verificare
-anche la ripresa dopo compact. Non eseguire questi controlli come parte di S4.
-La selezione effettiva delle skill e il comportamento semantico dell'agente
-non sono dimostrati dai test offline. La durabilita fisica resta soggetta ai
-limiti gia documentati in [Storage](STORAGE-DURABILITY.md).
+## Administrative turns
 
-## Turni amministrativi
+The turns of the old pure command `$knownex-checkpoint` (removed) are excluded from the operational view:
+command, intermediate steps and final in the same sessionId/turnId. The feed stays
+complete; pendingRaw and administrativePending expose the original counts.
+Pending and packet do not include these turns, without advancing the checkpoint.
+To read the originals use `knownex pending --include-administrative`.
+Cursors keep the filter fixed. Invocations with arguments and old Yes/No
+answers stay visible out of caution; no generic filter on tags or words.
 
-I turni del vecchio comando puro `$knownex-checkpoint` (rimosso) sono esclusi dalla vista operativa:
-comando, passaggi intermedi e finale nello stesso sessionId/turnId. Il feed rimane
-integrale; pendingRaw e administrativePending espongono i conteggi originali.
-Pending e packet non includono questi turni, senza avanzare il checkpoint.
-Per leggere gli originali usare `knownex pending --include-administrative`.
-I cursori mantengono fisso il filtro. Invocazioni con argomenti e vecchie risposte
-Si/No restano visibili per prudenza; nessun filtro generico su tag o parole.
+## Coordination without re-reading STATE
 
-## Coordinamento senza rilettura di STATE
-
-`knownex runtime --summary` esegue gli stessi controlli di runtime e restituisce
-metadati, pending e autorizzazione senza il campo state. Il percorso ordinario
-e SessionStart restano invariati: questa opzione serve al coordinamento della
-[curatela autonoma](CURATION-WORKFLOW.md), non modifica il cold start.
+`knownex runtime --summary` runs the same runtime checks and returns
+metadata, pending and authorization without the state field. The ordinary path
+and SessionStart remain unchanged: this option serves the coordination of the
+[autonomous curation](CURATION-WORKFLOW.md), it does not change the cold start.

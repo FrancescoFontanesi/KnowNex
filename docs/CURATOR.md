@@ -1,240 +1,190 @@
-# Curatela procedurale
+# Procedural curation
 
-Il checkpoint si avvia con `npm exec --offline -- knownex checkpoint (--codex | --claude)`,
-lanciato dall'utente (o dal principale solo su sua richiesta esplicita, in background):
-una sessione effimera del provider applica la
-[skill editoriale](../.agents/skills/knownex-curator/SKILL.md) e il
-[contratto](MEMORY-CONTRACT.md). Il Curator legge, scrive la bozza e consegna con
-`curate write`; prepare e complete li esegue il comando. Dettagli in
-[CURATION-WORKFLOW.md](CURATION-WORKFLOW.md). Nessuno scheduler o monitor automatico.
-Capture e feed continuano a funzionare indipendentemente dalla materializzazione.
+The checkpoint starts with `npm exec --offline -- knownex checkpoint (--codex | --claude | --agy)`,
+launched by the user (or by the main session, only on the user's explicit request, in the background).
+An ephemeral provider session applies the
+[editorial skill](../.agents/skills/knownex-curator/SKILL.md) and the
+[contract](MEMORY-CONTRACT.md). The Curator reads, writes the draft and delivers with
+`curate write`. The command runs prepare and complete. Details are in
+[CURATION-WORKFLOW.md](CURATION-WORKFLOW.md). There is no automatic scheduler or monitor.
+The feed keeps working independently of materialization.
 
-Il principale suggerisce il comando ai milestone; non cura mai la memoria. Nessuna
-domanda Si/No o interpretazione dell'assenso. [Protocollo manuale](CHECKPOINT-CONSENT.md).
+The main session suggests the command at milestones. It never curates the memory. There is no
+Yes/No question and no interpretation of consent. [Prepare and batch](CURATION-WORKFLOW.md#prepare-batch-and-result).
 
-## Ciclo manuale: soltanto eccezioni e legacy
+## Manual cycle: exceptions and legacy only
 
-I passaggi seguenti descrivono la supervisione manuale esplicita, non il percorso
-ordinario del controller. Restano disponibili per approfondire un blocco o gestire
-batch precedenti; non vanno eseguiti in aggiunta al controller per lo stesso batch.
+The steps below describe explicit manual supervision, not the ordinary controller path.
+They remain available to investigate a block or to handle earlier
+batches. Do not run them in addition to the controller for the same batch.
 
-Nei workspace inizializzati S4 il principale suggerisce il comando
-`knownex checkpoint` ai milestone significativi: nessun retry LLM automatico. `knownex runtime` mostra pending, cutoff e batch attivo.
-Il feed `project.jsonl` conserva una sequenza di progetto con identita
-sessione/turno; il checkpoint registra la sessione dell'ultimo evento confermato.
-Il primo `init --through 0` accetta **solo** il seed vuoto esatto del bootstrap
-(STATE/HISTORY, nessuna Knowledge) e usa sessione/checksum vuoti: nessun evento
-e dichiarato gia rappresentato. Il seed canonico non richiede una provenienza
-inventata; le successive proposte informative richiedono le fonti come prima.
-La skill seleziona il cutoff dell'ultima risposta finale acquisita, lasciando
-gli eventi successivi per il prossimo milestone. Dettagli in [Runtime S4](RUNTIME.md).
+The main session suggests the `knownex checkpoint` command at significant
+milestones. The command re-submits the task to the provider at most once, with
+no other LLM retry. `knownex runtime` shows pending, cutoff and the active batch.
+The `project.jsonl` feed keeps one project-wide sequence with session/turn
+identity. The checkpoint records the session of the last confirmed event.
+The first `init --through 0` accepts **only** the exact empty bootstrap seed
+(STATE/HISTORY, no Knowledge) and uses an empty session/checksum. No event
+is declared as already represented. The canonical seed does not need an invented
+provenance. Later informative proposals require sources as before.
+The skill selects the cutoff of the last captured final answer and leaves the
+later events for the next milestone. Details in [Runtime](RUNTIME.md).
 
-La CLI inizializza solo il seed canonico vuoto a cutoff zero; le copie con cutoff
-positivo restano una API legacy per chiamanti fidati. Usare percorsi locali
-ignorati da Git per i dati, senza riutilizzare workspace sperimentali.
+The CLI initializes only the canonical empty seed at cutoff zero. Copies with a positive
+cutoff remain a legacy API for trusted callers. Use Git-ignored local paths for data.
+Do not reuse experimental workspaces.
 
 ```powershell
-# Percorso manuale/portabile (il comando `knownex checkpoint` lo fa in automatico).
-# Solo al primo uso: curate init con il seed vuoto e --through 0.
+# Manual/portable path (the `knownex checkpoint` command does this automatically).
+# First use only: curate init with the empty seed and --through 0.
 npm exec --offline -- knownex curate prepare --work .knownex/internal/curator --autonomous
 ```
 
-Chi avvia il percorso manuale non legge integralmente feed, packet o Knowledge per sintetizzarli
-prima della curatela. Il codice congela il batch autorizzato e tutta la base corrente;
-inputs.json espone un catalogo di identita, titoli e intestazioni senza corpi.
-Il Curator sceglie le note pertinenti, legge WINDOW.md (tutti gli eventi del
-batch), base/STATE.md e le note da citare o superare; le note esistenti non si riscrivono. Non carica tutta la Knowledge
-per precauzione. Le note necessarie non collegate da STATE sono disponibili nel
-catalogo, senza selezione preliminare del principale.
+Whoever starts the manual path does not read the feed, packet or Knowledge in full to summarize them
+before curation. The code freezes the authorized batch and the whole current base.
+inputs.json exposes a catalog of identities, titles and headings without bodies.
+The Curator chooses the relevant notes. It reads WINDOW.md (all events of the
+batch), base/STATE.md and the notes to cite or supersede. Existing notes are not rewritten. It does not load all
+Knowledge as a precaution. Notes that are needed but not linked from STATE are available in the
+catalog, with no preliminary selection by the main session.
 
-Il compito del run (request.txt) e generato con dist/curator-request.js e passa una sola
-volta i riferimenti con hash. La skill congelata nel run e letta dal Curator una
-volta, non ricopiata nel messaggio. --artifacts autorizza sorgenti gia note; --directive
-resta facoltativo per priorita brevi, non una sintesi del materiale. Nessun
-file directive.md viene creato automaticamente. La tassonomia approvata rimane
-congelata nel packet; categories assegna solo categorie esistenti alle note
-nuove. La curatela scrive solo note nuove (diario di bordo): STATE è l'unico documento
-riscritto. Il codice pubblica revisioni immutabili sotto
-memory/knowledge/H000NNN/[categoria]/ (stesso id della voce di HISTORY del checkpoint). La proposta
-nomina le note nuove `knowledge/<nome>.md`; il runtime assegna la chiave logica
-`knowledge/H000NNN/<nome>.md`, quindi un nome puo ripetersi tra checkpoint. Le note
-pubblicate prima conservano la chiave piatta `knowledge/<nome>.md`. Una nota con
-l'identita di una nota esistente e una riscrittura ed e rifiutata con
-CURATOR_NOTE_ID_DUPLICATE; una chiave con cartella `H000NNN/` nella proposta con
+In the manual path the Curator reads the skill frozen in the run once. The
+`knownex checkpoint` command instead passes the skill, WINDOW.md and the frozen STATE in a
+single message ([details](CURATION-WORKFLOW.md#knownex-checkpoint-command)). --artifacts authorizes already known sources. --directive
+stays optional for short priorities, not a summary of the material. No
+directive.md file is created automatically. The approved taxonomy stays
+frozen in the packet. categories assigns only existing categories to new
+notes. Curation writes only new notes (logbook): STATE is the only document
+rewritten. The code publishes immutable revisions under
+memory/knowledge/H000NNN/[category]/ (same id as the checkpoint's HISTORY entry). The proposal
+names new notes `knowledge/<name>.md`. The runtime assigns the logical key
+`knowledge/H000NNN/<name>.md`, so a name can repeat across checkpoints. Notes
+published earlier keep the flat key `knowledge/<name>.md`. A note with
+the identity of an existing note is a rewrite and is rejected with
+CURATOR_NOTE_ID_DUPLICATE. A key with an `H000NNN/` folder in the proposal is rejected with
 CURATOR_UNSAFE_PATH.
 
-Il Curator consegna proposta e review tramite curate write della CLI KnowNex;
-non implementa un writer o un encoder. Il
-[confine I/O](MEMORY-CONTRACT.md#confine-io-supportato) definisce letture, persistenza
-esclusiva e ricevute SHA-256. Validate
-restituisce controlli strutturali e rapporto: modifiche per documento, fonti,
-motivazioni, incertezze e anomalie, senza estratti degli STATE. Il rapporto e
-legato alla proposta e agli input congelati; apply rifiuta modifiche dopo
-validate. Vedere lo schema nel [contratto](MEMORY-CONTRACT.md).
+The Curator delivers proposal and review through curate write of the KnowNex CLI.
+It does not implement a writer or an encoder. The
+[I/O boundary](MEMORY-CONTRACT.md#supported-io-boundary) defines reads, exclusive
+persistence and SHA-256 receipts. Validate
+returns structural checks and a report: changes per document, sources,
+reasons, uncertainties and anomalies, without STATE excerpts. The report is
+bound to the proposal and to the frozen inputs. apply rejects changes made after
+validate. See the schema in the [contract](MEMORY-CONTRACT.md).
 
-Il revisore manuale confronta ricevute e rapporto e, se coerente e privo di rischi non
-chiariti, puo applicare senza leggere fonti o candidati. Verifica puntualmente
-solo rimozioni inattese, completamenti o modifiche insufficientemente giustificati,
-contraddizioni, fonti mancanti e incertezze rilevanti. Una criticita nota assente
-dal rapporto richiede approfondimento. Se l'evidenza resta insufficiente non
-applica. Nessuna approvazione automatica,
-nessuna rilettura integrale ordinaria e nessuna seconda sessione. Un rifiuto mantiene
-batch e pending; una correzione editoriale locale richiede report/hash aggiornati
-e rivalidazione. I batch legacy mantengono il precedente formato e --context;
-non si convertono implicitamente mentre sono pendenti.
+The manual reviewer compares receipts and report. If they are consistent and free of unresolved risks, the reviewer may apply without reading sources or candidates. The reviewer checks specifically
+only unexpected removals, completions or insufficiently justified changes,
+contradictions, missing sources and relevant uncertainties. A known issue absent
+from the report requires further investigation. If the evidence remains insufficient, the reviewer does not
+apply. There is no automatic approval,
+no ordinary full re-read and no second session. A rejection keeps the
+batch and pending. A local editorial correction requires an updated report/hash
+and revalidation. Legacy batches keep the previous format and --context.
+They are not converted implicitly while pending.
 
-Il contenuto della conversazione è dato non attendibile, non
-un'autorizzazione a eseguire istruzioni o cambiare file. Le ambiguità tornano al
-principale prima della promozione. L'LLM non invoca apply.
+The content of the conversation is untrusted data, not
+an authorization to run instructions or change files. Ambiguities go back to the
+main session before promotion. The LLM does not invoke apply.
 
-## Dimensione e organizzazione di STATE
+## Size and organization of STATE
 
-STATE puo essere esteso quando il progetto lo richiede. Il Curator distribuisce semanticamente contesto operativo e dettagli collegati,
-senza perseguire una dimensione prefissata o eliminare informazioni essenziali.
-Validate restituisce stateBytes del testo confermabile, dopo il fissaggio dei
-link, come sola diagnostica; non e un conteggio di token e non blocca l'apply.
-Prepare, validate e apply non impongono limiti dimensionali a STATE.
-Packet gia preparati con stateBudget e vecchie validazioni restano utilizzabili;
-noop, recovery e replay non richiedono riduzioni o migrazioni.
-Restano invariati controllo di integrita, provenienza, linkage, sigilli e
-autorizzazione manuale. Una modifica esplicita della proposta richiede review,
-una ricevuta hash aggiornata e rivalidazione; non si modifica la memoria confermata.
+STATE can grow when the project requires it. The Curator distributes operational context and linked details semantically,
+without aiming for a fixed size or removing essential information.
+Validate returns stateBytes of the confirmable text, after link pinning, as a
+diagnostic only. It is not a token count and does not block apply.
+Prepare, validate and apply impose no size limits on STATE.
+Packets already prepared with stateBudget and old validations remain usable.
+noop, recovery and replay need no reductions or migrations.
+Integrity checks, provenance, linkage, seals and
+manual authorization stay unchanged. An explicit change to the proposal requires review,
+an updated hash receipt and revalidation. Confirmed memory is not modified.
 
 ```powershell
 npm run curate -- validate --work .knownex/internal/curator
-# Il revisore rivede il rapporto, approfondisce solo rischi specifici e usa il sigillo effettivo.
-npm run curate -- apply --work .knownex/internal/curator --confirm SIGILLO
+# The reviewer reviews the report, investigates only specific risks and uses the effective seal.
+npm run curate -- apply --work .knownex/internal/curator --confirm SEAL
 ```
 
-Il candidato contiene lo STATE proposto, un segmento storico generato dallo STATE
-precedente e le Knowledge pertinenti. Prima di modificare la memoria, `apply`
-pubblica atomicamente `apply.json`: autorizzazione, alberi precedente e successivo,
-checkpoint e checksum. Promuove soltanto i file cambiati tramite rename atomico;
-HISTORY mantiene il prefisso esatto e riceve un solo segmento. Il checkpoint
-avanza dopo la verifica dell'intero albero. Una nuova prepare riparte dopo il checkpoint;
-Una invocazione consumata non autorizza un altro batch; le API legacy mantengono
-il noop senza eventi nuovi. Non si duplicano eventi già confermati.
+The candidate contains the proposed STATE, a history segment generated from the previous
+STATE and the relevant Knowledge. Before changing the memory, `apply`
+atomically publishes `apply.json`: authorization, previous and next trees,
+checkpoint and checksums. It promotes only the changed files by atomic rename.
+HISTORY keeps the exact prefix and receives a single segment. The checkpoint
+advances after the whole tree is verified. A new prepare restarts after the checkpoint.
+A consumed invocation does not authorize another batch. Legacy APIs keep
+the noop with no new events. Events already confirmed are not duplicated.
 
-## Esempi editoriali S4.1
+## Substantive preservation and linkage
 
-Esempi sintetici documentali, non prove semantiche eseguite da un modello.
-Gli identificativi E indicano ipotetici eventi sorgente, non evidenze reali.
-Le regole sono nella [skill curator](../.agents/skills/knownex-curator/SKILL.md);
-non introducono categorie, campi o filtri deterministici nel formato della memoria.
+In a new session STATE is the last confirmed memory, not proof that all
+pending is already represented. In the checkpoint, prepare freezes the relevant batch and the session receives
+the references, without a summary of the content. The Curator interprets
+novelty, supersession, results, blockers and relevant Knowledge from the frozen feed. The original feed is not filtered by materialization.
 
-| Conversazione e provenienza ipotetica                                                                                                                                                                             | Materializzazione selettiva attesa                                                                                                                                                                                                               |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| E001: richiesta molto lunga di un rapporto, con molti esempi di stile; vincoli espliciti: italiano, dati locali, nessuna pubblicazione.                                                                           | STATE conserva obiettivo e tre vincoli; la lunghezza e gli esempi non giustificano note separate. Le direttive restano valide finche l'utente non le modifica.                                                                                   |
-| E002–E009: commentary di avanzamento e tentativi risolti; E010: evidenza tecnica di un percorso relativo risolto dal cwd errato; E011: il finale dichiara che il problema e risolto, senza prova di riesecuzione. | Omettere cronaca e correzioni ridondanti. Integrare la causa riutilizzabile e la diagnostica pertinente nella Knowledge dell'argomento; registrare la soluzione come dichiarata e la verifica come ancora aperta, senza inventare test superati. |
-| STATE precedente: scelta A e prerequisito critico P ancora aperto. E012: l'utente sostituisce esplicitamente A con B; E013 non menziona P.                                                                        | STATE rende corrente B e mantiene P aperto; A esce dalle decisioni attive. HISTORY archivia lo STATE precedente mediante il protocollo esistente e conserva la transizione, senza sovrascrivere il presente.                                     |
-| Knowledge esistente `knowledge/percorsi.md`, ID stabile, fornita nel packet. E014 e poi E020 in checkpoint diversi aggiungono una causa e una verifica sullo stesso argomento, con un log autorizzato.            | Diario di bordo: ogni checkpoint scrive una nota nuova; la nota esistente non si riscrive. La nota nuova dice la verità attuale e linka quella che supera; STATE linka le note correnti. Nessuna tassonomia obbligatoria.                        |
+STATE is the operational root for the ordinary cold start. Details live in
+autonomous Knowledge notes reachable through Markdown links, including indirect ones.
+The context reduction comes from being able to choose which notes to open, not
+from removing secondary details or from mandatory reading of the
+feed. HISTORY and the immutable revisions keep their contract. They are not
+a substitute for information that is still relevant in the current memory.
 
-In una nuova sessione STATE e l'ultima memoria confermata, non la prova che tutto
-il pending sia gia rappresentato. Nel checkpoint prepare congela il batch pertinente e la sessione riceve
-i riferimenti, senza una sintesi del contenuto. Il Curator interpreta
-novita, supersession, risultati, blocker e Knowledge pertinenti dal feed congelato. Il feed originale non viene filtrato dalla materializzazione.
+The Curator tells incidental content from substantive content by looking at meaning
+and consequences, with no lexical filters. In the ordinary path, during self-verification, the Curator
+uses the structured report to compare critical continuity and changes,
+checking the relevant passages and sources in the candidate. It checks preservation, attribution, qualifications,
+negations and scope of the evidence. It follows the necessary links and rejects unjustified
+losses or essential details that cannot be reached. It does not require all
+facts to be repeated in STATE and does not create a parallel coverage registry.
 
-## Conservazione sostanziale e linkage
+## Critical continuity
 
-STATE e la radice operativa per il cold start ordinario; i dettagli sono nelle
-Knowledge autonome e raggiungibili attraverso link Markdown, anche indiretti.
-La riduzione del contesto deriva dal poter scegliere quali note aprire, non
-dall'eliminazione dei dettagli secondari o dalla consultazione obbligatoria del
-feed. HISTORY e le revisioni immutabili mantengono il loro contratto: non sono
-un sostituto delle informazioni ancora pertinenti nella memoria corrente.
+The Curator compares the frozen previous STATE with the new events before
+proposing the next one. Every active decision, blocker, prerequisite and critical
+activity must stay active (possibly updated) or have relevant evidence
+of completion, a replacing decision or an explicit and authoritative cancellation.
+Recent silence is not a justification. Work that is actually open is kept in concise form,
+without adding fields, registries or IDs.
 
-Il curator distingue contenuto incidentale e sostanziale guardando significato
-e conseguenze, senza filtri lessicali. Nel percorso ordinario il Curator, durante l'autoverifica,
-usa il rapporto strutturato per confrontare continuita critica e modifiche,
-verificando i passaggi e le fonti pertinenti nel candidato. Controlla conservazione, attribuzione, qualificazioni,
-negazioni e ambito delle prove; segue i collegamenti necessari e rifiuta perdite
-ingiustificate o dettagli essenziali irraggiungibili. Non richiede che tutti i
-fatti siano ripetuti in STATE e non crea un registro parallelo di copertura.
+The manual reviewer checks items that disappeared or were weakened by comparing the previous STATE
+in the packet with the proposal and, after validate, with the candidate STATE.
+The reviewer uses the events already available and the relevant Knowledge, without re-reading whole
+archives. The reviewer rejects apply if an unjustified critical loss remains. Batch and pending
+stay, and a manual rejection does not relaunch the provider.
+Validate checks structure and integrity, not the correctness of this review.
 
-Questi casi sintetici definiscono aspettative editoriali preventive, non output
-prodotti da un LLM o un classificatore deterministico. Le sequenze sono locali
-a ciascuna riga e non modificano gli oracoli storici.
+Every HISTORY window keeps the transition and the STATE produced, so completed
+or superseded decisions can be recovered. Moving information to HISTORY
+or Knowledge does not allow removing from STATE an item still needed to resume
+the work. A technical fix does not prove a functional verification.
+Partial results do not automatically close prerequisites or blockers.
 
-| Caso e sorgente sintetica                                                                                                                                                | Destinazione e review attese                                                                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E001: «Riscrivi il riepilogo in parole semplici», senza nuovi fatti o direttive.                                                                                         | Nessuna conoscenza nuova; `noop` se l'intero batch e incidentale. Una spiegazione con contenuto riutilizzabile va invece preservata.                                   |
-| E002: comando digitato male, corretto senza conseguenze. E003: scoperta una risoluzione dal cwd errato, applicata una modifica; il finale dichiara soltanto build verde. | Omettere la cronaca di E002; integrare causa e modifica di E003 nella nota pertinente. Build dichiarata non dimostra collaudo funzionale.                              |
-| E004: il formato conserva il codice R-31 e l'accento combinante senza normalizzazione; dettaglio non necessario alla prossima attivita.                                  | Conservare entrambi nella Knowledge tecnica, con fonte e condizioni; renderli raggiungibili da STATE, senza obbligo di copiarli nella radice.                          |
-| E005: «Nessun errore osservato sui file locali; rete non provata». E006: usare B anziche A solo per export locale.                                                       | Preservare negazione circoscritta, rete non verificata, autore e ambito della sostituzione. Non affermare assenza generale di errori o abbandono globale di A.         |
-| STATE: obiettivo, decisione B per export locale, blocker rete, prossima verifica; link alla nota tecnica che collega una nota sui risultati.                             | Cold start operativo e dettagli autonomi raggiungibili anche indirettamente. Validare destinazioni/anchor, poi rivedere se i collegamenti necessari sono presenti.     |
-| Knowledge fornita: cause, alternative e condizioni gia confermate. E007 aggiunge un test limitato.                                                                       | Integrare il test mantenendo contenuto pertinente, ID, fonti e relazioni precedenti. Non sostituire la nota con le sole novita; conservare l'ambito limitato del test. |
-| Knowledge pertinente esistente non collegata da STATE.                                                                                                                   | Individuarla nel catalogo congelato e leggerla prima di modificarla; non crearne una copia. Nel modo legacy segnalare il contesto mancante.                            |
+## Diagnostics and limits
 
-Le verifiche deterministiche usano proposte scritte a mano: controllano packet
-completo nei testi selezionati, esclusione dei corpi non selezionati, deduplicazione
-dei percorsi, integrita delle note, risoluzione dei link e continuita dei byte
-nelle revisioni. Non dimostrano che il modello selezioni tutti i fatti o produca
-tutti i link necessari: correttezza e completezza semantiche restano da valutare
-in una futura esecuzione reale, senza riclassificare Test001.
+The CLI prints outcome, operational paths, cutoff and seal, never feed text.
+Exit code 1 for errors. `CURATOR_PENDING_EXISTS` requires using the batch already fixed.
+`CURATOR_STAGE_CHANGED`, `CURATOR_STALE_BATCH` and `CURATOR_FEED_CHANGED` block
+promotions that are no longer valid. After a stop, prepare, validate, apply and the navigator's reads
+on the workspace automatically complete the authorized promotion
+under the same lock, with no additional proposal or LLM. `init` applies the same
+protection when it copies a workspace memory. The record stays
+as a receipt for idempotent replays until the next apply.
 
-## Continuita critica S4.5
+Incomplete/corrupt evidence, an unexpected checkpoint, or files that differ from both the
+previous and the authorized version block the operation. There is no
+arbitrary repair. Editors and external writers that ignore the lock may see
+the intermediate steps. The protocol recovers from process crashes. It does not prove physical
+durability against power loss. The content and
+namespace barriers for local NTFS give guarantees conditional on the documented model. Flush
+errors abort the operation.
+The [durability verification](STORAGE-DURABILITY.md) details the Windows primitives, simulations
+and the conditions under which recovery stays blocked.
 
-Il curator confronta lo STATE precedente congelato con i nuovi eventi prima di
-proporre il successivo. Ogni decisione attiva, blocker, prerequisito e attivita
-critica deve restare attivo (eventualmente aggiornato) oppure avere evidenza
-pertinente di completamento, una decisione sostitutiva o una cancellazione esplicita
-e autorevole. Il silenzio recente non e una giustificazione. Si conserva il lavoro
-effettivamente aperto in forma concisa, senza aggiungere campi, registri o ID.
+The deterministic fixture checks UTF-8 reading of `proposal.json`, parsing,
+materialization and persistence in STATE, HISTORY and two Knowledge notes with
+accented text, Greek, Japanese, emoji and a combining accent, with no normalization.
+The Q2 defect of the PowerShell ASCII pipe predates this verified pipeline.
 
-Il revisore manuale controlla elementi scomparsi o indeboliti confrontando lo STATE
-precedente nel packet con la proposta e, dopo validate, con lo STATE del candidato.
-Usa gli eventi gia disponibili e le Knowledge pertinenti, senza rileggere archivi
-interi. Rifiuta apply se resta una perdita critica ingiustificata: batch e pending
-rimangono, nessun retry LLM automatico.
-Validate verifica struttura e integrita, non la correttezza di questa revisione.
-
-Ogni finestra di HISTORY conserva la transizione e lo STATE prodotto, rendendo
-recuperabili decisioni completate o superate. Spostare informazioni in HISTORY
-o Knowledge non permette di togliere da STATE un elemento ancora necessario alla
-ripresa del lavoro. Una soluzione tecnica non prova una verifica funzionale;
-risultati parziali non chiudono automaticamente prerequisiti o blocker.
-
-Le seguenti fixture sono documentali e interamente sintetiche; i riferimenti E
-valgono solo dentro ciascun caso. Non sono valutazioni eseguite da un modello.
-La colonna revisione indica il criterio atteso, non l'esito di un test semantico.
-
-| Caso                           | STATE precedente                                                                                                        | Eventi nuovi (fonte sintetica)                                                                                                      | STATE successivo atteso                                                                                                 | Revisione manuale                                                                                                                                                                  |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A — Omissione recente          | Collaudo funzionale su Windows ancora necessario prima del rilascio; ambiente di prova non disponibile, blocker aperto. | E301 tratta soltanto la documentazione; non contiene risultati del collaudo o rimozione del vincolo.                                | Mantenere collaudo, prerequisito e blocker aperti, anche se il tema recente e diverso.                                  | Rifiutare un candidato che li omette: nessun evento giustifica completamento, supersession o cancellazione.                                                                        |
-| B — Completamento dimostrato   | Eseguire il collaudo funzionale concordato prima del rilascio.                                                          | E302 contiene il risultato sintetico del collaudo completo nell'ambiente richiesto, con tutte le condizioni concordate soddisfatte. | L'attivita puo uscire dalle azioni aperte; riportare concisamente il risultato pertinente e la sua fonte.               | Accettare la rimozione dell'attivita aperta per completamento supportato da E302, senza estendere il risultato ad altri test o prerequisiti. Lo STATE precedente resta in HISTORY. |
-| C — Decisione sostituita       | Decisione attiva: usare il formato A per l'esportazione.                                                                | E303 e una direttiva esplicita dell'utente: usare B al posto di A per la stessa esportazione.                                       | B diventa la decisione attiva; A non resta valida per quel contesto.                                                    | Accettare la supersession supportata da E303; la transizione e lo STATE precedente conservano l'evoluzione in HISTORY.                                                             |
-| D — Risultato tecnico parziale | Prima del rilascio verificare il ripristino funzionale end-to-end; esito ancora ignoto.                                 | E304 documenta soltanto la correzione tecnica del percorso e il successo della build; nessuna prova end-to-end e stata eseguita.    | Conservare il prerequisito funzionale aperto, annotando il progresso tecnico senza dichiarare il ripristino verificato. | Rifiutare la chiusura: build e fix del percorso non soddisfano la condizione di verifica end-to-end. Un dettaglio in Knowledge non sostituisce l'attivita nello STATE.             |
-
-I controlli deterministici verificano forma, presenza e riferimenti delle fixture
-e coerenza delle istruzioni con il workflow. La capacita di un modello di rilevare
-perdite semantiche richiede ancora una conversazione reale; non e dimostrata qui.
-
-## Diagnostica e limiti
-
-La CLI stampa esito, percorsi operativi, cutoff e sigillo, mai testi del feed.
-Exit code 1 per errori. `CURATOR_PENDING_EXISTS` richiede usare il batch già fissato;
-`CURATOR_STAGE_CHANGED`, `CURATOR_STALE_BATCH` e `CURATOR_FEED_CHANGED` bloccano
-promozioni non più valide. Dopo un arresto, prepare, validate, apply e le letture
-del navigatore sul workspace completano automaticamente la promozione autorizzata
-sotto lo stesso lock, senza proposta o LLM aggiuntivi. `init` applica la stessa
-protezione quando copia una memoria del workspace. Il record rimane come ricevuta
-per replay idempotenti fino all'applicazione successiva.
-
-Evidenze incomplete/corrotte, checkpoint inatteso o file diversi sia dalla versione
-precedente sia da quella autorizzata bloccano l'operazione: nessuna riparazione
-arbitraria. Gli editor e gli scrittori esterni che ignorano il lock possono vedere
-i passaggi intermedi. Il protocollo recupera crash di processo; non dimostra
-durabilità fisica contro perdita di alimentazione. V2.3b aggiunge barriere di
-contenuto e namespace per NTFS locale, con garanzie condizionate al modello
-documentato; gli errori di flush interrompono l'operazione.
-La [verifica V2.3](STORAGE-DURABILITY.md) dettaglia primitive Windows, simulazioni
-e condizioni per le quali la recovery resta bloccata.
-
-La fixture deterministica verifica la lettura UTF-8 di `proposal.json`, il parsing,
-la materializzazione e la persistenza in STATE, HISTORY e due Knowledge con testo
-accentato, greco, giapponese, emoji e accento combinante, senza normalizzazioni.
-Il difetto Q2 della pipe ASCII PowerShell precede questa pipeline verificata.
-
-`npm run check` verifica anche Capture e feed. La prova R1 usa una copia privata
-della memoria M1.3, mantenendo gli originali per confronto e provenienza. Non è
-una migrazione generalizzata né un nuovo formato del feed.
+`npm run check` also verifies the feed. The R1 test uses a private copy
+of memory M1.3, keeping the originals for comparison and provenance. It is not
+a generalized migration or a new feed format.

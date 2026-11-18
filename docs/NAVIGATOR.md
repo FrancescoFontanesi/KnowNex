@@ -1,204 +1,211 @@
-# Navigatore deterministico
+# Deterministic navigator
 
-## Recall tramite subagente generico
+## Recall through a generic subagent
 
-Il principale riusa STATE e la conversazione corrente. Un riferimento già noto
-(nota o finestra linkata da STATE, ID `H…`) lo legge direttamente con `memory read`:
-una lettura costa meno di una delega. Storia (HISTORY, finestre, revisioni, eventi),
-tassonomia e ricerche le delega a un subagente generico dell'harness che segue la
-skill `knownex-recall` e i comandi sotto; restituisce fatti pertinenti, riferimenti,
-provenienza e limiti, non i documenti o il log delle letture. Non esiste un ruolo
-Recaller dedicato. Il principale attende senza navigazione duplicata.
+The main session reuses STATE and the current conversation. A reference it already
+knows (a note or window linked from STATE, an `H…` ID) it reads directly with
+`memory read`: one read costs less than a delegation. History (HISTORY, windows,
+revisions, events), taxonomy and searches it delegates to a generic subagent of the
+harness that follows the `knownex-recall` skill and the commands below; the subagent
+returns relevant facts, references, provenance and limits, not the documents or the
+log of the reads. There is no dedicated Recaller role. The main session waits with
+no duplicate navigation.
 
-I vincoli di sola consultazione sono comportamentali, non permessi read-only
-separati: il subagente eredita la sandbox del principale. Le primitive correnti
-possono acquisire lock interni e completare recovery gia autorizzate durante una
-lettura; non c'e una garanzia tecnica di assenza di scritture.
+The consultation-only constraints are behavioral, not separate read-only
+permissions: the subagent inherits the main session's sandbox. The current
+primitives can acquire internal locks and complete already authorized recoveries
+during a read; there is no technical guarantee of no writes. If the Curator lock is
+busy (another read or a short apply), the reads wait for it
+for about 5 s before failing with `DESTINATION_BUSY`.
 
-STATE resta l'handoff automatico tra nuove sessioni, non un refresh per turno.
-Dopo un compact (`source=compact`) l'hook non riemette STATE: il riassunto lo
-contiene già. La consegna effettiva resta dipendente dall'harness.
+STATE remains the automatic handoff between new sessions, not a per-turn refresh.
+After a compact (`source=compact`) the hook does not re-emit STATE: the summary
+already contains it. Actual delivery remains harness-dependent.
 
-## Comandi di consultazione
+## Consultation commands
 
 ```powershell
 npm run build
 npm start -- memory state --memory .knownex/memory
-npm start -- memory find "identita ordinamento" --type knowledge --memory .knownex/memory
+npm start -- memory find "identity ordering" --type knowledge --memory .knownex/memory
 npm start -- memory history --last 10 --memory .knownex/memory
 npm start -- memory read H000003 --memory .knownex/memory
 npm start -- memory event E017 --memory .knownex/memory
 npm start -- memory event E015..E016 --memory .knownex/memory
-npm start -- memory read kn-ID-DELLA-NOTA --memory .knownex/memory
+npm start -- memory read kn-NOTE-ID --memory .knownex/memory
 npm start -- memory read "knowledge/storage.md#flush-locale" --memory .knownex/memory
-# Copiare un riferimento immutabile effettivo da STATE o da read/find:
-npm start -- memory read "knowledge/H000004/nome--kn-UUID--REV.md#policy" --memory .knownex/memory
+# Copy an actual immutable reference from STATE or from read/find:
+npm start -- memory read "knowledge/H000004/name--kn-UUID--REV.md#policy" --memory .knownex/memory
 ```
 
-Il binario `knownex` espone gli stessi argomenti. `--memory` indica la directory
-del checkpoint del progetto; sostituire gli ID degli esempi con quelli trovati
-tramite `find`. Prima del primo checkpoint la directory disponibile e lo STATE iniziale nella stessa memory/.
-Senza opzione, le nuove installazioni usano sempre .knownex/memory, anche per lo
-STATE iniziale. Nei workspace legacy restano i percorsi precedenti e il seed.
-Fuori da un workspace KnowNex resta
-il default standalone `memory/`.
-Le copie standalone sono read-only; nei workspace il gate può completare una
-recovery già autorizzata. `memory --help` mostra la sintassi. Il comando sync resta
-disponibile con il contratto precedente.
+The `knownex` binary exposes the same arguments. `--memory` indicates the directory
+of the project checkpoint; replace the IDs in the examples with those found
+through `find`. Before the first checkpoint the available directory is the initial STATE in the same memory/.
+Without the option, new installations always use .knownex/memory, also for the
+initial STATE. In legacy workspaces the previous paths and the seed remain.
+Outside a KnowNex workspace the standalone default `memory/` remains.
+Standalone copies are read-only; in workspaces the gate can complete an already
+authorized recovery. `memory --help` shows the syntax. The sync command remains
+available with the previous contract.
 
-- `state`: JSON `{status, content}` con il solo STATE originale. Una copia standalone
-  legge solo STATE; nel workspace il gate verifica anche la memoria confermata.
-- `find "query"`: massimo cinque risultati, senza letture successive automatiche.
-  Ogni risultato contiene ID, tipo, titolo, estratto, percorso e riferimento
-  relativo alla memoria. Per HISTORY aggiunge data e intervallo degli eventi;
-  il titolo usa gli argomenti del segmento. `--type history|knowledge` restringe
-  anche i file scanditi. Una query senza risultati restituisce
-  `{"status":"not_found","results":[]}` con exit 0.
-- `history [--last N] [--before H-ID]`: cronologia dei checkpoint dal più recente (default 10,
-  massimo 50), con ID, data, eventi, argomenti, descrizione e riferimento, senza il corpo
-  delle finestre. Serve a scegliere quali finestre aprire senza leggere HISTORY intero.
-- `read <id|reference>`: contenuto integrale della sola finestra o segmento storico o della sola nota,
-  con riferimenti risolvibili. Non segue i link. ID sconosciuto: errore
-  MEMORY_NOT_FOUND, exit 1. ID malformati e argomenti invalidi: exit 2.
+- `state`: JSON `{status, content}` with the original STATE only. A standalone copy
+  reads only STATE; in the workspace the gate also verifies the confirmed memory.
+- `find "query"`: at most five results, with no automatic follow-up reads.
+  Each result contains ID, type, title, excerpt, path and a reference
+  relative to the memory. For HISTORY it adds the date and the event range;
+  the title uses the topics of the segment. `--type history|knowledge` also
+  restricts the files scanned. A query with no results returns
+  `{"status":"not_found","results":[]}` with exit 0.
+- `history [--last N] [--before H-ID]`: checkpoint chronology from the most recent (default 10,
+  maximum 50), with ID, date, events, topics, description and reference, without the body
+  of the windows. It serves to choose which windows to open without reading the whole HISTORY.
+- `read <id|reference>`: full content of the window or history segment alone, or of the note alone,
+  with resolvable references. It does not follow links. Unknown ID: error
+  MEMORY_NOT_FOUND, exit 1. Malformed IDs and invalid arguments: exit 2.
+  For notes, if current notes in strictly later checkpoint folders link them,
+  it adds `linkedByNewer` (sorted list of `{id, title, reference, history|checkpoint}`);
+  absent if there are none. The logbook does not rewrite old notes, so this is the only way
+  to know that a note read may have been superseded: it says only "linked by a
+  later one", it does not decide semantic validity; read the notes indicated. It applies to ID,
+  logical alias and immutable reference (also `@REV`/`--at`). Order: legacy `checkpoint-NNNN`
+  before every `H00000N`, then by number; same folder, STATE, HISTORY, self-links and
+  legacy flat notes do not count. Read-only computation (no file, `memoryHash`
+  unchanged), deterministic; cost: one verified read per current note in newer
+  folders (zero for the last folder), with no index; it does not scan non-current revisions.
 
-## Dal contesto al dettaglio
+## From context to detail
 
-SessionStart tenta di includere lo STATE completo, cutoff e avvisi sul pending,
-anche con STATE estesi, ma non dopo compact. Non impone una soglia dimensionale interna.
-Emissione di KnowNex e consegna effettiva nell'harness sono confini distinti:
-vedere i limiti e la configurazione nel [runtime](RUNTIME.md).
-Riutilizzare
-STATE e istruzioni recall gia presenti; non eseguire un cold start a ogni domanda.
-Se STATE basta non servono chiamate. Con un documento identificato, leggere il
-riferimento diretto; usare find quando manca il documento o serve un altro tema.
+SessionStart tries to include the complete STATE, cutoff and warnings about the pending,
+even with large STATE, but not after compact. It imposes no internal size threshold.
+KnowNex emission and actual delivery in the harness are distinct boundaries:
+see the limits and configuration in the [runtime](RUNTIME.md).
+Reuse
+the STATE and recall instructions already present; do not run a cold start at every question.
+If STATE is enough no calls are needed. With an identified document, read the
+direct reference; use find when the document is missing or another topic is needed.
 
-`read` accetta ID, l'alias logico `knowledge/H000NNN/<nome>.md` (o `knowledge/<nome>.md`
-per le note pubblicate prima delle cartelle per checkpoint), `HISTORY.md#h000003`,
-`history/H000003.md` e il percorso fisico
-`knowledge/H000NNN/[categoria]/nome--kn-UUID--REV.md` (o la forma precedente `knowledge/checkpoint-NNNN/...`). Il prefisso `nome--`
-serve a chi sfoglia il vault; le revisioni precedenti senza prefisso restano valide. I vecchi
-riferimenti `../revisions/...` restano supportati. Sono forme ristrette risolte dal navigatore,
-non accesso a percorsi arbitrari. I riferimenti sono relativi alla radice memory:
-un link dentro una nota va risolto rispetto al `path` di quella nota. Non si passa
-l'intera sintassi `[etichetta](destinazione)` e non si aprono feed o artifact con read.
-Nessun link viene seguito automaticamente; si approfondisce solo quello necessario.
-Per le nuove revisioni il riferimento canonico include la cartella del checkpoint ed eventuale
-categoria: `knowledge/H000004/experiments/kn-UUID--REV.md`. I nomi piatti
-precedenti restano validi. Un percorso richiesto deve coincidere con quello
-autenticato della revisione; non si risolve un altro file con lo stesso basename.
+`read` accepts ID, the logical alias `knowledge/H000NNN/<name>.md` (or `knowledge/<name>.md`
+for notes published before the per-checkpoint folders), `HISTORY.md#h000003`,
+`history/H000003.md` and the physical path
+`knowledge/H000NNN/[category]/name--kn-UUID--REV.md` (or the earlier form `knowledge/checkpoint-NNNN/...`). The `name--` prefix
+serves those browsing the vault; earlier revisions without the prefix stay valid. The old
+references `../revisions/...` stay supported. These are restricted forms resolved by the navigator,
+not access to arbitrary paths. References are relative to the memory root:
+a link inside a note must be resolved relative to the `path` of that note. The whole
+`[label](destination)` syntax is not passed and feeds or artifacts are not opened with read.
+No link is followed automatically; only the one needed is explored further.
+For new revisions the canonical reference includes the checkpoint folder and any
+category: `knowledge/H000004/experiments/kn-UUID--REV.md`. The earlier flat names
+stay valid. A requested path must match the authenticated path of the
+revision; another file with the same basename is not resolved.
 
-Un frammento ATX `#anchor` su una Knowledge, anche dopo `kn-ID@REV`, legge quella
-sezione e le sottosezioni fino alla prossima intestazione di livello uguale o
-superiore. Il contenuto conserva i byte UTF-8/CRLF senza frontmatter aggiuntivo;
-ID, path e revisione restano nei metadati del documento originale.
-`selection` dichiara anchor, fromLine, throughLine e totalLines del documento.
-La SHA-256 di una revisione continua a riferirsi al file immutabile completo,
-non all'estratto. Non si tronca silenziosamente il testo; una sezione puo ancora
-essere lunga. Le qualificazioni globali o in altre sezioni richiedono altro contesto.
-Anchor assente o ambiguo: MEMORY_SECTION_NOT_FOUND o MEMORY_AMBIGUOUS_SECTION,
-exit 1; non si sceglie un'intestazione duplicata arbitrariamente.
-Le intestazioni dentro fence di codice non sono sezioni. Si supportano le
-intestazioni ATX del contratto, non un parser Markdown generale.
+An ATX `#anchor` fragment on a Knowledge note, even after `kn-ID@REV`, reads that
+section and the subsections up to the next heading of equal or higher level.
+The content keeps the UTF-8/CRLF bytes with no additional frontmatter;
+ID, path and revision stay in the metadata of the original document.
+`selection` declares anchor, fromLine, throughLine and totalLines of the document.
+The SHA-256 of a revision still refers to the complete immutable file,
+not to the excerpt. The text is not silently truncated; a section can still be
+long. Global qualifications or those in other sections require other context.
+Missing or ambiguous anchor: MEMORY_SECTION_NOT_FOUND or MEMORY_AMBIGUOUS_SECTION,
+exit 1; a duplicate heading is not chosen arbitrarily.
+Headings inside code fences are not sections. The ATX headings of the contract are
+supported, not a general Markdown parser.
 
-## Ricerca e identità
+## Search and identity
 
-Nei workspace versionati, `find` e `read kn-...` restano correnti e restituiscono
-anche revisione e riferimento immutabile. `read kn-...@REV` legge una versione
-precisa; `read kn-... --at N` risolve un checkpoint confermato, inclusi i noop.
-`--at H000002` usa il cutoff precedente al segmento (`from - 1`).
-Nessun fallback per versioni mancanti o richieste anteriori alla baseline.
-Un riferimento immutabile non viene sostituito con l'ultima revisione. Per leggere
-il presente usare l'ID logico o il percorso corrente. Numero di checkpoint, ID
-HISTORY, sequenza E del feed e identificatore di revisione hanno ruoli distinti;
-`--at N` accetta solo un checkpoint confermato, non un evento qualsiasi.
-L'archivio non partecipa a find: le vecchie revisioni non moltiplicano i candidati.
-Find non classifica validita semantica, supersession o indipendenza dei risultati:
-si leggono ambito, qualificazioni e fonti, anche nella revisione storica pertinente.
-Dettagli e compatibilità: [Knowledge versionate](KNOWLEDGE-REVISIONS.md).
+In versioned workspaces, `find` and `read kn-...` stay current and also return
+the revision and immutable reference. `read kn-...@REV` reads a precise version;
+`read kn-... --at N` resolves a confirmed checkpoint, including noops.
+`--at H000002` uses the cutoff preceding the segment (`from - 1`).
+No fallback for missing versions or requests earlier than the baseline.
+An immutable reference is not replaced with the latest revision. To read
+the present use the logical ID or the current path. Checkpoint number, HISTORY
+ID, feed E sequence and revision identifier have distinct roles;
+`--at N` accepts only a confirmed checkpoint, not any event.
+The archive does not take part in find: old revisions do not multiply the candidates.
+Find does not classify semantic validity, supersession or independence of the results:
+read the scope, qualifications and sources, also in the relevant historical revision.
+Details and compatibility: [Versioned Knowledge](KNOWLEDGE-REVISIONS.md).
 
-La ricerca è AND su parole Unicode, senza distinzione di maiuscole o accenti;
-per le note correnti i nuovi percorsi forniscono anche metadati di categoria e
-checkpoint. Query come `experiments` o `H000004` li trovano senza un
-indice secondario. Nei risultati category e checkpoint descrivono collocazione e
-provenienza, non validita semantica. Le revisioni storiche non entrano nella
-ricerca corrente e restano leggibili con ID qualificati o riferimenti storici.
-duplicati nella query non aumentano il punteggio. Non usa sinonimi o inferenza.
-Per ogni termine la presenza pesa 8 nel titolo, 5 nei metadati, 3 nelle
-intestazioni e 1 nel corpo. La frequenza non conta. Parità: tipo e ID in ordine
-lessicografico indipendente dal locale. Titoli e estratti sono limitati a 160 e
-240 caratteri. L'estratto sceglie la finestra con piu termini distinti della query
-(180 unita UTF-16 per le corrispondenze, fino a 60 caratteri di contesto precedente),
-con parita al primo passaggio. Non cambia il ranking dei documenti e non e una
-valutazione semantica. Se il passaggio appartiene a una sottosezione con anchor
-unico e lungo al massimo 160 unita UTF-16, `section` ne mostra titolo/anchor
-(titolo limitato a 160 caratteri) e `reference` punta direttamente li.
-Le occorrenze lontane possono soddisfare AND senza entrare tutte nell'estratto.
+Search is AND over Unicode words, case- and accent-insensitive;
+for current notes the new paths also provide category and checkpoint metadata.
+Queries such as `experiments` or `H000004` find them without a secondary
+index. In the results category and checkpoint describe placement and
+provenance, not semantic validity. Historical revisions do not enter the current
+search and stay readable with qualified IDs or historical references.
+Duplicates in the query do not increase the score. It uses no synonyms or inference.
+For each term, presence weighs 8 in the title, 5 in the metadata, 3 in the
+headings and 1 in the body. Frequency does not count. Ties: type and ID in
+locale-independent lexicographic order. Titles and excerpts are limited to 160 and
+240 characters. The excerpt chooses the window with the most distinct query terms
+(180 UTF-16 units for the matches, up to 60 characters of preceding context),
+with ties going to the first passage. It does not change the ranking of the documents and is not a
+semantic evaluation. If the passage belongs to a subsection with a unique anchor
+and at most 160 UTF-16 units long, `section` shows its title/anchor
+(title limited to 160 characters) and `reference` points directly there.
+Distant occurrences can satisfy AND without all entering the excerpt.
 
-HISTORY usa delimitatori, ID e validazione di `src/history.ts`; il riferimento
-è, per esempio, `HISTORY.md#h000003`. Gli ID Knowledge provengono dal frontmatter
-del contratto R1 e vengono risolti nei file `knowledge/*.md`, senza alias o indice.
-Identità duplicate, segmenti invalidi, metadata non validi e UTF-8 malformato
-causano errori espliciti. Percorsi arbitrari, URL, traversal e symlink/junction
-lungo i percorsi letti sono rifiutati. I riferimenti alle revisioni attraversano
-la catena verificata del checkpoint: non autorizzano file orfani nell'archivio.
+HISTORY uses the delimiters, IDs and validation of `src/history.ts`; the reference
+is, for example, `HISTORY.md#h000003`. Knowledge IDs come from the frontmatter
+of the R1 contract and are resolved through the checkpoint HEADs to the revisions
+in `knowledge/H000NNN/` (or legacy `checkpoint-NNNN`); the logical alias
+`knowledge/H000NNN/topic.md` and the immutable reference indicate the same
+revision. There is no persistent index.
+Duplicate identities, invalid segments, invalid metadata and malformed UTF-8
+cause explicit errors. Arbitrary paths, URLs, traversal and symlinks/junctions
+along the paths read are rejected. References to revisions traverse
+the verified checkpoint chain: they do not authorize orphan files in the archive.
 
-## Organizzazione tematica
+## Thematic organization
 
-La manutenzione esplicita [knownex-taxonomy](TAXONOMY.md) aggiunge associazioni a
-revisioni precise senza riscriverle. `memory category CHIAVE --memory DIRECTORY`
-restituisce revisioni in ordine cronologico, originali o retroattive, con flag
-`current`, `through` e riferimento immutabile. `--limit` (default 5, massimo 20)
-e `--cursor` permettono pagine stabili; modifiche ai metadati/checkpoint invalidano
-il cursore. La copertura storica e limitata alle note gia versionate.
-Find resta corrente: `thematicCategories` indica categorie effettive,
-`category` la collocazione originaria. Read conserva gli stessi byte e ID.
-Gli indici Markdown in `memory/topics/` sono viste ricostruibili, non Knowledge.
+The explicit maintenance [knownex-taxonomy](TAXONOMY.md) adds associations to
+precise revisions without rewriting them. `memory category KEY --memory DIRECTORY`
+returns revisions in chronological order, original or retroactive, with flags
+`current`, `through` and immutable reference. `--limit` (default 5, maximum 20)
+and `--cursor` allow stable pages; changes to metadata/checkpoint invalidate
+the cursor. Historical coverage is limited to notes already versioned.
+Find stays current: `thematicCategories` indicates effective categories,
+`category` the original placement. Read keeps the same bytes and IDs.
+The Markdown indexes in `memory/topics/` are rebuildable views, not Knowledge.
 
-Riutilizzare identita e note correnti per lo stesso tema. Titoli e intestazioni
-distintivi aiutano AND e selezione dei passaggi; descrivere esplicitamente ambito,
-correzioni e decisioni sostituite. Raggruppare per coesione e consultazione autonoma,
-senza dividere per turno o soglia di byte. Temi come decisioni/motivazioni,
-risultati/limiti, specifiche e questioni aperte sono criteri facoltativi, non
-directory, tipi o tassonomie obbligatorie. Le sezioni consentono letture mirate
-nelle note coerenti; un tema indipendente puo meritare una nota autonoma collegata.
+Reuse identity and current notes for the same topic. Distinctive titles and headings
+help AND and passage selection; explicitly describe scope,
+corrections and superseded decisions. Group by cohesion and independent consultation,
+without splitting by turn or byte threshold. Topics such as decisions/reasons,
+results/limits, specifications and open questions are optional criteria, not
+directories, types or mandatory taxonomies. Sections allow targeted reads
+in coherent notes; an independent topic may deserve a linked standalone note.
 
-## Uso selettivo e limiti
+## Selective use and limits
 
-Leggere STATE una volta, riusare la risposta, cercare con parole mirate e filtro
-quando disponibile, aprire solo i candidati pertinenti alle domande ancora aperte.
-Un mancato risultato lessicale non prova un'assenza semantica universale: riportare
-che il dato non è documentato nelle evidenze recuperate, senza inventarlo.
+Read STATE once, reuse the answer, search with targeted words and a filter
+when available, open only the candidates relevant to the questions still open.
+A lexical miss does not prove a universal semantic absence: report
+that the datum is not documented in the evidence retrieved, without inventing it.
 
-Il backend scandisce i file locali in memoria: O(dimensione HISTORY/Knowledge)
-senza indice persistente. Al modello restituisce soltanto risultati limitati e
-contenuti scelti. Nei workspace ogni operazione condivide il gate del curator;
-le sezioni limitano l'output, non l'I/O di verifica o la scansione locale. Un
-riferimento diretto evita find ma la risoluzione corrente controlla comunque
-le identita delle note; non promette backend O(1).
-non esiste una snapshot fra chiamate successive. Navigare memoria confermata
-e stabile. I controlli
-dei percorsi non costituiscono isolamento contro modifiche ostili simultanee
-del filesystem. Il gate legge checkpoint/feed e può completare un apply già
-autorizzato; le copie standalone non hanno questa integrazione.
+The backend scans local files in memory: O(size of HISTORY/Knowledge)
+with no persistent index. To the model it returns only limited results and
+chosen contents. In workspaces every operation shares the curator gate;
+sections limit the output, not the verification I/O or the local scan. A direct
+reference avoids find but the current resolution still checks
+the note identities; it does not promise an O(1) backend. There is no snapshot between
+successive calls: navigation is stable only on confirmed memory. The path checks
+are not isolation against simultaneous hostile filesystem changes. The gate reads
+checkpoint/feed and can complete an already authorized apply; standalone copies
+have no such integration.
 
-## Evidenze e limiti della valutazione
+## Evidence and limits of the evaluation
 
-Le fixture coprono piu note simili, dettagli secondari, due livelli di linkage,
-sezioni, piu checkpoint, correzioni e versioni storiche; controllano byte,
-identita, ordine, limiti degli estratti, percorsi e assenza di traversate.
-SessionStart rende STATE disponibile; i test offline non dimostrano che l'agente
-lo riusi effettivamente o interpreti correttamente tutte le qualificazioni.
+The fixtures cover multiple similar notes, secondary details, two levels of linkage,
+sections, multiple checkpoints, corrections and historical versions; they check bytes,
+identity, order, excerpt limits, paths and absence of traversals.
+SessionStart makes STATE available; offline tests do not prove that the agent
+actually reuses it or correctly interprets all the qualifications.
 
-Test001 standalone caricava recall e STATE per ogni agente nuovo: non esercitava
-SessionStart. I 26610 byte di istruzioni nei sei recuperi A erano il 46,1% dello
-stdout, non dei token totali. Recall ora rimanda i dettagli del pending al runtime
-solo quando servono, senza imporre una nuova lettura per ogni domanda. Questo e
-un cambiamento istruttivo, non un risparmio LLM misurato. Oracolo e risultati
-precedenti rimangono immutati; nessun nuovo benchmark eseguito.
-
-Nel futuro confronto MCP/CLI usare lo stesso navigatore e le stesse versioni,
-query, selezioni, fonti e condizioni di contesto iniziale. Misurare separatamente
-correttezza del recupero, qualita della risposta, chiamate, byte/token realmente
-esposti, istruzioni, cache, trasporto e tempo. Meno output non dimostra minor
-costo complessivo; sezioni prive di qualificazioni necessarie non sono recuperi
-completi. Nessuna interfaccia MCP e introdotta qui.
+In the future MCP/CLI comparison use the same navigator and the same versions,
+queries, selections, sources and initial context conditions. Measure separately
+retrieval correctness, answer quality, calls, bytes/tokens actually
+exposed, instructions, cache, transport and time. Less output does not prove lower
+overall cost; sections lacking necessary qualifications are not complete retrievals.
+No MCP interface is introduced here.

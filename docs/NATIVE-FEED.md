@@ -1,114 +1,86 @@
-# Feed conversazionale
+# Conversation feed
 
-Il feed e la fonte autorevole della materializzazione: solo gli eventi
-registrati vengono elaborati. nativeThreadId e source sono metadati disponibili,
-non attestazioni esterne. Il checkpoint non interroga la history Codex; modifiche
-retroattive non acquisite dagli hook restano non rilevate. Gli hash assicurano
-coerenza interna, non completezza o autenticita indipendente contro un processo
-che controlla il workspace. Le esclusioni storiche restano conservate.
+The feed is the authoritative source for materialization: only recorded events
+are processed. The checkpoint does not query the provider history;
+retroactive changes not captured by the hooks stay undetected. The hashes
+ensure internal consistency, not completeness or independent authenticity against a
+process that controls the workspace. Historical exclusions stay preserved.
 
-## Feed e backup S1
+## Format
 
-Il feed conserva `user_message`, `assistant_commentary` e `assistant_final`,
-separatamente dal backup S1. Utente e finale provengono dai payload nativi;
-i soli intermedi testuali vengono selezionati dal transcript durante Stop
-([criteri R2](INTERMEDIATE-MESSAGES.md)). Il writer `appendFeedEvent(directory,
-input)` in `src/feed.ts` non importa formati Codex: riceve `type`, `sessionId`,
-`turnId`, `text` e `hook`, e aggiunge `sequence` (da 1) e `capturedAt` (UTC ISO).
-`hook` è la provenienza fornita dal chiamante, non un identificativo dell’evento.
+The feed keeps `user_message`, `assistant_commentary` and `assistant_final`.
+User and final come from the hook payloads; only the textual intermediates
+are selected from the transcript during Stop
+([criteria](INTERMEDIATE-MESSAGES.md)). The writer `appendFeedEvent(directory,
+input)` in `src/feed.ts` does not import provider formats: it receives `type`,
+`sessionId`, `turnId`, `text` and `hook`, and adds `sequence` (from 1) and
+`capturedAt` (UTC ISO). `hook` is the provenance supplied by the caller, not an
+event identifier. The `nativeThreadId` field of events captured in the
+past stays valid but is no longer written.
 
-Il workspace installato usa `.knownex/internal/feed/project.jsonl`, escluso da Git, condiviso
-fra sessioni. Il formato per-sessione `.knownex/feed/<sha256 UTF-8 di sessionId>.jsonl`
-rimane il formato legacy: init lo conserva e il runtime ne segnala la presenza,
-senza una migrazione implicita. Le identita mantengono sempre la sessione originale.
-Ogni riga LF completa è un frame `{ block, checksum }`, con blocco
-`{ version: 1, previous, event }`. `checksum` è SHA-256 di `JSON.stringify(block)`;
-`previous` è il checksum del frame precedente, oppure `null`. La sequenza
-rappresenta l’ordine di commit osservato, non una cronologia dedotta dal modello.
-Il testo resta invariato, inclusi spazi, righe, Unicode e stringhe vuote.
+The writer always writes `project.jsonl` in the feed folder
+(`.knownex/internal/feed/`, `.knownex/feed/` in the legacy layout), excluded from Git and
+shared between sessions. The per-session format `.knownex/feed/<sha256 UTF-8 of
+sessionId>.jsonl` remains the legacy format: init keeps it and the runtime
+reports its presence (`LEGACY_SESSION_FEEDS`), without an implicit migration.
+Identities always keep the original session.
 
-## Identità e recovery
+Every complete LF line is a frame `{ block, checksum }`, with block
+`{ version: 1, previous, event }`. `checksum` is the SHA-256 of `JSON.stringify(block)`;
+`previous` is the checksum of the previous frame, or `null`. The sequence
+represents the observed commit order, not a chronology inferred by the model.
+The text stays unchanged, including spaces, lines, Unicode and empty strings.
 
-L’identità nativa è la terna tipo/sessione/turno; per gli intermedi si aggiunge
-`messageId`. Ripetere la stessa identità con testo identico è
-un no-op; testo diverso causa `FEED_CONFLICT`, senza alterare il registro.
-Lo stesso testo in turni diversi resta composto da eventi distinti.
+## Identity and recovery
 
-La riapertura verifica checksum, catena, sequenze, sessione e unicità delle identità.
-Un frame completo corrotto causa `FEED_CORRUPT` e viene preservato. Una coda
-incompleta viene scartata solo dopo aver validato i frame confermati e l’evento
-in ingresso; un replay di un commit già completo non lo duplica. Il writer richiede
-`FileHandle.sync()`, senza dimostrare durabilità fisica contro perdita di corrente.
+The identity is the type/session/turn triple; for intermediates `messageId`
+is added. Repeating the same identity with identical text is a no-op; different
+text causes `FEED_CONFLICT`, without altering the registry. The same text in
+different turns stays made of distinct events.
 
-Il writer riutilizza `acquireJournalLock()`: un processo vivo concorrente causa
-`DESTINATION_BUSY` dopo un’attesa limitata (retry ogni 25 ms, fino a 3 s,
-entro il timeout degli hook). L’errore è osservabile e
-richiede un successivo replay; non è promessa l’acquisizione eventuale di eventi
-falliti. Valgono i limiti del lock S1 per PID riutilizzati, hard link e recovery
-interrotta. Non accedere allo stesso registro tramite alias hard link o symlink.
-La verifica rilegge il registro in memoria a ogni evento; non esiste un indice
-persistente o un file di stato separato.
+Reopening verifies checksums, chain, sequences and uniqueness of identities.
+A corrupt complete frame causes `FEED_CORRUPT` and is preserved. An incomplete
+tail is discarded only after validating the confirmed frames and the incoming
+event; a replay of an already complete commit does not duplicate it. The writer requests
+`FileHandle.sync()`, without proving physical durability against power loss.
+The check rereads the registry in memory at every event; there is no
+persistent index or separate state file.
 
-## Adattatore Codex
+## Lock
 
-La prova reale dei payload verifica `session_id` e `turn_id` coincidenti tra
-`UserPromptSubmit` e `Stop`, con `prompt` e `last_assistant_message` di tipo stringa.
-La configurazione `.codex/hooks.json` aggiunge `UserPromptSubmit` e un secondo
-handler a `Stop`, entrambi con comando relativo al workspace
-`node ".codex/hooks/knownex-feed.cjs"`, generato da init.
-Gli handler S1 di Stop e SessionEnd restano invariati.
+The writer uses `acquireJournalLock()`, the same lock as the Curator. The owner
+(PID, token, diagnostic `acquiredAt`) is written to a private candidate and
+published with an atomic hard link. A concurrent live process causes
+`DESTINATION_BUSY` after a bounded wait (retry every 25 ms, up to 6 s, within the
+hook's 7.5 s budget); the error is observable and the event is not
+rebuilt. The lock of a dead PID is recovered with an exclusive gate tied to
+its token; a gate left over after a crash during recovery, or a malformed
+lock (`LOCK_CORRUPT`), requires manual inspection. Reused PIDs are
+treated as busy. The filesystem must support atomic hard links; do not
+access the same registry through hard link or symlink aliases.
 
-Lo script passa il payload via stdin a `dist/feed-hook.js` nel package installato
-(`src/feed-hook.ts` nel fallback di sviluppo), mai negli argomenti
-del processo. L’adattatore estrae il campo originale e invoca il writer comune.
-Durante Stop tenta prima l'acquisizione selettiva dei commentary del medesimo
-turno. I problemi del transcript non impediscono di conservare il finale nativo;
-sono riportati come codici in `commentaryIssues` nel log diagnostico, con i conteggi
-`commentaryMatched` e `commentaryAppended`, senza testo conversazionale.
-Campo assente o nullo causa `MISSING_PROMPT` o `MISSING_ASSISTANT_MESSAGE`;
-ID assenti o invalidi impediscono la scrittura. Non si inventano identificativi,
-risposte o messaggi utente per riempire eventuali lacune.
+## Hook adapter
 
-Il wrapper ha timeout figlio di 7,5 secondi, sotto quello dichiarato di 10 secondi,
-e termina con exit code 0 anche su errore. I diagnostici in
-`.codex/hooks/feed-events.jsonl` (ignorato da Git) contengono solo ID, evento,
-timestamp, conteggi, sequenza, hash/lunghezza del testo ricevuto o codice errore.
-Non inoltra stdout/stderr grezzi o contenuti conversazionali. Se anche il log
-fallisce, segnala `FEED_LOG_WRITE_FAILED` senza annullare commit già confermati.
+The `feed.cjs` script passes the payload via stdin to `dist/feed-hook.js` in the
+installed package (`src/feed-hook.ts` in the development fallback). The adapter extracts the
+original field (`prompt` or `last_assistant_message`) and calls the writer. During
+Stop it first tries to capture the commentary of the same turn: transcript
+problems do not prevent keeping the final and are reported as codes in
+`commentaryIssues`, with `commentaryMatched` and `commentaryAppended`, without text.
+A missing field causes `MISSING_PROMPT` or `MISSING_ASSISTANT_MESSAGE`; missing or
+invalid IDs prevent writing. Identifiers, replies or user
+messages are not invented. Timeout, diagnostic logs and opt-out are described in
+[AUTOMATIC-CAPTURE](AUTOMATIC-CAPTURE.md).
 
-La raccolta iniziata a metà conversazione può non avere il messaggio utente
-corrispondente a una risposta. Eventi mancanti, hook non emessi, crash e
-terminazioni forzate non sono recuperabili automaticamente dal feed. Il backup
-S1 resta la copia indipendente del transcript, non una fonte di fallback implicita.
-Gli intermedi recuperabili dal transcript non colmano automaticamente i messaggi
-utente o finali mancanti; le loro identità native restano invariate.
+Collection started mid-conversation may lack the user message
+matching a reply. Missing events, hooks not emitted, crashes and forced
+terminations cannot be recovered from the feed. The `prompt` includes
+the whole received field, including any IDE context added by the provider.
 
-## Verifica
+## Checks
 
-Le fixture verificano testo esatto, due turni/quattro eventi, sessioni separate,
-replay, conflitti, lock occupato, corruzione e tagli simulati di un frame finale,
-anche dentro un carattere UTF-8. Le fixture dell’adattatore invocano processi nuovi
-e verificano che l’assenza di campi non inventi contenuti né blocchi Codex.
-
-### Prova reale VS Code — 3 novembre 2026
-
-Dopo l’approvazione personale degli handler, una sonda temporanea limitata a
-metadati e hash conferma `prompt`, `last_assistant_message`, `session_id` e
-`turn_id`: i due hook condividono sessione e turno. La sonda viene sostituita
-dall’adattatore di acquisizione; nessun testo dei payload viene copiato nei log.
-
-Una nuova chat sacrificabile con due turni produce automaticamente quattro eventi
-nel feed, nell’ordine `user_message`, `assistant_final`, `user_message`,
-`assistant_final`. I due eventi di ciascun turno condividono lo stesso ID, mentre
-i turni hanno ID diversi. Gli hash e le lunghezze UTF-8 dei testi coincidono con
-quelli calcolati dall’adattatore sul campo ricevuto del payload; checksum, catena
-e sequenze sono validi. La conversazione termina normalmente.
-Il `prompt` osservato comprende anche il contesto IDE fornito da Codex: il feed
-conserva l’intero campo ricevuto, senza estrarre o riscrivere la sola direttiva.
-
-Il replay diagnostico del primo evento, trasferito nuovamente via stdin all’hook,
-aggiunge zero eventi, conserva la sequenza originale e lascia l’intero registro
-identico byte per byte. Entrambi gli Stop acquisiscono anche il transcript S1
-(23 e 10 nuovi record), con catena e checksum validi. Feed e transcript restano
-registri indipendenti. Le simulazioni di interruzione riguardano fixture sintetiche,
-non il registro reale. La verifica completa passa con 59 test. Stato S2.1: **READY**.
+The fixtures verify exact text, two turns and four events, different sessions
+in the same feed, replay, conflicts, busy lock, corruption and simulated cuts
+of a final frame, even inside a UTF-8 character. The adapter fixtures
+invoke fresh processes and verify that a missing field does not invent content
+or block the conversation.

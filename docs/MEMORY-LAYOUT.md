@@ -1,8 +1,8 @@
-# Memoria pubblica e infrastruttura interna
+# Public memory and internal infrastructure
 
-Il layout canonico delle nuove installazioni separa il prodotto consultabile dai
-meccanismi che lo generano. La rc.11 distribuisce questo layout nelle nuove installazioni; i workspace
-legacy mantengono la loro disposizione senza migrazione automatica.
+The canonical layout of new installations separates the consultable product from
+the mechanisms that generate it. rc.11 ships this layout in new installations; legacy
+workspaces keep their arrangement without automatic migration.
 
 ```text
 .knownex/
@@ -11,122 +11,123 @@ legacy mantengono la loro disposizione senza migrazione automatica.
     STATE.md
     HISTORY.md
     knowledge/
-      checkpoint-0004/            # forma precedente, ancora leggibile
-        [categoria/]
+      checkpoint-0004/            # earlier form, still readable
+        [category/]
           kn-UUID--REV.md
-      H000009/                    # id della voce di HISTORY del checkpoint
+      H000009/                    # id of the checkpoint's HISTORY entry
         kn-UUID--REV.md
-    taxonomy.json                 # facoltativo
-    taxonomy-associations.json    # facoltativo
-    topics/                       # viste tematiche ricostruibili
+    taxonomy.json                 # optional
+    taxonomy-associations.json    # optional
+    topics/                       # rebuildable thematic views
   internal/
     install.json
     docs/
     feed/
-    captures/
+    captures/                     # previous installations only, no longer written
     curator/
       checkpoint.json
       apply.json
-      revisions/c-N.json          # ricevute, non copie delle Knowledge
+      revisions/c-N.json          # receipts, not copies of the Knowledge
       runs/
       taxonomy-runs/
       taxonomy-changes/
 ```
 
-## Esplorazione
+## Exploration
 
-Aprire `.knownex/README.md`, quindi `memory/STATE.md`. STATE collega le revisioni
-pertinenti con etichette descrittive. Non è necessario conoscere il Curator o usare
-la CLI. La directory `memory/` può essere aperta come vault Markdown/Obsidian:
-STATE, HISTORY e Knowledge hanno collegamenti relativi reali, senza note piatte
-intermedie o symlink. L'interfaccia grafica di Obsidian non è verificata dai test.
-I riferimenti a feed e artifact esterni alla vault richiedono un lettore che
-consenta accesso fuori dalla sua radice; non vengono duplicati dentro la memoria.
+Open `.knownex/README.md`, then `memory/STATE.md`. STATE links the relevant
+revisions with descriptive labels. There is no need to know the Curator or use
+the CLI. The `memory/` directory can be opened as a Markdown/Obsidian vault:
+STATE, HISTORY and Knowledge have real relative links, with no intermediate
+flat notes or symlinks. The Obsidian graphical interface is not verified by the tests.
+References to feed and artifacts outside the vault require a reader that
+allows access outside its root; they are not duplicated inside the memory.
 
-Una cartella checkpoint contiene soltanto le Knowledge pubblicate in quella
-promozione. Le note sono voci di diario: un checkpoint aggiunge note nuove e non
-riscrive quelle esistenti, che restano dove si trovano. STATE collega le note,
-anche di checkpoint diversi, che contengono la verità attuale; quelle superate
-mostrano l'evoluzione. HISTORY conserva gli STATE precedenti e i relativi link
-immutabili. Il nome della cartella indica il cutoff, non un ID HISTORY o la
-validità semantica di una decisione. Un noop avanza la ricevuta senza duplicare
-note, STATE o cartelle Knowledge.
+A checkpoint folder contains only the Knowledge published in that
+promotion. Notes are diary entries: a checkpoint adds new notes and does not
+rewrite existing ones, which stay where they are. STATE links the notes,
+even from different checkpoints, that contain the current truth; superseded ones
+show the evolution. HISTORY keeps the previous STATE files and their immutable
+links. The name of the `H000NNN` folder is the HISTORY ID of the checkpoint; the
+legacy `checkpoint-NNNN` folders indicate the cutoff instead. Neither
+attests the semantic validity of a decision. A noop advances the receipt without duplicating
+notes, STATE or Knowledge folders.
 
-Gli ID logici, il formato delle revisioni e i loro hash non cambiano. Le chiavi
-logiche sono `knowledge/H000NNN/tema.md` per le note nuove (il runtime aggiunge la
-cartella del checkpoint al nome `knowledge/tema.md` della proposta) e
-`knowledge/tema.md` per quelle pubblicate prima; valgono come alias CLI e
-non rappresentano una seconda copia fisica. Il navigatore risolve i HEAD già
-registrati nel checkpoint e cerca soltanto le note correnti. Restano disponibili
-ID, ID@REV, `--at`, percorsi fisici, sezioni e lookup HISTORY. Nessun indice nuovo.
+Logical IDs, the revision format and their hashes do not change. The logical
+keys are `knowledge/H000NNN/theme.md` for new notes (the runtime adds the
+checkpoint folder to the proposal's `knowledge/theme.md` name) and
+`knowledge/theme.md` for those published before; they act as CLI aliases and
+are not a second physical copy. The navigator resolves the HEADs already
+registered in the checkpoint and searches only current notes. ID, ID@REV, `--at`,
+physical paths, sections and HISTORY lookup stay available. No new index.
 
-## STATE, seed e staging
+## STATE, seed and staging
 
-Il bootstrap scrive direttamente lo STATE iniziale vuoto in `memory/STATE.md`.
-Prima del primo checkpoint, questo è un template senza eventi confermati:
-SessionStart lo indica come cutoff E0. Non viene creata `seed/` e non esiste un
-secondo STATE attivo. L'inizializzazione del Curator a E0 usa lo stesso file.
+The bootstrap writes the empty initial STATE directly to `memory/STATE.md`.
+Before the first checkpoint, this is a template with no confirmed events:
+SessionStart reports it as cutoff E0. No `seed/` is created and there is no
+second active STATE. The initialization of the Curator at E0 uses the same file.
 
-Gli STATE e le Knowledge sotto `internal/curator/runs/*/base` e `candidate-*`
-sono input congelati e candidati non confermati. Il journal conserva previous e
-next per recovery; non sono punti d'ingresso alla memoria e non vanno aperti per
-ricostruire il presente. Sono mantenuti perché appartengono al protocollo e alle
-evidenze di validazione; non vengono eliminati con questa riorganizzazione.
+The STATE files and Knowledge under `internal/curator/runs/*/base` and `candidate-*`
+are frozen inputs and unconfirmed candidates. The journal keeps previous and
+next for recovery; they are not entry points to the memory and must not be opened to
+rebuild the present. They are kept because they belong to the protocol and to the
+validation evidence; they are not deleted by this reorganization.
 
-## Storage e recovery
+## Storage and recovery
 
-Il contratto logico del Curator resta STATE/HISTORY e note complete con chiavi
-logiche. Nel nuovo layout tale vista delle note viene ricostruita dai HEAD e dai
-contenuti delle revisioni, verificandone hash e collegamenti. Non è uno snapshot
-persistente aggiuntivo. Il memoryHash mantiene la stessa definizione logica.
+The logical contract of the Curator stays STATE/HISTORY and complete notes with
+logical keys. In the new layout this view of the notes is rebuilt from the HEADs and
+the contents of the revisions, verifying their hashes and links. It is not an additional
+persistent snapshot. The memoryHash keeps the same logical definition.
 
-Il journal autorizzato precede le pubblicazioni. Le revisioni e i nomi delle loro
-directory vengono sincronizzati prima della promozione di STATE/HISTORY e del
-checkpoint. Le ricevute restano interne. I flush includono i HEAD già esistenti;
-il replay usa previous/next e i file di pubblicazione del journal, senza nuova
-delega o autorizzazione. Le letture CLI della memoria canonica acquisiscono il
-lock dello stesso Curator e non possono aggirare recovery o verifiche d'integrità.
+The authorized journal precedes publications. Revisions and the names of their
+directories are synchronized before the promotion of STATE/HISTORY and of the
+checkpoint. Receipts stay internal. Flushes include the already existing HEADs;
+replay uses previous/next and the journal's publication files, with no new
+delegation or authorization. CLI reads of the canonical memory acquire the
+lock of the same Curator and cannot bypass recovery or integrity checks.
 
-Un lettore esterno Markdown non acquisisce quel lock: consultare i file dopo la
-conferma, non durante apply/recovery. Questa proprietà non è una transazione
-multi-file offerta da Obsidian. Restano i limiti di durabilità fisica documentati
-in [STORAGE-DURABILITY.md](STORAGE-DURABILITY.md); il cambio di layout non li amplia.
+An external Markdown reader does not acquire that lock: consult the files after
+confirmation, not during apply/recovery. This property is not a multi-file
+transaction offered by Obsidian. The physical durability limits documented
+in [STORAGE-DURABILITY.md](STORAGE-DURABILITY.md) remain; the layout change does not widen them.
 
-Taxonomy e associazioni consultabili risiedono in memory; i loro journal e le
-ricevute d'approvazione rimangono interni. Le viste topics sono ricostruibili e non
-modificano fatti o revisioni. Non cambiano né consenso né semantica della curatela.
+Consultable taxonomy and associations live in memory; their journals and
+approval receipts stay internal. The topics views are rebuildable and do not
+modify facts or revisions. They change neither the consent nor the semantics of curation.
 
-## Workspace legacy
+## Legacy workspaces
 
-Il layout precedente usa `.knownex/seed`, `.knownex/feed`, `.knownex/captures` e
-`.knownex/curator/{memory,revisions,...}`. `seed` è il template iniziale, non il
-presente dopo la prima materializzazione; le note piatte sono proiezioni correnti
-dell'archivio revisions. Questo layout rimane leggibile e operativo, inclusi
-batch già preparati, checkpoint v2/v3 e recovery pendenti. Non viene convertito
-da init, SessionStart, read, validate o apply.
+The earlier layout uses `.knownex/seed`, `.knownex/feed`, `.knownex/captures` (no longer written) and
+`.knownex/curator/{memory,revisions,...}`. `seed` is the initial template, not the
+present after the first materialization; the flat notes are current projections
+of the revisions archive. This layout stays readable and operational, including
+batches already prepared, v2/v3 checkpoints and pending recoveries. It is not converted
+by init, SessionStart, read, validate or apply.
 
-La selezione del layout è basata sulle directory del workspace; la presenza
-simultanea di feed legacy e canonico è rifiutata come ambigua. I due percorsi CLI
-standard del work sono risolti verso il layout effettivo; gli argomenti standalone
-arbitrari mantengono il comportamento precedente. Non vengono creati alias fisici.
+The layout selection is based on the workspace directories; the simultaneous presence
+of legacy and canonical feeds is rejected as ambiguous. The two standard CLI paths
+of the work are resolved to the effective layout; arbitrary standalone arguments keep
+the previous behavior. No physical aliases are created.
 
-Non è implementata una migrazione in-place di archivi confermati. Le revisioni
-contengono link relativi e metadati autenticati: spostarle può cambiare i target;
-riscriverle ne cambia gli hash e i riferimenti dei successori. Anche feed, batch e
-journal conservano percorsi e autorizzazioni. Una migrazione esplicita richiederebbe
-un contratto dedicato e una verifica completa dei target, non una sequenza di move.
-`curate init` non importa un cutoff positivo nel nuovo layout; il caso viene
-rifiutato prima di scrivere. Conservare il workspace legacy è l'opzione supportata.
+An in-place migration of confirmed archives is not implemented. Revisions
+contain relative links and authenticated metadata: moving them can change the targets;
+rewriting them changes their hashes and the references of the successors. Feed, batches and
+journal also keep paths and authorizations. An explicit migration would require
+a dedicated contract and a full verification of the targets, not a sequence of moves.
+`curate init` does not import a positive cutoff into the new layout; the case is
+rejected before writing. Keeping the legacy workspace is the supported option.
 
-Le copie BOREAL e gli archivi dei test non vengono aggiornati o migrati.
+BOREAL copies and test archives are not updated or migrated.
 
-## Verifiche
+## Checks
 
-`tests/memory-layout.test.ts` verifica note nuove, aggiornate e invariate,
-classificazione facoltativa, lookup logico/fisico/storico, ricerca dei soli HEAD,
-noop, HISTORY, replay da stato misto con pubblicazione mancante e blocco su
-corruzione. I controlli sui link verificano i target filesystem, non la semantica.
-`tests/bootstrap.test.ts` usa un payload compilato in una directory temporanea
-esterna, impedendo al runtime l'accesso ai sorgenti: hook, autorizzazione manuale,
-feed, SessionStart/compact, checkpoint, recovery e init idempotente. Le suite
-legacy continuano a verificare il protocollo precedente.
+`tests/memory-layout.test.ts` verifies new, updated and unchanged notes,
+optional classification, logical/physical/historical lookup, search of HEADs only,
+noop, HISTORY, replay from a mixed state with a missing publication and blocking on
+corruption. The link checks verify filesystem targets, not semantics.
+`tests/bootstrap.test.ts` uses a payload compiled in an external temporary
+directory, preventing the runtime from accessing the sources: hooks, manual authorization,
+feed, SessionStart/compact, checkpoint, recovery and idempotent init. The legacy
+suites keep verifying the previous protocol.

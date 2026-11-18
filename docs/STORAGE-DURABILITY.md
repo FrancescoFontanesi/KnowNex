@@ -1,205 +1,142 @@
-# V2.3 / V2.3b — Durabilità delle promozioni
+# Promotion durability
 
-Il [versionamento Knowledge](KNOWLEDGE-REVISIONS.md) estende il journal ai soli nuovi
-archivi/ricevute: i loro file e il namespace `revisions/` vengono sincronizzati
-prima del checkpoint v3. La recovery v1 rimane supportata. Questa estensione è
-verificata con crash/EIO simulati e non aggiunge evidenze di durabilità fisica.
+The [Knowledge versioning](KNOWLEDGE-REVISIONS.md) extends the journal to the new
+archives/receipts only. Their files and the `revisions/` namespace are synchronized
+before the v3 checkpoint. v1 recovery stays supported. This extension is
+verified with simulated crash/EIO and adds no evidence of physical durability.
 
-**V2.3b: protocollo implementato e verificato sotto modello B condizionale.**
-La durabilità fisica C rimane non dimostrata; non viene avviata la qualificazione.
-Le sezioni V2.3 conservano diagnosi e misure precedenti, non descrivono il codice
-successivo a V2.3b.
+**Protocol implemented and verified under conditional model B.**
+Physical durability C remains unproven. Qualification is not started.
 
-## Ambiente e primitive effettive
+## Environment and actual primitives
 
-Verifica locale del 4 novembre 2026: Windows 11 Pro, build 26200
-(`10.0.26200`), Node.js `v24.11.1`, libuv `1.51.0`, volume `F:` NTFS fisso.
-La prova crea soltanto file temporanei sullo stesso volume del workspace:
+Local verification of 4 November 2026: Windows 11 Pro, build 26200
+(`10.0.26200`), Node.js `v24.11.1`, libuv `1.51.0`, fixed NTFS volume `F:`.
+The test creates only temporary files on the same volume as the workspace:
 
-| Operazione reale                                                         | Esito                   |
-| ------------------------------------------------------------------------ | ----------------------- |
-| Scrittura su file aperto `wx`, `FileHandle.sync()`, chiusura e rilettura | OK                      |
-| Directory aperta `r`, `FileHandle.sync()`                                | `EPERM` nella fase sync |
-| Directory aperta `r+`, `FileHandle.sync()`                               | OK                      |
+| Real operation                                                      | Outcome                   |
+| ------------------------------------------------------------------- | ------------------------- |
+| Write to a file opened `wx`, `FileHandle.sync()`, close and re-read | OK                        |
+| Directory opened `r`, `FileHandle.sync()`                           | `EPERM` in the sync phase |
+| Directory opened `r+`, `FileHandle.sync()`                          | OK                        |
 
-Il successo indica completamento della chiamata nell'ambiente osservato, non
-una verifica dei dati sopravvissuti a un blackout. Non è corretto sostenere che
-il sync delle directory sia sempre indisponibile su Windows.
+Success means the call completed in the observed environment. It is not
+a verification of data that survived a blackout. It is not correct to claim that
+directory sync is always unavailable on Windows.
 
-Fonti primarie consultate:
+Primary sources consulted:
 
 - [Node 24.11.1: FileHandle.sync](https://nodejs.org/download/release/v24.11.1/docs/api/fs.html#filehandlesync)
-  espone il flush; `writeFile` senza `flush: true` non lo richiede.
-- [libuv 1.51.0, implementazione Windows](https://github.com/libuv/libuv/blob/v1.51.0/src/win/fs.c):
-  `fs__sync_impl` usa `FlushFileBuffers`; `fs__rename` usa `MoveFileExW` con
-  `MOVEFILE_REPLACE_EXISTING`, senza `MOVEFILE_WRITE_THROUGH`.
+  exposes the flush. `writeFile` without `flush: true` does not request it.
+- [libuv 1.51.0, Windows implementation](https://github.com/libuv/libuv/blob/v1.51.0/src/win/fs.c):
+  `fs__sync_impl` uses `FlushFileBuffers`. `fs__rename` uses `MoveFileExW` with
+  `MOVEFILE_REPLACE_EXISTING`, without `MOVEFILE_WRITE_THROUGH`.
 - [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)
-  richiede un handle con accesso in scrittura. Il flush di un intero volume è
-  distinto e richiede privilegi amministrativi; non viene tentato.
+  requires a handle with write access. Flushing a whole volume is
+  different and requires administrative privileges. It is not attempted.
 - [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
-  descrive un flag write-through separato. Non si deduce la durabilità del rename
-  usato da Node dal solo successo della sua Promise.
+  describes a separate write-through flag. The durability of the rename
+  used by Node cannot be inferred from the success of its Promise alone.
 
-## Percorso V2.1 verificato in V2.3
+## Contract and assumptions
 
-`atomicText` attende `writeFile` sul temporaneo, poi `rename`. `applyCurator`
-pubblica `apply.json` prima di promuovere i Markdown; `recoverApply` sostituisce
-i file cambiati, verifica l'hash dell'albero, pubblica il checkpoint e rimuove
-pending. Il temporaneo dei Markdown rimane fuori da `memory/`.
+The additional source is [MS-FSA §2.1.5.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/0de7dc40-9627-437e-a4df-c4696cdc3d02):
+the flush persists attributes, metadata and directory structure and requires the
+flush of the underlying storage. [Product note 80](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4e3695bd-7574-4f24-a223-b4679c065b63)
+specifies that the behavior is implemented by NTFS. Other filesystems may
+return success without performing this operation. This source narrows
+the earlier block: the probe alone was not a sufficient contract.
 
-Questo è un ordine di completamento delle API, **non un ordine di persistenza
-dimostrato**. Mancano flush espliciti sia del journal sia dei contenuti promossi,
-del checkpoint e dei metadati dei rename. La rilettura con hash può osservare
-la cache del sistema: non certifica il supporto fisico. Anche run, pending e feed
-necessari alla recovery devono essere disponibili e integri dopo il riavvio.
+Model B explicitly assumes:
 
-Con record integro, checkpoint precedente e pending valido, la recovery accetta
-solo file interi precedenti/successivi e completa quelli mancanti. Con checkpoint
-successivo richiede l'intero albero successivo: un contenuto precedente viene
-bloccato, non riparato automaticamente. Journal mancante/corrotto, file mancanti
-o troncati e checkpoint incompatibili possono impedire il recupero. Hash e lock
-rilevano incoerenza nei casi supportati, ma non ricreano evidenze perdute.
+- Local NTFS, Node 24.11.1/libuv 1.51.0, directories openable `r+`. The chain
+  `FileHandle.sync` → `FlushFileBuffers` satisfies the NTFS contract above
+  for open objects, directories included. The volume type is
+  verified externally (`Get-Volume`). Node `statfs` returns type 0 here
+  and is not a reliable check to enable other filesystems.
+- A successful flush makes the content/metadata of the object stable. The flush of a
+  directory makes the immediate names stable. Later flushes do not invalidate data
+  already stable. Before the flush, writes and names can persist separately,
+  lose updates or leave the name involved in a rename absent.
+- The namespace of the already existing ancestors of the workspace and of the sources is
+  stable. `init` persists the new memory and the workspace name before
+  confirming the checkpoint. An old workspace must start from a consistent
+  generation. Retroactive recovery of evidence already lost is not promised.
+- Append-only feed with a frozen prefix and no concurrent rewrite.
+  Original artifacts and source namespace are already stable. File, directory,
+  filter, controller and device honor the flushes. No
+  collateral corruption of blocks already synchronized. All writers of the memory
+  respect the lock. Arbitrary writes that resist crashes atomically are not assumed.
+  Incomplete temporaries stay outside the confirmed memory.
 
-Le letture di workspace riconosciuti passano dal lock e da `stateAt`, che esegue
-recovery prima di verificare feed e hash e restituire dati. Le directory standalone
-non hanno questa protezione transazionale. Se un blackout perdesse sia checkpoint
-sia journal, il riconoscimento basato sui loro percorsi potrebbe trattare la memoria
-residua come standalone: la protezione V2.1 non è una garanzia generale per tale
-scenario, non riprodotto da una reale perdita di alimentazione in questa verifica.
+These are conditions of the model, not hardware measurements. No B guarantee
+is extended to FAT/ReFS, SMB or devices that ignore flushes. A sync
+failure propagates. There is no fallback that ignores directory errors. Flushes
+require write access even to the sources to synchronize. Insufficient
+permissions stop the operation before promotion.
 
-## Tre nuovi casi deterministici
+## Persistent order
 
-1. Probe delle primitive su filesystem reale: esiti file/directory riportati sopra.
-   Nessuna iniezione o interruzione di alimentazione.
-2. `EIO` iniettato prima del rename del checkpoint: journal e Markdown nuovi
-   esistono, checkpoint resta precedente e il lock viene rilasciato. Una lettura
-   completa la recovery; HISTORY ha un solo segmento e il replay non cambia i dati.
-3. Prefissi di persistenza divergenti costruiti su file reali: checkpoint nuovo
-   con HISTORY precedente blocca lettura, prepare e apply senza modifiche.
-   Lo stesso albero misto con checkpoint precedente e pending integro viene
-   completato esattamente; il replay è idempotente. È una simulazione di stati
-   persistiti, non una dimostrazione che NTFS produca o escluda tali stati.
+| Phase                      | Barriers before proceeding                                                                                                                                   | Reason                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Baseline and prerequisites | Flush of the previous memory, knowledge, memory and work. Previous checkpoint. run.json, run directory and runs. Feed and its directory. Work and its parent | Make the initial generation and the prerequisites recoverable before the persistent authorization. Prepare also persists run/runs/work before pending. |
+| Journal                    | Exclusive write of the temporary, content sync, close, rename to apply.json, sync of the published file and of work                                          | No Markdown changes before data and name of the authorization are stable.                                                                              |
+| Markdown                   | Per changed file: temporary in work, sync, rename, sync of the file and of the destination/source directories                                                | Full contents before names. Temporaries that may reappear do not enter the confirmed tree.                                                             |
+| Full tree                  | Final hash. New flush of all files, knowledge, memory and work                                                                                               | Also cover names already visible from an interrupted attempt and the creation of knowledge in its parent.                                              |
+| Checkpoint                 | Synchronized temporary, rename, sync of the file and of work                                                                                                 | The checkpoint can become stable only after all the data it represents.                                                                                |
+| Cleanup                    | Repeat the checkpoint/work barrier before unlinking pending. Then sync work                                                                                  | The outcome of the rename can be visible before its flush returns. The last apply.json always stays as a receipt.                                      |
 
-I test V2.1 continuano a simulare arresti del processo ai confini dei rename e
-della pulizia. Né questi arresti né l'EIO iniettato svuotano le cache del kernel,
-del controller o del dispositivo. Nessuno spegnimento forzato viene eseguito.
+`atomicText` implements content → publication → metadata/namespace, without
+treating the rename alone as a barrier. At recovery the flush of the
+journal and of work is repeated immediately. A visible journal could come from a publication
+interrupted before its barrier. An interrupted recovery can be repeated.
 
-Esito locale: i tre nuovi casi passano; `npm run check` passa con 116 test,
-typecheck, controllo formato e build. Nessuna regressione V2.1 rilevata.
+The record contains the previous and next trees. With a previous checkpoint
+or a missing checkpoint name, missing files are rebuilt from the record.
+Existing ones must match exactly the previous or the new version.
+The run is resolved from the persisted runId, without depending on the survival of the
+pending. With a next checkpoint the tree must already match the new one.
+A corrupt record, a file with unexpected content or a present but incompatible checkpoint
+stop the recovery. The journal keeps the HISTORY prefix and does not re-append segments.
 
-## Decisione V2.3, superata per il modello B da V2.3b
+Journal cleanup is not introduced. At the next transaction its
+replacement precedes any change to the data of that transaction, while
+the previous generation is already stable. Preallocated journals with reused slots
+would avoid some renames but would require a persistent bootstrap and a selection
+among potentially truncated slots. Moreover, new Knowledge and checkpoint would
+still need name barriers. They do not reduce the protocol implemented here.
 
-Non si aggiunge un flush parziale come apparente soluzione al problema completo.
-Il sync `r+` riuscito non dimostra da solo un contratto end-to-end per la
-persistenza delle directory, dei rename e del dispositivo. Una soluzione dovrebbe
-stabilire e validare tutte le barriere necessarie, inclusi i prerequisiti di recovery;
-questa verifica non le dimostra e non introduce nuove primitive native o infrastrutture.
-Il limite contro power loss rimane esplicito. Nessun test agentico o LLM aggiuntivo.
+## Verification A, B, C
 
-## Contratto e assunzioni V2.3b
+- **A — crash consistency:** V2.1 tests at the promotion boundaries, interrupted
+  recovery and replay are kept. EIO on renames stays a distinct simulated error.
+- **B — persistence model:** a new test traces writes, native flushes,
+  renames and unlinks of the real apply on the STATE/HISTORY/two Knowledge fixture.
+  An independent model keeps contents only after file-sync and immediate names
+  only after directory-sync, also checking the order journal → data → checkpoint
+  → cleanup. Nine alternative projections on the real files lose the unsynchronized
+  journal write, its rename, the Markdown rename or the checkpoint and the
+  cleanup. They include early persistence and loss of the replaced name.
+  A recovery is interrupted and its unsynchronized name is lost again.
+  A second new test injects EIO in the journal flush: no Markdown is
+  promoted. Recovery re-establishes the barrier and replay does not duplicate HISTORY.
+  The earlier test of the missing checkpoint now verifies recovery in the model,
+  instead of requiring the block. Corruptions that cannot be rebuilt stay rejected.
+- **C — physical durability:** not proven. The model does not measure what survives
+  on that controller after a blackout. No forced shutdown or change of
+  settings is performed.
 
-La fonte aggiuntiva è [MS-FSA §2.1.5.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/0de7dc40-9627-437e-a4df-c4696cdc3d02):
-il flush persiste attributi, metadati e struttura delle directory e richiede il
-flush dello storage sottostante. La [nota prodotto 80](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4e3695bd-7574-4f24-a223-b4679c065b63)
-specifica che il comportamento è implementato da NTFS; altri filesystem possono
-restituire successo senza effettuare questa operazione. Questa fonte restringe
-il precedente blocco: il solo probe non costituiva un contratto sufficiente.
+Residual limits: flush cost of the tree and workspace reads that may
+repeat recovery barriers. Space of orphan temporaries. Pre-existing conservative lock.
+Availability that depends on intact prerequisites and on permissions.
+No additional LLM, agentic benchmark, new dependency or final qualification.
 
-Il modello B assume esplicitamente:
+## Canonical memory layout
 
-- NTFS locale, Node 24.11.1/libuv 1.51.0, directory apribili `r+`; la catena
-  `FileHandle.sync` → `FlushFileBuffers` soddisfa il contratto NTFS sopra indicato
-  per gli oggetti aperti, comprese le directory. Il tipo del volume viene
-  verificato esternamente (`Get-Volume`): `statfs` Node restituisce type 0 qui
-  e non costituisce un controllo affidabile per abilitare altri filesystem.
-- Un flush riuscito rende stabili contenuto/metadati dell'oggetto; il flush di una
-  directory rende stabili i nomi immediati. Flush successivi non invalidano dati
-  già stabili. Prima del flush scritture e nomi possono persistere separatamente,
-  perdere aggiornamenti o lasciare assente il nome coinvolto in un rename.
-- Il namespace degli antenati già esistenti del workspace e delle sorgenti è
-  stabile; `init` persiste la nuova memoria e il nome del workspace prima di
-  confermare il checkpoint. Un vecchio workspace deve partire da una generazione
-  coerente; non si promette il recupero retroattivo di evidenze già perse.
-- Feed append-only con prefisso congelato e nessuna riscrittura concorrente;
-  artefatti originali e namespace delle sorgenti già stabili. File, directory,
-  filtro, controller e dispositivo rispettano i flush; niente corruzione
-  collaterale di blocchi già sincronizzati. Tutti gli scrittori della memoria
-  rispettano il lock. Non sono assunte scritture arbitrarie atomicamente resistenti
-  ai crash: i temporanei incompleti restano fuori dalla memoria confermata.
-
-Queste sono condizioni del modello, non misure dell'hardware. Nessuna garanzia
-B è estesa a FAT/ReFS, SMB o dispositivi che ignorano i flush. Un fallimento di
-sync si propaga; non esiste fallback che ignori errori delle directory. I flush
-richiedono accesso in scrittura anche alle sorgenti da sincronizzare; permessi
-insufficienti fermano l'operazione prima della promozione.
-
-## Ordine persistente V2.3b
-
-| Fase                    | Barriere prima di procedere                                                                                                                                | Ragione                                                                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Baseline e prerequisiti | Flush della memoria precedente, knowledge, memory e work; checkpoint precedente; run.json, directory run e runs; feed e sua directory; work e suo genitore | Rendere recuperabile la generazione iniziale e i prerequisiti prima dell'autorizzazione persistente. Prepare persiste anche run/runs/work prima del pending. |
-| Journal                 | Scrittura esclusiva del temporaneo, sync del contenuto, chiusura, rename verso apply.json, sync del file pubblicato e di work                              | Nessun Markdown cambia prima che dati e nome dell'autorizzazione siano stabili.                                                                              |
-| Markdown                | Per file cambiato: temporaneo in work, sync, rename, sync del file e delle directory destinazione/sorgente                                                 | Contenuti completi prima dei nomi; i temporanei eventualmente riapparsi non entrano nell'albero confermato.                                                  |
-| Albero completo         | Hash finale; nuovo flush di tutti i file, knowledge, memory e work                                                                                         | Coprire anche nomi già visibili da un tentativo interrotto e la creazione di knowledge nel suo genitore.                                                     |
-| Checkpoint              | Temporaneo sincronizzato, rename, sync del file e di work                                                                                                  | Il checkpoint può diventare stabile solo dopo tutti i dati che rappresenta.                                                                                  |
-| Pulizia                 | Ripetere barriera checkpoint/work prima di unlink pending; poi sync work                                                                                   | L'esito del rename può essere visibile prima del ritorno del suo flush. L'ultima apply.json rimane sempre come ricevuta.                                     |
-
-`atomicText` implementa contenuto → pubblicazione → metadati/namespace, senza
-considerare il solo rename una barriera. Alla recovery si ripete subito il flush
-del journal e di work: un journal visibile potrebbe provenire da una pubblicazione
-interrotta prima della sua barriera. Una recovery interrotta può essere ripetuta.
-
-Il record contiene gli alberi precedente e successivo. Con checkpoint precedente
-o nome del checkpoint assente, i file mancanti vengono ricostruiti dal record;
-quelli esistenti devono coincidere esattamente con la versione precedente o nuova.
-Il run si risolve dal runId persistito, senza dipendere dalla sopravvivenza del
-pending. Con checkpoint successivo l'albero deve già coincidere con quello nuovo.
-Record corrotto, file con contenuto inatteso o checkpoint presente ma incompatibile
-fermano il recupero. Il journal mantiene il prefisso HISTORY e non riappende segmenti.
-
-La pulizia del journal non viene introdotta. Alla transazione successiva la sua
-sostituzione precede qualsiasi modifica dei dati di quella transazione, mentre
-la generazione precedente è già stabile. Journal preallocati con slot riutilizzati
-eviterebbero alcuni rename ma richiederebbero bootstrap persistente e selezione
-fra slot potenzialmente troncati; inoltre nuove Knowledge e checkpoint avrebbero
-ancora bisogno di barriere dei nomi. Non riducono il protocollo qui implementato.
-
-## Verifica A, B, C
-
-- **A — crash consistency:** test V2.1 ai confini della promozione, recovery
-  interrotta e replay conservati. EIO sui rename resta un errore simulato distinto.
-- **B — modello di persistenza:** un nuovo test traccia scritture, flush nativi,
-  rename e unlink della vera apply sulla fixture STATE/HISTORY/due Knowledge.
-  Un modello indipendente conserva contenuti solo dopo file-sync e nomi immediati
-  solo dopo directory-sync, verificando anche l'ordine journal → dati → checkpoint
-  → pulizia. Nove proiezioni alternative sui file reali perdono la scrittura del
-  journal non sincronizzata, il suo rename, rename Markdown o checkpoint e la
-  pulizia; includono persistenza anticipata e perdita del nome sostituito.
-  Una recovery viene interrotta e il suo nome non sincronizzato perso nuovamente.
-  Un secondo nuovo test inietta EIO nel flush del journal: nessun Markdown viene
-  promosso; la recovery ristabilisce la barriera e il replay non duplica HISTORY.
-  La precedente prova del checkpoint mancante ora verifica recupero nel modello,
-  invece di richiedere il blocco. Le corruzioni non ricostruibili restano rifiutate.
-- **C — durabilità fisica:** non dimostrata. Il modello non misura cosa sopravvive
-  su quel controller dopo un blackout. Nessuno spegnimento forzato o cambio di
-  impostazioni viene effettuato.
-
-Limiti residui: costo di flush dell'albero e letture di workspace che possono
-ripetere barriere di recovery; spazio dei temporanei orfani; lock conservativo
-preesistente; disponibilità dipendente dai prerequisiti integri e dai permessi.
-Nessun LLM aggiuntivo, benchmark agentico, nuova dipendenza o qualificazione finale.
-
-Esito finale V2.3b: nove scenari della matrice e il fallimento della barriera journal
-passano; il checkpoint `null` viene rifiutato. `npm run check` passa con 118 test,
-typecheck, controllo formato e build. Verdetto **READY per A e B sotto le assunzioni
-indicate; C non dimostrata**.
-
-## Layout canonico della memoria
-
-Le nuove installazioni pubblicano le revisioni direttamente in .knownex/memory/knowledge
-e STATE/HISTORY in .knownex/memory. Journal e ricevute rimangono in internal/curator.
-Le barriere di pubblicazione e dei parent seguono i percorsi effettivi; prima del
-checkpoint vengono sincronizzati anche i HEAD correnti, senza proiezioni piatte
-persistenti. La recovery ricostruisce la stessa generazione logica dai HEAD.
-I workspace legacy non sono spostati. Nessuna nuova garanzia di durabilita fisica.
-Dettagli e limiti dei lettori Markdown esterni: [MEMORY-LAYOUT.md](MEMORY-LAYOUT.md).
+New installations publish the revisions directly in .knownex/memory/knowledge
+and STATE/HISTORY in .knownex/memory. Journal and receipts stay in internal/curator.
+The publication and parent barriers follow the effective paths. Before the
+checkpoint the current HEADs are also synchronized, with no persistent
+flat projections. Recovery rebuilds the same logical generation from the HEADs.
+Legacy workspaces are not moved. No new guarantee of physical durability.
+Details and limits of external Markdown readers: [MEMORY-LAYOUT.md](MEMORY-LAYOUT.md).

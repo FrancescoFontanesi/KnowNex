@@ -1,104 +1,126 @@
 # KnowNex
 
-Memoria secondaria per progetti portati avanti con agenti LLM: codice, ricerca,
-appunti. L'opposto del compacting: invece di riassumere e perdere dettaglio,
-KnowNex registra la conversazione e la cura in una memoria Markdown esplorabile,
-così una nuova sessione (o un'altra persona) riparte dall'ultimo stato operativo
-senza rileggere tutti i documenti o ricostruire il progetto dal codice.
+Secondary memory for projects run with LLM agents: code, research, notes. The
+opposite of compacting: instead of summarizing and losing detail, KnowNex
+records the conversation and curates it into an explorable Markdown memory, so a
+new session (or another person) restarts from the last operational state
+without rereading all the documents or rebuilding the project from the code.
 
-Versione corrente: **0.1.0-rc.11**. Provider acquisiti: Codex e Claude Code (`knownex init --provider codex,claude`).
+Current version: **0.1.0-rc.11**. Captured providers: Codex and Claude Code (`knownex init --provider codex,claude`).
 
-## Come funziona
+## How it works
 
-1. **Acquisizione.** Gli hook registrano messaggi utente e risposte finali
-   dell'assistente in un feed JSONL locale, senza consumare token. Il feed è la
-   fonte autorevole e conserva tutto.
-2. **Checkpoint esplicito.** Solo l'utente lo avvia, per esempio con
+1. **Capture.** Hooks record user messages and final assistant replies in a
+   local JSONL feed, without consuming tokens. The feed is the authoritative
+   source and keeps everything.
+2. **Explicit checkpoint.** Only the user starts it, for example with
    `npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium`
-   (oppure `--claude`). Il comando congela il batch di eventi, avvia una sessione
-   effimera del provider che non viene registrata nel feed, e il Curator legge il
-   batch e scrive una bozza (nuovo STATE, note Knowledge, rapporto). `curate write`
-   la valida subito, così il Curator corregge gli errori mentre lavora; al termine
-   il comando la pubblica in modo transazionale e restituisce solo l'esito. Il
-   lavoro può proseguire in parallelo: gli eventi successivi vanno al checkpoint dopo.
-3. **Ripresa.** All'avvio di una sessione STATE entra nel contesto. Il resto si
-   apre solo quando serve: un riferimento noto si legge direttamente, una ricerca
-   si delega a un subagente che segue la skill `knownex-recall`.
+   (or `--claude` or `--agy`). The command freezes the batch of events, starts an
+   ephemeral provider session that is not recorded in the feed, and the Curator
+   reads the batch and writes a draft (new STATE, Knowledge notes, report).
+   `curate write` validates it immediately, so the Curator fixes errors while it
+   works; when it finishes, the command publishes the draft transactionally and
+   returns only the outcome. Work can continue in parallel: later events go to
+   the next checkpoint.
+3. **Resume.** When a session starts, STATE enters the context. Everything else
+   is opened only when needed: a known reference is read directly, a search is
+   delegated to a subagent that follows the `knownex-recall` skill.
 
-## La memoria
+## The memory
 
-Tutto ciò che si esplora sta in `.knownex/memory/`, apribile anche come vault
-Obsidian:
+Everything you explore lives in `.knownex/memory/`, which can also be opened as
+an Obsidian vault:
 
 ```text
 .knownex/memory/
-  STATE.md                       radice: obiettivo, decisioni, blocker, prossime azioni, link
-  HISTORY.md                     indice dei checkpoint, una riga ciascuno
-  history/H000012.md             finestra di un checkpoint: transizione, note scritte, STATE prodotto
-  knowledge/H000012/             note scritte da quel checkpoint (stesso id di HISTORY), immutabili
+  STATE.md                       root: goal, decisions, blockers, next actions, links
+  HISTORY.md                     checkpoint index, one line each
+  history/H000012.md             one checkpoint window: transition, notes written, resulting STATE
+  knowledge/H000012/             notes written by that checkpoint (same id as in HISTORY), immutable
     storage--kn-UUID--REV.md
 ```
 
-- **STATE** è la radice dell'albero: rimanda alle Knowledge invece di contenerle.
-- **Knowledge** sono note tematiche con testo e riferimenti a codice e artefatti
-  (percorsi dalla radice del workspace), scritte come un diario di bordo: ogni
-  checkpoint aggiunge note nuove nella propria cartella e non riscrive le esistenti,
-  quindi lo stesso nome può tornare in checkpoint diversi. Se una decisione
-  cambia, la nota nuova linka quella che supera; STATE linka le note con la verità
-  attuale, le precedenti mostrano l'evoluzione.
-- **HISTORY** si legge a finestre: `memory history` elenca i checkpoint senza aprirli,
-  `memory read H000012` apre solo quello che serve.
-- **Provenienza.** Ogni affermazione cita gli eventi da cui viene, come `[E017]`:
-  la sequenza dell'evento nel feed. `pending` legge solo gli eventi non ancora
-  curati; `memory event E017` (o `E015..E016`, al massimo 20 eventi) rilegge un evento già curato.
+- **STATE** is the root of the tree: it points to the Knowledge notes instead of
+  containing them.
+- **Knowledge** notes are thematic notes with text and references to code and
+  artifacts (paths from the workspace root), written like a logbook: each
+  checkpoint adds new notes in its own folder and does not rewrite existing
+  ones, so the same name can come back in different checkpoints. If a decision
+  changes, the new note links the one it supersedes; STATE links the notes with
+  the current truth, and the earlier ones show the evolution.
+- **HISTORY** is read in windows: `memory history` lists the checkpoints without
+  opening them, `memory read H000012` opens only what is needed.
+- **Provenance.** Every statement cites the events it comes from, such as
+  `[E017]`: the event's sequence in the feed. `pending` reads only the events
+  not yet curated; `memory event E017` (or `E015..E016`, at most 20 events)
+  reads any event in the feed, curated or pending.
 
-Feed, run, journal e ricevute stanno in `.knownex/internal/`, fuori dal vault.
+Feed, runs, journal and receipts live in `.knownex/internal/`, outside the vault.
 
 ```powershell
 npm exec --offline -- knownex memory state
 npm exec --offline -- knownex memory history --last 10
 npm exec --offline -- knownex memory read H000012
-npm exec --offline -- knownex memory find "termini distintivi"
+npm exec --offline -- knownex memory find "distinctive terms"
 npm exec --offline -- knownex pending
 ```
 
-## Garanzie e limiti
+## Language
 
-- Il runtime controlla struttura, provenienza, link, identità delle note e integrità
-  degli input; la pubblicazione è transazionale e recuperabile dopo un crash.
-- Non garantisce la completezza semantica: cosa conservare lo decide il Curator.
-  Incertezze o anomalie dichiarate bloccano la pubblicazione automatica.
-- Modifiche retroattive non acquisite dagli hook non vengono rilevate.
-- I test offline non dimostrano il comportamento di un modello reale.
+KnowNex's instructions (the `AGENTS.md`/`CLAUDE.md` block, the skills and the
+curation prompt) are in English, but they do not choose the language you work
+in:
 
-## Documentazione
+- The main session answers in the language you write in; the instructions say
+  so explicitly.
+- The Curator writes STATE, notes, HISTORY descriptions and the report in the
+  language the batch events mostly use. Once STATE has a language, it is kept
+  unless the conversation clearly moves to another.
+- Recall answers in the language of the request. `memory find` matches words,
+  so search terms work best in the memory's language.
+- Fixed parts stay in English: file names, note names, JSON keys, error codes,
+  the `[E017]` labels and the labels the runtime writes in HISTORY windows
+  (`- Date:`, `- Events:`, `## Resulting STATE`).
 
-- [Installazione, aggiornamento e rimozione](docs/INSTALL.md)
-- [Contratto della memoria](docs/MEMORY-CONTRACT.md) e
-  [revisioni delle Knowledge](docs/KNOWLEDGE-REVISIONS.md)
-- [Navigatore e recall](docs/NAVIGATOR.md)
-- [Layout, compatibilità e limiti](docs/MEMORY-LAYOUT.md)
-- [Indice completo](docs/README.md) · [Visione](docs/VISION.md)
+Memories written by earlier, Italian releases stay readable as they are.
 
-## Sviluppo
+## Guarantees and limits
 
-Richiede Node.js 24.11+ o 26, npm e Git. Il package installato non richiede
-TypeScript globale, provider o dipendenze runtime aggiuntive.
+- The runtime checks structure, provenance, links, note identity and input
+  integrity; publication is transactional and recoverable after a crash.
+- It does not guarantee semantic completeness: the Curator decides what to keep.
+  Declared uncertainties or anomalies block automatic publication.
+- Retroactive changes not captured by the hooks are not detected.
+- Offline tests do not prove the behavior of a real model.
+
+## Documentation
+
+- [Installation, update and removal](docs/INSTALL.md)
+- [Memory contract](docs/MEMORY-CONTRACT.md) and
+  [Knowledge revisions](docs/KNOWLEDGE-REVISIONS.md)
+- [Navigator and recall](docs/NAVIGATOR.md)
+- [Layout, compatibility and limits](docs/MEMORY-LAYOUT.md)
+- [Full index](docs/README.md) · [Vision](docs/VISION.md)
+
+## Development
+
+Requires Node.js 24.11+ or 26, npm and Git. The installed package does not
+require a global TypeScript, providers or additional runtime dependencies.
 
 ```powershell
 npm ci
-npm run check                           # typecheck, test, Prettier, build
-node --test evaluation/tests/*.test.mjs # regressioni di retrieval e cold start
+npm run check          # typecheck, test, Prettier, build
 npm run dev -- --help
 ```
 
-Il codice usa ESM e import relativi `.ts`; la build produce JavaScript in `dist/`.
+The code uses ESM and relative `.ts` imports; the build produces JavaScript in `dist/`.
 
-- `src/`: CLI, acquisizione, feed, curatela, navigatore, bootstrap.
-- `tests/`: verifiche deterministiche con dati sintetici.
-- `evaluation/`: fixture isolati per retrieval e ripartenza a freddo.
-- `.agents/skills/`: skill curator, recall e taxonomy distribuite dal package.
-- `.codex/`: hook (gli stessi script servono anche Claude Code).
-- `docs/`: contratti e procedure correnti.
+- `src/`: CLI, feed, curation, navigator, bootstrap.
+- `tests/`: deterministic checks with synthetic data.
+- `.agents/skills/`: curator, recall and taxonomy skills shipped with the package.
+- `.codex/`: hooks (the same scripts also serve Claude Code).
+- `docs/`: current contracts and procedures.
 
-`.knownex/`, `.local/`, `node_modules/`, `dist/` e la cache `graft/` sono esclusi da Git.
+`.knownex/`, `.local/`, `node_modules/`, `dist/` and the `graft/` cache are excluded from Git.
+The evaluation harnesses (retrieval and cold restart, with `scripts/measure.ts`)
+are archived outside the repository, in `F:\KnowNex-archive\`.

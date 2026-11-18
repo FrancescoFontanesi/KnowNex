@@ -1,177 +1,177 @@
-# Revisioni immutabili delle Knowledge
+# Immutable Knowledge revisions
 
-Nota: ogni checkpoint scrive note nuove e non riscrive quelle esistenti, in qualsiasi
-percorso (draft, `curate validate`/`apply` con proposal.json manuale). La proposta nomina
-una nota nuova `knowledge/<nome>.md`; il runtime le assegna la chiave logica
-`knowledge/H000NNN/<nome>.md` (id HISTORY del checkpoint), quindi non coincide mai con
-quella di una nota esistente e il nome può ripetersi tra checkpoint. Le note pubblicate
-prima mantengono la chiave piatta `knowledge/<nome>.md`, senza migrazione. Una proposta
-che riusa l'identità (`kn-UUID`) di una nota esistente è rifiutata con
-`CURATOR_NOTE_ID_DUPLICATE`, una chiave con cartella `H000NNN/` con `CURATOR_UNSAFE_PATH`.
-Un file d'archivio (`…kn-UUID--REV.md`) non è mai una chiave logica, anche nella
-stessa cartella. Di conseguenza il
-codice scrive soltanto revisioni senza predecessore (`previous: null`) e non esiste più
-l'aggiornamento di una testa. Restano invece intatti formato e lettura delle catene di
-più revisioni, pubblicate prima di questa regola (`previous`, `--at`, `id@REV`,
-tassonomia retroattiva): le memorie esistenti si leggono e si verificano come prima.
+Note: every checkpoint writes new notes and does not rewrite existing ones, on any
+path (draft, `curate validate`/`apply` with a manual proposal.json). The proposal names
+a new note `knowledge/<name>.md`. The runtime assigns it the logical key
+`knowledge/H000NNN/<name>.md` (the checkpoint's HISTORY id), so it never coincides with
+that of an existing note and the name can repeat across checkpoints. Notes published
+earlier keep the flat key `knowledge/<name>.md`, with no migration. A proposal
+that reuses the identity (`kn-UUID`) of an existing note is rejected with
+`CURATOR_NOTE_ID_DUPLICATE`. A key with an `H000NNN/` folder is rejected with `CURATOR_UNSAFE_PATH`.
+An archive file (`…kn-UUID--REV.md`) is never a logical key, even in the
+same folder. As a result the
+code writes only revisions with no predecessor (`previous: null`) and updating a head
+no longer exists. The format and reading of chains of
+multiple revisions, published before this rule, stay intact (`previous`, `--at`, `id@REV`,
+retroactive taxonomy). Existing memories are read and verified as before.
 
-`kn-UUID` resta l'identità logica. La revisione è `r-<run-id>` per una nota nuova
-(o, in memorie precedenti, per un aggiornamento) o `b-<run-id>` per una baseline: si riusa il run, senza nuovi contatori. L'identità
-completa è `kn-UUID@REV`; SHA-256 controlla l'integrità ed è distinto dall'ID.
+`kn-UUID` stays the logical identity. The revision is `r-<run-id>` for a new note
+(or, in earlier memories, for an update) or `b-<run-id>` for a baseline. The run is reused, with no new counters. The full
+identity is `kn-UUID@REV`. SHA-256 checks integrity and is distinct from the ID.
 
 ```text
 .knownex/memory/STATE.md
 .knownex/memory/HISTORY.md
 .knownex/memory/history/H000004.md
-.knownex/memory/knowledge/H000004/nome--kn-UUID--REV.md
-.knownex/memory/knowledge/H000004/experiments/nome--kn-UUID--REV.md
+.knownex/memory/knowledge/H000004/name--kn-UUID--REV.md
+.knownex/memory/knowledge/H000004/experiments/name--kn-UUID--REV.md
 .knownex/memory/taxonomy.json
 .knownex/internal/curator/checkpoint.json
 .knownex/internal/curator/revisions/c-SEQUENCE.json
 ```
 
-Il checkpoint mantiene un riferimento per nota corrente: ID, revisione, hash e
-file relativo alla radice delle Knowledge immutabili. La cartella indica il cutoff,
-non un ID HISTORY o una garanzia di validita semantica. Non esiste una copia
-piatta corrente: i HEAD selezionano direttamente le revisioni. Nei workspace
-legacy la radice resta curator/revisions e le proiezioni correnti non sono spostate.
-[Layout e compatibilita](MEMORY-LAYOUT.md).
+The checkpoint keeps one reference per current note: ID, revision, hash and
+file relative to the root of the immutable Knowledge. The `H000NNN` folder is
+the checkpoint's HISTORY id (the legacy `checkpoint-NNNN` folders indicate the
+cutoff). Neither is a guarantee of semantic validity. There is no current
+flat copy: the HEADs select the revisions directly. In legacy workspaces
+the root stays curator/revisions and the current projections are not moved.
+[Layout and compatibility](MEMORY-LAYOUT.md).
 
-Ogni archivio conserva il testo completo e un commento riservato `knownex-revision`
-generato dal codice: identità, percorso logico, predecessore con hash, cutoff/checksum
-e hash del contenuto. Il riferimento corrente o del successore autentica l'intero
-file. La nota corrente nel packet e una proiezione logica con link ribasati, non un
-ulteriore file confermato. Incoerenze bloccano la lettura; il Curator non genera
-metadati tecnici. Note invariate non producono revisioni; il confronto normalizza
-riferimenti verso le stesse versioni.
-Il nome di una nuova revisione inizia con il nome logico della nota (`nome--`) per chi
-sfoglia il vault; l'identità resta `kn-UUID@REV` e le revisioni senza prefisso restano
-valide. Non sono introdotti cancellazioni, rinomine o rami.
+Each archive keeps the full text and a reserved `knownex-revision` comment
+generated by the code: identity, logical path, predecessor with hash, cutoff/checksum
+and content hash. The current reference, or the successor's, authenticates the whole
+file. The current note in the packet is a logical projection with rebased links, not an
+additional confirmed file. Inconsistencies block reading. The Curator does not generate
+technical metadata. Unchanged notes produce no revisions. The comparison normalizes
+references to the same versions.
+The name of a new revision starts with the logical name of the note (`name--`) for whoever
+browses the vault. The identity stays `kn-UUID@REV` and revisions without the prefix stay
+valid. No deletions, renames or branches are introduced.
 
-## Checkpoint e categorie facoltative
+## Checkpoint and optional categories
 
-Una nuova promozione pubblica soltanto note nuove o realmente cambiate sotto
-H000NNN/, dove H000NNN è l'id della voce di HISTORY dello stesso checkpoint (accanto a history/H000NNN.md), eventualmente in una sottocartella tematica. Le memorie pubblicate prima di questa regola contengono cartelle `checkpoint-NNNN` (NNNN = ultimo evento del batch): restano valide e leggibili senza migrazione, anche accanto alle cartelle H000NNN; la baseline conserva la forma `checkpoint-NNNN`. Un noop non ha voce di HISTORY e non crea cartella. Le note invariate
-mantengono il riferimento precedente. Un noop aggiunge soltanto c-SEQUENCE.json:
-non crea una cartella di Knowledge vuota ne un nuovo snapshot. La baseline dei
-workspace non ancora versionati conserva una sola volta le note precedenti sotto
-la cartella del loro cutoff, distinguibili dal prefisso b-. Non si ricopia
-l'archivio ai checkpoint successivi.
+A new promotion publishes only new notes under
+H000NNN/, where H000NNN is the id of the HISTORY entry of the same checkpoint (next to history/H000NNN.md), possibly in a thematic subfolder. Memories published before this rule contain `checkpoint-NNNN` folders (NNNN = last event of the batch). They stay valid and readable with no migration, even next to the H000NNN folders. The baseline keeps the `checkpoint-NNNN` form. A noop has no HISTORY entry and creates no folder. Unchanged notes
+keep the previous reference. A noop adds only c-SEQUENCE.json:
+it creates neither an empty Knowledge folder nor a new snapshot. The baseline of
+workspaces not yet versioned keeps the earlier notes once, under
+the folder of their cutoff, recognizable by the b- prefix. The
+archive is not copied again at later checkpoints.
 
-Il registro facoltativo memory/taxonomy.json e una semplice mappa JSON:
+The optional registry memory/taxonomy.json is a simple JSON map:
 
 ```json
 {
-  "architecture": "Decisioni e vincoli architetturali del progetto",
-  "experiments": "Metodi, risultati e limiti delle prove"
+  "architecture": "Architectural decisions and constraints of the project",
+  "experiments": "Methods, results and limits of the tests"
 }
 ```
 
-Chiavi stabili minuscole con lettere ASCII, cifre e trattini fra componenti;
-descrizioni naturali non vuote su una riga. Sono esclusi traversal e nomi
-riservati Windows. Nessun elenco di note, revisioni o checkpoint, nessuna categoria
-predefinita o cap numerico. Assenza del file equivale a registro vuoto; file
-malformati o symlink producono CURATOR_TAXONOMY_INVALID. Prepare congela le categorie
-gia approvate in run e packet; cambi successivi valgono solo per i batch futuri.
+Stable lowercase keys with ASCII letters, digits and hyphens between components.
+Descriptions are natural, non-empty and on one line. Traversal and Windows reserved
+names are excluded. No list of notes, revisions or checkpoints, no predefined
+categories or numeric cap. A missing file is the same as an empty registry. Malformed
+files or symlinks produce CURATOR_TAXONOMY_INVALID. Prepare freezes the categories
+already approved in run and packet. Later changes apply only to future batches.
 
-La proposta update puo aggiungere categories, una mappa dai percorsi logici delle
-sole note nuove/modificate alle chiavi approvate. Il curator valuta le descrizioni;
-se nessuna e pertinente omette l'associazione e la revisione resta direttamente
-nella cartella del checkpoint. Il codice non classifica per parole chiave.
-Categorie sconosciute, associazioni a note invariate o a noop sono rifiutate con
-CURATOR_CATEGORY_INVALID (o errore di forma per noop). Non si spostano note
-confermate per riclassificarle. Il workflow ordinario non crea taxonomy.json o
-nuove categorie. Proposta, approvazione e gestione retroattiva appartengono alla
-skill opzionale `$knownex-taxonomy`: [workflow e limiti](TAXONOMY.md).
-Le associazioni separate referenziano revisioni esatte senza spostarle,
-duplicarle o cambiarne contenuto, hash e provenienza.
+The update proposal may add categories, a map from the logical paths of the
+new/modified notes only to approved keys. The Curator evaluates the descriptions.
+If none is relevant, it omits the association and the revision stays directly
+in the checkpoint folder. The code does not classify by keyword.
+Unknown categories, associations to unchanged notes or to noop are rejected with
+CURATOR_CATEGORY_INVALID (or a shape error for noop). Confirmed notes are not moved to reclassify them. The ordinary workflow does not create taxonomy.json or
+new categories. Proposal, approval and retroactive handling belong to the
+optional skill `$knownex-taxonomy`: [workflow and limits](TAXONOMY.md).
+Separate associations reference exact revisions without moving them,
+duplicating them or changing their content, hash and provenance.
 
-## Lettura
+## Reading
 
 ```powershell
-knownex memory find "termine" --memory .knownex/memory
+knownex memory find "term" --memory .knownex/memory
 knownex memory read kn-UUID --memory .knownex/memory
 knownex memory read kn-UUID@REV --memory .knownex/memory
 knownex memory read kn-UUID --at 19 --memory .knownex/memory
 knownex memory read kn-UUID --at H000002 --memory .knownex/memory
 ```
 
-Usare gli ID effettivi restituiti da find/read. La ricerca resta corrente, con lo
-stesso ranking e limite; aggiunge `revision` e `versionReference` nei workspace v3.
-Per il nuovo layout aggiunge category, se presente, e checkpoint. Find puo cercare
-chiavi come experiments o il nome esatto H000004 nei metadati derivati
-dal percorso corrente, senza indice persistente o scansione delle vecchie revisioni.
-La lettura logica mantiene il contenuto corrente. La lettura qualificata restituisce
-il testo della revisione senza commento tecnico, il riferimento fisico, SHA-256
-del file completo e il cutoff `through`.
+Use the actual IDs returned by find/read. The search stays current, with the
+same ranking and limit. It adds `revision` and `versionReference` in v3 workspaces.
+For the new layout it adds category, if present, and checkpoint. Find can search
+keys such as experiments or the exact name H000004 in the metadata derived
+from the current path, with no persistent index or scan of old revisions.
+The logical read keeps the current content. The qualified read returns
+the text of the revision without the technical comment, the physical reference, the SHA-256
+of the full file and the cutoff `through`.
 
-`--at N` richiede un checkpoint realmente confermato, inclusi i noop, non un evento
-intermedio. `--at H...` usa il cutoff dello STATE precedente (`from - 1`), non quello
-finale della transizione. Una nota introdotta dopo quel punto risulta assente.
-La risoluzione segue solo ricevute/predecessori necessari, senza ricostruire diff.
-File mancanti, hash incoerenti e catene invalide causano errori, mai fallback.
-La navigazione corrente non enumera l'archivio: verifica revisioni attive e nuove
-pubblicazioni dell'ultima ricevuta, oltre ai controlli preesistenti del workspace.
+`--at N` requires a really confirmed checkpoint, noops included, not an
+intermediate event. `--at H...` uses the cutoff of the previous STATE (`from - 1`), not the
+final one of the transition. A note introduced after that point is absent.
+Resolution follows only the necessary receipts/predecessors, without rebuilding diffs.
+Missing files, inconsistent hashes and invalid chains cause errors, never a fallback.
+Current navigation does not enumerate the archive. It verifies active revisions and new
+publications of the last receipt, besides the existing workspace checks.
 
-## Link
+## Links
 
-Il codice fissa i normali link `knowledge/topic.md` alle revisioni pertinenti;
-il curator non inventa REV o percorsi d'archivio. Nel layout canonico anche i link marcati knownex:current sono risolti
-alla revisione pertinente durante la pubblicazione: non esiste un alias fisico
-knowledge/topic.md da seguire nel filesystem. Per la navigazione corrente usare
-l'ID logico con la CLI. Nei workspace legacy il marker conserva il comportamento
-precedente; non si riscrivono documenti confermati.
-I nuovi segmenti HISTORY congelano i riferimenti dello STATE archiviato; i segmenti
-già confermati restano un prefisso esatto. Una nota invariata conserva le fonti
-usate anche se altre note cambiano. Rettifiche e validità non derivano dalla cronologia.
-Revisioni locali sono verificabili tramite la rispettiva catena, senza autorizzare
-file arbitrari. Artifact esterni conservano i controlli precedenti: i loro byte non
-vengono congelati. Link mobili a STATE/intera HISTORY non ne sono snapshot; per il
-passato usare segmenti precisi e distinguere la navigazione corrente.
-I link tra cartelle e categorie vengono ribasati rispetto al documento che li
-contiene. Filesystem e lettori Markdown come Obsidian possono esplorare cartelle,
-link e anchor senza CLI. Il navigatore non segue link automaticamente.
+The code pins the normal `knowledge/topic.md` links to the relevant revisions.
+The Curator does not invent REV or archive paths. In the canonical layout, links marked knownex:current are also resolved
+to the relevant revision during publication. There is no physical alias
+knowledge/topic.md to follow in the filesystem. For current navigation use
+the logical ID with the CLI. In legacy workspaces the marker keeps the
+previous behavior. Confirmed documents are not rewritten.
+New HISTORY segments freeze the references of the archived STATE. Segments
+already confirmed stay an exact prefix. An unchanged note keeps the sources
+used even if other notes change. Corrections and validity do not derive from the chronology.
+Local revisions are verifiable through their own chain, without authorizing
+arbitrary files. External artifacts keep the previous checks: their bytes are not
+frozen. Moving links to STATE/the whole HISTORY are not snapshots of them. For the
+past use precise segments and distinguish current navigation.
+Links between folders and categories are rebased relative to the document that
+contains them. Filesystems and Markdown readers such as Obsidian can explore folders,
+links and anchors without the CLI. The navigator does not follow links automatically.
 
-## Adozione, transazione e limiti
+## Adoption, transaction and limits
 
-Seed e workspace v2 restano leggibili. La prima promozione autorizzata crea la
-baseline della generazione precedente verificata e le eventuali nuove revisioni,
-nello stesso journal. Nessuna delega o invocazione aggiuntiva. Il noop di adozione
-può congelare destinazioni dei link correnti senza aggiungere HISTORY.
-Prima dell'adozione: `KNOWLEDGE_REVISIONS_UNAVAILABLE`; prima del cutoff baseline:
-`KNOWLEDGE_LEGACY_HISTORY`. Nessuna garanzia retroattiva sui vecchi segmenti o link.
+Seed and v2 workspaces stay readable. The first authorized promotion creates the
+baseline of the verified previous generation and any new revisions,
+in the same journal. No additional delegation or invocation. The adoption noop
+may freeze the destinations of current links without adding HISTORY.
+Before adoption: `KNOWLEDGE_REVISIONS_UNAVAILABLE`. Before the baseline cutoff:
+`KNOWLEDGE_LEGACY_HISTORY`. No retroactive guarantee on old segments or links.
 
-La recovery v1 pendente viene completata prima dell'adozione. Una vecchia validazione
-senza journal richiede validate sulla stessa proposta (`CURATOR_REVALIDATION_REQUIRED`),
-senza nuova delega. Il checkpoint v3 impedisce scritture con i vecchi writer.
-Una copia standalone piatta legacy mantiene la lettura corrente. Una copia della
-sola memoria canonica resta esplorabile come Markdown, ma per risolvere gli ID
-logici e i checkpoint con la CLI servono anche i metadati internal/curator coerenti. Non è un nuovo formato
-generale di esportazione dei workspace.
+A pending v1 recovery is completed before adoption. An old validation
+without a journal requires validate on the same proposal (`CURATOR_REVALIDATION_REQUIRED`),
+with no new delegation. The v3 checkpoint prevents writes with the old writers.
+A flat legacy standalone copy keeps the current read. A copy of the
+canonical memory alone stays explorable as Markdown, but to resolve logical
+IDs and checkpoints with the CLI the consistent internal/curator metadata is also needed. It is not a new
+general export format for workspaces.
 
-I nuovi run dichiarano revisionLayout=1; i batch precedenti senza tale marker
-mantengono il piano piatto e i sigilli esistenti. Riferimenti di revisione legacy
-senza file continuano a risolvere i nomi piatti; nuovi riferimenti includono il
-percorso di pubblicazione e restano protetti dagli hash. Nessun file o segmento storico
-confermato viene spostato o riscritto. Vecchi lettori/writer non comprendono i
-nuovi riferimenti e falliscono conservativamente: aggiornare il software prima
-di usare workspace che contengono revisioni organizzate per checkpoint.
+New runs declare revisionLayout=1. Earlier batches without that marker
+keep the flat plan and the existing seals. Legacy revision references
+without a file keep resolving the flat names. New references include the
+publication path and stay protected by hashes. No confirmed historical file or segment
+is moved or rewritten. Old readers/writers do not understand the
+new references and fail conservatively. Update the software before
+using workspaces that contain revisions organized by checkpoint.
 
-Il journal v2 contiene alberi attivi prima/dopo e sole nuove pubblicazioni, non tutto
-l'archivio. Il sigillo copre proposta, piano e hash. Validate non pubblica revisioni;
-gli staging non sono input di recovery. Ordine persistente: journal → archivi e
-namespace → Markdown → verifica → checkpoint → pulizia. Il replay riconosce file
-identici e risincronizza senza duplicare HISTORY o revisioni. Collisioni e pubblicazioni
-mancanti dopo il commit bloccano, senza ricostruzioni arbitrarie.
-Le directory annidate vengono create solo dopo l'intento durevole: ogni componente
-e controllato contro symlink/junction, sincronizzato insieme al proprio genitore,
-poi il file e pubblicato atomicamente e il suo genitore risincronizzato prima del
-checkpoint. La recovery ripete questi passaggi senza duplicare le pubblicazioni.
+The v2 journal contains active trees before/after and only new publications, not the whole
+archive. The seal covers proposal, plan and hashes. Validate does not publish revisions.
+Staging areas are not recovery inputs. Persistent order: journal → archives and
+namespace → Markdown → verification → checkpoint → cleanup. Replay recognizes identical
+files and resynchronizes without duplicating HISTORY or revisions. Collisions and missing
+publications after the commit block, with no arbitrary reconstruction.
+Nested directories are created only after the durable intent. Each component
+is checked against symlinks/junctions and synchronized together with its parent.
+Then the file is published atomically and its parent resynchronized before the
+checkpoint. Recovery repeats these steps without duplicating publications.
 
-Restano le assunzioni NTFS/flush di [Storage Durability](STORAGE-DURABILITY.md).
-Crash ed EIO simulati non dimostrano durabilità fisica. L'immutabilità è del protocollo,
-non una protezione ACL contro scrittori esterni. Le revisioni vecchie sono verificate
-quando richieste/percorse; non esistono scansioni periodiche o garbage collection.
-Prepare/validate/hash/flush conservano il costo dell'albero attivo e della HISTORY;
-la validazione può consultare metadata di riferimenti storici. Non si promette O(delta):
-si evita di copiare, serializzare e sincronizzare indiscriminatamente tutto l'archivio.
+The NTFS/flush assumptions of [Storage Durability](STORAGE-DURABILITY.md) remain.
+Simulated crashes and EIO do not prove physical durability. The immutability is that of the protocol,
+not an ACL protection against external writers. Old revisions are verified
+when requested/traversed. There are no periodic scans or garbage collection.
+Prepare/validate/hash/flush keep the cost of the active tree and of HISTORY.
+Validation may consult metadata of historical references. O(delta) is not promised.
+The goal is to avoid copying, serializing and synchronizing the whole archive indiscriminately.

@@ -1,64 +1,64 @@
-# Manutenzione tematica opzionale
+# Optional thematic maintenance
 
-`$knownex-taxonomy` opera soltanto su invocazione esplicita. Non esegue un
-checkpoint della conversazione e non avanza il cutoff. Il curator ordinario usa
-solo categorie approvate; non crea categorie né riclassifica note invariate.
-Non esistono categorie predefinite, soglie semantiche o classificazione obbligatoria.
+`$knownex-taxonomy` operates only on explicit invocation. It does not run a
+checkpoint of the conversation and does not advance the cutoff. The ordinary curator uses
+only approved categories; it does not create categories or reclassify unchanged notes.
+There are no predefined categories, semantic thresholds or mandatory classification.
 
-## Proposta e approvazione
+## Proposal and approval
 
 ```text
 knownex taxonomy prepare --work .knownex/internal/curator
 knownex taxonomy validate --work .knownex/internal/curator --run ID
-knownex taxonomy apply --work .knownex/internal/curator --run ID --confirm SIGILLO --approval-event SEQUENZA
+knownex taxonomy apply --work .knownex/internal/curator --run ID --confirm SEAL --approval-event SEQUENCE
 knownex taxonomy rebuild --work .knownex/internal/curator
 ```
 
-Prepare richiede un'invocazione utente acquisita nel feed e crea solo staging
-in `taxonomy-runs/ID/`: packet, identità della richiesta, checkpoint e impronta
-dei metadati. Il packet contiene un catalogo cronologico delle revisioni
-raggiungibili, non tutti i loro contenuti. Il curator esistente legge selettivamente
-le revisioni necessarie e propone macro-temi ricorrenti, sovrapposizioni e candidati.
-Un'analisi senza cambiamenti utili è valida; validate restituisce `noop`.
+Prepare requires a user invocation captured in the feed and creates only staging
+in `taxonomy-runs/ID/`: packet, request identity, checkpoint and metadata
+fingerprint. The packet contains a chronological catalog of the reachable
+revisions, not all their contents. The existing curator selectively reads
+the revisions needed and proposes recurring macro-themes, overlaps and candidates.
+An analysis with no useful changes is valid; validate returns `noop`.
 
-Il file `proposal.json` UTF-8 contiene patch, non sostituzioni integrali:
+The UTF-8 `proposal.json` file contains patches, not full replacements:
 
 ```json
 {
-  "categories": { "methods": "Metodi, evidenze e limiti" },
+  "categories": { "methods": "Methods, evidence and limits" },
   "assignments": { "kn-UUID@REV": ["methods"] },
-  "explanations": "Motivazioni, revisioni/checkpoint rappresentativi e sovrapposizioni"
+  "explanations": "Reasons, representative revisions/checkpoints and overlaps"
 }
 ```
 
-UUID e REV nell'esempio sono segnaposto: servono identità reali del catalogo.
-Assenze conservano i dati precedenti; `[]` rende una revisione non classificata.
-Validate restituisce sigillo, tassonomia e associazioni effettive. Il principale
-presenta una proposta leggibile con motivazioni e riferimenti, ID e sigillo.
-L'utente può rifiutare, modificare o aggiungere categorie. Dopo modifiche si
-rivalida e si presenta il nuovo sigillo; non occorre ripetere l'analisi semantica.
+UUID and REV in the example are placeholders: real identities from the catalog are needed.
+Absences preserve the previous data; `[]` makes a revision unclassified.
+Validate returns the seal, taxonomy and effective associations. The main session
+presents a readable proposal with reasons and references, ID and seal.
+The user can reject, modify or add categories. After changes the proposal is
+revalidated and the new seal is presented; the semantic analysis need not be repeated.
 
-Apply verifica invocazione, finale dell'assistente con quel run/sigillo e prima
-risposta utente successiva nella stessa sessione, realmente acquisiti e non
-esclusi dal ramo attivo. Una risposta successiva rende obsoleto quel consenso.
-**Il principale interpreta l'assenso libero; la CLI non ne verifica il significato.**
-Un marker o una dichiarazione del modello non sostituiscono gli eventi acquisiti;
-non sono prove crittografiche della comprensione o visualizzazione umana.
-Risposte ambigue, rifiuto e silenzio impongono di non chiamare apply.
+Apply verifies the invocation, the assistant's final with that run/seal and the first
+later user response in the same session, actually captured and not
+excluded from the active branch. A later response makes that consent stale.
+**The main session interprets free-form assent; the CLI does not verify its meaning.**
+A marker or a statement by the model does not replace the captured events;
+they are not cryptographic proof of human understanding or viewing.
+Ambiguous responses, refusal and silence require not calling apply.
 
-Checkpoint o metadati cambiati invalidano la proposta. Una nuova invocazione
-permette un nuovo run; l'analisi ancora pertinente può essere riutilizzata.
-Un batch curator pendente impedisce apply tematico. Le istruzioni restano il
-confine semantico dell'approvazione, come nel workflow manuale esistente.
+A changed checkpoint or metadata invalidates the proposal. A new invocation
+allows a new run; the analysis, if still relevant, can be reused.
+A pending curator batch prevents a thematic apply. The instructions remain the
+semantic boundary of the approval, as in the existing manual workflow.
 
-## Dati canonici e identità
+## Canonical data and identity
 
-`taxonomy.json` resta la mappa minimale chiave → descrizione. Le chiavi esistenti
-non vengono eliminate per omissione. Per rinominare/fondere si aggiunge una
-chiave e si approvano associazioni esplicite, preservando le chiavi precedenti.
-Non esistono cancellazione fisica di chiavi, alias o fusioni automatiche.
+`taxonomy.json` remains the minimal key → description map. Existing keys
+are not deleted by omission. To rename/merge, a key is added
+and explicit associations are approved, preserving the previous keys.
+There is no physical deletion of keys, aliases or automatic merges.
 
-`taxonomy-associations.json` conserva solo classificazioni retroattive:
+`taxonomy-associations.json` keeps only retroactive classifications:
 
 ```json
 {
@@ -68,50 +68,50 @@ Non esistono cancellazione fisica di chiavi, alias o fusioni automatiche.
 }
 ```
 
-La chiave identifica una revisione precisa, non un ID logico corrente né un
-evento del feed. Un'associazione esplicita sostituisce la classificazione
-originaria ricavata dal percorso; in sua assenza vale quella originaria.
-Non cambia byte, hash, percorso, provenienza o significato della revisione.
-Le ricevute immutabili `taxonomy-changes/t-SHA256.json` registrano proposta,
-sigillo, riferimento all'approvazione, impronte prima/dopo e ricevuta precedente.
-La testa autenticata rileva alterazioni dei dati canonici; non è una firma contro
-scrittori esterni che possano riscrivere tutti i file. Workspace senza questi
-metadati e con solo `taxonomy.json` restano validi senza migrazione.
+The key identifies a precise revision, not a current logical ID nor a
+feed event. An explicit association replaces the original classification derived
+from the path; in its absence the original one applies.
+It does not change bytes, hash, path, provenance or meaning of the revision.
+The immutable receipts `taxonomy-changes/t-SHA256.json` record proposal,
+seal, approval reference, before/after fingerprints and previous receipt.
+The authenticated head detects alterations of the canonical data; it is not a signature against external
+writers that can rewrite all the files. Workspaces without this metadata
+and with only `taxonomy.json` stay valid without migration.
 
-## Navigazione e viste
+## Navigation and views
 
-`knownex memory category CHIAVE --memory .knownex/memory` restituisce
-revisioni esatte in ordine cronologico, con provenienza, stato corrente e
-classificazione originaria/retroattiva. Pagine: default 5, massimo 20 risultati,
-`--limit N --cursor CURSORE`; cambiamenti del checkpoint o dei metadati invalidano
-il cursore. Non è un limite al numero di categorie. Le note legacy non ancora
-versionate restano leggibili ma non compaiono nel catalogo storico.
+`knownex memory category KEY --memory .knownex/memory` returns
+exact revisions in chronological order, with provenance, current state and
+original/retroactive classification. Pages: default 5, maximum 20 results,
+`--limit N --cursor CURSOR`; changes to the checkpoint or metadata invalidate
+the cursor. It is not a limit on the number of categories. Legacy notes not yet
+versioned stay readable but do not appear in the historical catalog.
 
-Find continua a cercare note correnti, includendo categorie effettive nei metadati;
-`category` nei risultati rimane la collocazione originaria, `thematicCategories`
-la classificazione attuale. Una parola della vecchia collocazione può ancora
-corrispondere in find; usare `memory category` per la selezione tematica esatta.
-Read non altera contenuti né segue link automaticamente.
+Find keeps searching current notes, including effective categories in the metadata;
+`category` in the results stays the original placement, `thematicCategories`
+the current classification. A word of the old placement may still
+match in find; use `memory category` for exact thematic selection.
+Read does not alter contents and does not follow links automatically.
 
-`topics/index.md` e `topics/category-CHIAVE.md` sono viste derivate per lettori
-Markdown/Obsidian: link relativi alle revisioni originali, raggruppati per cutoff
-del checkpoint. Non sono Knowledge né fonte di verità. Rebuild le ripara dai
-metadati già approvati senza nuova classificazione o delega. Le viste possono
-diventare obsolete dopo checkpoint ordinari: ricostruirle quando necessario.
+`topics/index.md` and `topics/category-KEY.md` are derived views for Markdown/Obsidian
+readers: relative links to the original revisions, grouped by checkpoint
+cutoff. They are not Knowledge nor a source of truth. Rebuild repairs them from the
+already approved metadata with no new classification or delegation. The views can
+become stale after ordinary checkpoints: rebuild them when needed.
 
-## Transazione e limiti
+## Transaction and limits
 
-La manutenzione riusa `curator.lock`, `apply.json` e la recovery esistenti.
-Il record v3 tematico contiene solo metadati prima/dopo, senza copie della memoria.
-Ordine persistente: intento → ricevuta → registro → viste → associazioni/testa.
-Il checkpoint rimane identico. Il replay verifica vecchi/nuovi contenuti canonici,
-ripara viste derivate e completa l'operazione autorizzata senza nuova delega.
-Una collisione canonica blocca; una proposta non autorizzata non viene promossa.
-Prepare/validate non completano recovery pendenti; i normali gate di recovery
-restano disponibili. Lettori esterni che ignorano il lock possono osservare file
-intermedi; non si promettono transazioni multi-file per questi lettori.
+The maintenance reuses `curator.lock`, `apply.json` and the existing recovery.
+The thematic v3 record contains only before/after metadata, with no copies of the memory.
+Persistent order: intent → receipt → registry → views → associations/head.
+The checkpoint stays identical. The replay verifies old/new canonical contents,
+repairs derived views and completes the authorized operation with no new delegation.
+A canonical collision blocks; an unauthorized proposal is not promoted.
+Prepare/validate do not complete pending recoveries; the normal recovery gates
+remain available. External readers that ignore the lock may observe
+intermediate files; multi-file transactions are not promised for these readers.
 
-Valgono le assunzioni di [durabilità](STORAGE-DURABILITY.md), non una dimostrazione
-fisica contro power loss. I test verificano byte, riferimenti, autorizzazioni
-strutturali, collisioni e replay; non qualità semantica dei temi, completezza
-dell'analisi o interpretazione corretta dell'assenso da parte di un modello.
+The assumptions of [durability](STORAGE-DURABILITY.md) apply, not a physical
+proof against power loss. The tests verify bytes, references, structural
+authorizations, collisions and replay; not the semantic quality of the themes, completeness
+of the analysis or correct interpretation of the assent by a model.

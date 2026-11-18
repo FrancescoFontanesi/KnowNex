@@ -1,27 +1,16 @@
-# Visione KnowNex
+# KnowNex vision
 
-KnowNex mira a trasformare il flusso delle conversazioni con agenti AI in un
-contesto esterno, distribuito, persistente e navigabile.
+KnowNex aims to turn the flow of conversations with AI agents into an external,
+distributed, persistent and navigable context.
 
-## Principi confermati
+## Confirmed principles
 
-- Alimentare la memoria con il feed delle conversazioni accessibili dagli harness.
-- Conservare le conversazioni originali come fonte recuperabile.
-- Materializzare progressivamente il contesto in documenti Markdown collegati e
-  leggibili dalle persone.
-- Distribuire il dettaglio tra documenti anziché comprimerlo distruttivamente.
-- Consentire continuità di contesto fra agenti e sessioni.
+- Feed the memory with the feed of conversations accessible from the harnesses.
+- Keep the conversation messages in the feed as a recoverable source.
+- Progressively materialize the context into linked Markdown documents that
+  people can read.
+- Distribute the detail across documents instead of compressing it destructively.
+- Allow continuity of context between agents and sessions.
 
-## Questioni aperte all'avvio (S0, storico)
-
-- Formato degli eventi e modalità di cattura dagli harness.
-- Rappresentazione di State e History.
-- Contratto e responsabilità del curator.
-- Granularità delle note e organizzazione dei collegamenti.
-- Indice dinamico e modalità di navigazione.
-- Garanzie di durabilità e politica di versionamento della memoria.
-- Interfacce utente e integrazioni.
-
-Elenco storico: S0 preparava solo l'ambiente di sviluppo. Le scelte prese da
-allora sono descritte nei contratti correnti: [memoria](MEMORY-CONTRACT.md),
-[curator](CURATOR.md), [navigazione](NAVIGATOR.md) e [runtime](RUNTIME.md).
+The current choices are described in the contracts: [memory](MEMORY-CONTRACT.md),
+[Curator](CURATOR.md), [navigation](NAVIGATOR.md) and [runtime](RUNTIME.md).

@@ -1,109 +1,76 @@
-# R2 — Intermedi Codex
+# R2 — Codex intermediates
 
-L'adattatore `src/commentary.ts` legge uno snapshot verificato tramite il reader
-S1 durante Stop, senza modificare la sorgente o mantenere un altro cursore.
-Seleziona esclusivamente `response_item` con `payload.type = message`, ruolo
-`assistant`, fase `commentary` e parti `output_text` testuali. Il testo concatena
-le parti nell'ordine originale senza separatori aggiunti. Non interpreta reasoning,
-tool, `event_msg/agent_message`, `item_completed` o risposte finali del transcript.
-La selezione è limitata al turno dichiarato dal payload Stop.
+The `src/commentary.ts` adapter reads a verified snapshot through the S1 reader
+during Stop, without modifying the source or keeping another cursor.
+It selects only `response_item` with `payload.type = message`, role
+`assistant`, phase `commentary` and textual `output_text` parts. The text joins
+the parts in their original order with no added separators. It does not interpret reasoning,
+tools, `event_msg/agent_message`, `item_completed` or final replies of the transcript.
+The selection is limited to the turn declared by the Stop payload.
 
-## Identità e provenienza
+## Identity and provenance
 
-La sessione deve coincidere con `session_meta.payload.session_id`/`id`.
-Con retained metadata servono `complete: true`, ruolo assistant e `turn_id`;
-`message_id` e `payload.id`, quando entrambi presenti, devono coincidere.
-In assenza di retained metadata si accettano soltanto file esplicitamente
-`history_mode: legacy`, un `turn_context.turn_id` precedente e messaggi con ID
-e stato `completed`. Compattazione, fine turno e nuovo session_meta azzerano
-l'associazione contestuale, anche all'inizio di un nuovo turno. Gli altri casi rimangono esclusi con diagnostico;
-non si inventano ID o appartenenze di turno. Un file senza identità di sessione
-o con sessione differente è rifiutato.
+The session must match `session_meta.payload.session_id`/`id`.
+With retained metadata, `complete: true`, role assistant and `turn_id` are required;
+`message_id` and `payload.id`, when both are present, must match.
+Without retained metadata, only files explicitly marked
+`history_mode: legacy`, a preceding `turn_context.turn_id` and messages with ID
+and `completed` status are accepted. Compaction, end of turn and a new session_meta reset
+the contextual association, even at the start of a new turn. Other cases stay excluded with a diagnostic;
+IDs or turn membership are not invented. A file without session identity
+or with a different session is rejected.
 
-Il feed aggiunge `assistant_commentary`, `messageId` e `source`: percorso del
-transcript, identità filesystem, hash dello snapshot completo, offset/lunghezza
-in byte e SHA-256 della riga originale senza LF, tipo di associazione al turno,
-ordinal e revisione retained quando disponibili. Il testo originale resta nel
-feed; questi riferimenti permettono il confronto con sorgente o record raw del
-backup S1. Non promettono che il percorso sorgente conservi per sempre la stessa
-rappresentazione dopo una riscrittura.
+The feed adds `assistant_commentary`, `messageId` and `source`: transcript
+path, filesystem identity, hash of the complete snapshot, byte offset/length
+and SHA-256 of the original line without LF, type of turn association,
+ordinal and retained revision when available. The original text stays in the
+feed; these references allow comparison with the source or the raw records of the
+S1 backup. They do not promise that the source path will keep the same
+representation forever after a rewrite.
 
-Il writer e il lock rimangono quelli del feed S2.1. L'identità degli intermedi
-è tipo/sessione/turno/messageId. Un replay identico non scrive; testo divergente
-per quell'identità causa FEED_CONFLICT senza sostituire il messaggio. Identità
-diverse restano distinte anche con testo uguale. Una riscrittura legacy/paginated
-non viene deduplicata per testo, timestamp o posizione. Se gli ID cambiano, i
-messaggi restano distinti: non è dimostrata una corrispondenza semantica.
+The writer and the lock remain those of the S2.1 feed. The identity of intermediates
+is type/session/turn/messageId. An identical replay does not write; diverging text
+for that identity causes FEED_CONFLICT without replacing the message. Different
+identities stay distinct even with equal text. A legacy/paginated rewrite
+is not deduplicated by text, timestamp or position. If the IDs change, the
+messages stay distinct: no semantic correspondence is proven.
 
-## Finestra pendente
+## Pending window
 
-La sequenza fisica è sempre l'ordine di acquisizione. `prepare` mantiene il cutoff
-e il checkpoint R1 fisici, ma presenta ogni gruppo contiguo dello stesso turno
-come utente, intermedi, finale. Gli intermedi dello stesso snapshot seguono gli
-offset originali. Fra snapshot differenti conserva l'ordine di acquisizione e
-segnala COMMENTARY_ORDER_AMBIGUOUS; non confronta ordinal di rappresentazioni
-diverse. Turni intercalati producono TURN_ORDER_AMBIGUOUS senza spostare interi
-turni. Eventi arrivati dopo la materializzazione parziale del turno producono
-TURN_PARTIALLY_MATERIALIZED: gli eventi confermati non vengono ripresentati e
-non si riscrive la memoria passata.
+The physical sequence is always the order of capture. `prepare` keeps the physical cutoff
+and R1 checkpoint, but presents each contiguous group of the same turn
+as user, intermediates, final. Intermediates from the same snapshot follow the original
+offsets. Between different snapshots it keeps the capture order and
+reports COMMENTARY_ORDER_AMBIGUOUS; it does not compare ordinals of different
+representations. Interleaved turns produce TURN_ORDER_AMBIGUOUS without moving whole
+turns. Events arriving after the partial materialization of the turn produce
+TURN_PARTIALLY_MATERIALIZED: confirmed events are not presented again and
+past memory is not rewritten.
 
-`packet.json` e `WINDOW.md` sono proiezioni rigenerabili del feed. Le etichette
-E rimangono le sequenze fisiche, anche quando la presentazione le riordina.
-STATE, HISTORY e Memory Contract R1 restano invariati. L'invocazione del curator
-rimane sotto il controllo del principale.
+`packet.json` and `WINDOW.md` are regenerable projections of the feed. The E
+labels stay the physical sequences, even when the presentation reorders them.
+STATE, HISTORY and the R1 Memory Contract stay unchanged. The invocation of the Curator
+stays under the control of the main session.
 
-## Limiti e verifiche
+## Limits and checks
 
-Un solo scan selettivo per Stop; la lettura integra è O(dimensione transcript),
-il writer esistente verifica il feed a ogni append. Nessun watcher o polling.
-Timeout e concorrenza restano quelli dell'hook: gli errori sono osservabili e
-richiedono un replay, senza promessa di recupero eventuale automatico.
-La cattura del finale nativo e Capture S1 restano indipendenti dagli errori degli
-intermedi. Una coda JSONL incompleta non produce eventi; il replay del medesimo
-Stop dopo il completamento permette di recuperarla, senza inventare testo.
+One selective scan per Stop; the full read is O(transcript size),
+the existing writer verifies the feed at every append. No watcher or polling.
+Timeout and concurrency stay those of the hook: errors are observable and
+require a replay, with no promise of automatic eventual recovery.
+Capture of the final stays independent of errors in the intermediates. An incomplete JSONL tail produces no events; replaying the same
+Stop after completion allows recovering it, without inventing text.
 
-Le fixture coprono due intermedi con testo uguale e ID distinti, testo Unicode
-esatto, provenienza a byte, esclusione dei record tecnici, replay, conflitti,
-identità mancanti, sostituzione legacy/paginated, ordine pending e checkpoint R1.
-La sola presenza nel JSONL non prova la visibilità nell'interfaccia VS Code.
+The fixtures cover two intermediates with equal text and distinct IDs, exact Unicode text,
+byte-level provenance, exclusion of technical records, replay, conflicts,
+missing identities, legacy/paginated replacement, pending order and R1 checkpoint.
+Presence in the JSONL alone does not prove visibility in the VS Code interface.
 
-## Prova reale VS Code — 3 novembre 2026
+## Observed behavior
 
-Una chat sacrificabile produce automaticamente un messaggio utente, due
-intermedi e un finale, nello stesso turno. L'utente conferma di vedere entrambi
-gli aggiornamenti R2-INTERMEDIO-1/2 e il finale. I testi acquisiti coincidono
-esattamente con i record output_text originali, inclusi i prefissi AXIOM; gli ID
-retained/payload coincidono. Gli offset e gli hash delle righe trovano riscontro
-anche nei raw del backup Capture S1. Reasoning e chiamate/risultati dei tool sono
-presenti nella sorgente di prova e assenti dagli eventi del feed.
-
-Il replay dello Stop aggiunge zero eventi e lascia il feed identico byte per
-byte. La proiezione dei quattro eventi mantiene utente, due intermedi, finale.
-Una prepare reale su memoria di prova con checkpoint iniziale 1 include i tre
-eventi dell'assistente successivi: il messaggio utente è già rappresentato nel
-seed. Le fixture verificano separatamente tutti e quattro i messaggi nella
-finestra pending, il riordino di un finale acquisito prima degli intermedi e il
-successivo avanzamento del checkpoint senza replay degli eventi confermati.
-Le evidenze storiche `r2-validation` sono archiviate fuori dal repository;
-la posizione locale e indicata in `.local/ARCHIVE.md`.
-
-Dopo Reload Window e ripresa della stessa chat, Codex sostituisce realmente il
-transcript da legacy a paginated. I due ID messaggio e i turni retained restano
-identici; cambiano offset e ordinal. Il replay sulla nuova rappresentazione
-aggiunge zero record, mantenendo i riferimenti originali nel feed. Il nuovo turno
-senza intermedi aggiunge soltanto utente e finale: sei eventi totali, sempre due
-commentary. I prefissi precedenti di feed e Capture restano identici; la catena
-Capture conserva 36 record nella prima generazione e 54 nella seconda, senza
-equiparare questi record fisici a eventi logici unici.
-
-La prepare già pendente resta congelata alle sequenze 2–4 nonostante l'arrivo di
-5–6. Una conferma noop nella sola memoria di prova avanza il checkpoint a 4 senza
-toccare STATE o HISTORY; la prepare successiva include soltanto 5–6. La memoria
-R1 originale resta invariata. La verifica completa passa con 78 test, typecheck,
-Prettier e build; dev e start funzionano. La visibilità è confermata dall'utente,
-non da una lettura automatica della UI.
-
-In questa chat di lavoro si osserva anche un UserPromptSubmit riemesso con lo
-stesso turno e contenuto differente: FEED_CONFLICT preserva il messaggio
-precedente. È il vincolo d'identità nativo S2.1, mantenuto da R2; non si promette
-la cattura di ulteriori input con la stessa identità. La conversazione prosegue.
+In real sessions the Stop replay adds no events and leaves the feed
+byte-for-byte identical; reasoning and tool calls stay out of the feed. A
+replacement of the transcript from legacy to paginated keeps message IDs and turns:
+the replay on the new representation adds no events. A UserPromptSubmit
+re-emitted with the same turn and different content produces FEED_CONFLICT and preserves
+the previous message: further inputs with the same identity are not captured.

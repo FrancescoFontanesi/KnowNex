@@ -1,105 +1,140 @@
-# Checkpoint e curatela
+# Checkpoint and curation
 
-## Comando `knownex checkpoint`
+## `knownex checkpoint` command
 
 ```powershell
 npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium
 npm exec --offline -- knownex checkpoint --claude -m claude-opus-5-5 -r high
+npm exec --offline -- knownex checkpoint --agy -m gemini-4-hydrogen-high
 ```
 
-Il comando esegue prepare, avvia una sessione non interattiva e non persistita del
-provider (`codex exec --ephemeral -s read-only` o `claude -p --no-session-persistence`)
-con `KNOWNEX_CAPTURE=0`, cosi la curatela non entra nel feed. La sessione ha un
-contesto minimo: istruzioni di sistema del provider sostituite da una riga, niente
-AGENTS.md o CLAUDE.md del progetto, skill, plugin, multi-agent e nessuno strumento,
-shell e server MCP compresi (Codex con override `-c`, e i server MCP spenti uno per
-uno dopo `codex mcp list --json`, perche i loro nomi dipendono dal config utente;
-Claude con `--safe-mode`, `--strict-mcp-config`, `--system-prompt` e `--tools ""`).
-Senza strumenti la sessione non puo diventare piu chiamate al modello. Il contesto fisso scende
-da circa 22k a 4k token con Codex e da 47k a 3k con Claude; resta solo
-l'eventuale `~/.codex/AGENTS.md` globale, che Codex carica dalla sua home. Su stdin passa
-l'intero compito in un solo messaggio: skill, WINDOW.md e STATE congelato, senza
-catalogo delle note esistenti. Le note esistenti non si riscrivono ne si leggono: per
-superarne una il modello copia il suo link dallo STATE (percorso dalla radice della
-memoria, valido sia nel nuovo STATE sia in una nota nuova). Le note nuove si chiamano
-`knowledge/<nome>.md` e il runtime le colloca in `knowledge/H000NNN/<nome>.md`, con
-l'id HISTORY del checkpoint: il nome puo ripetersi tra checkpoint. Il modello risponde con un unico
-JSON (proposta, STATE, note, rapporto) in una sola chiamata, invece di una
-chiamata per ogni passo con strumenti: ogni chiamata ripaga il contesto fisso del
-provider. Il comando scrive la bozza e la valida come `curate write`; se viene
-rifiutata ripropone l'incarico una volta con il codice d'errore. Se invece la bozza
-e valida ma il rapporto dichiara incertezze o anomalie, la seconda chiamata e mirata:
-passa solo i punti bloccanti, gli eventi del batch che citano (tutto WINDOW.md se non ne
-citano) e la risposta precedente, senza skill e STATE. Il modello risponde con
-le sole chiavi che cambiano (di solito `review`) e il comando le fonde sulla risposta
-precedente; toglie solo i punti risolti dalle fonti o gia registrati in memoria come
-problema aperto. Se la revisione non e interpretabile o viene rifiutata resta la prima
-consegna, con esito `BLOCKED`. Le chiamate restano al massimo due. Il messaggio finale e il consumo si leggono dall'output strutturato del
-provider (`codex exec --json`, `claude -p --output-format json`); la risposta grezza
-resta in `session.log` nel run. Poi esegue complete e stampa solo l'esito
-(`SUCCESS`, `BLOCKED`, `ERROR` con codice) con `tokens`: input (cache compresa),
-cached, output e reasoning di tutti i tentativi. Con `BLOCKED` l'esito riporta i
-punti che bloccano (`blocking`), il rapporto da leggere (`review`) e due comandi pronti in `next`: `curate apply
---confirm <sigillo>` per pubblicare la proposta cosi com'e, `curate abandon` per
-scartarla e riportare gli eventi nel pending. Modello e reasoning sono
-passati invariati al provider. Un secondo avvio mentre uno e in corso restituisce
-`CHECKPOINT_BUSY`; una sessione fallita senza consegna restituisce
-`CHECKPOINT_PROVIDER_FAILED` e lascia il batch ripetibile.
+`--through <n>` sets the batch cutoff instead of the last captured event. If
+a batch with a different cutoff is already prepared, the command returns
+`CURATOR_PENDING_EXISTS`. Withdraw it first with `curate abandon`.
 
-## Prepare, batch e risultato
+The command runs prepare and starts a non-interactive, non-persisted provider session
+(`codex exec --ephemeral -s read-only` or `claude -p --no-session-persistence`)
+with `KNOWNEX_CAPTURE=0`, so the curation does not enter the feed. The session has a
+minimal context. The provider's system instructions are replaced by one line. There is no
+project AGENTS.md or CLAUDE.md, no skills, plugins or multi-agent, and no tools,
+including shell and MCP servers. Codex uses `-c` overrides, and the MCP servers are switched off one by
+one after `codex mcp list --json`, because their names depend on the user's config.
+Claude uses `--safe-mode`, `--strict-mcp-config`, `--system-prompt` and `--tools ""`.
+Without tools the session cannot turn into more model calls. The fixed context drops
+from about 22k to 4k tokens with Codex and from 47k to 3k with Claude. Only
+the global `~/.codex/AGENTS.md` remains, which Codex loads from its home. Antigravity
+(`agy`) has no `--settings` flags or keys for instructions, tools and rules. The command
+writes the custom agent `knownex-curator` (`excludeDefaultComponents`, `tools: []`,
+`inheritMcp: false`) in `.knownex/internal/agy/.agents/agents/` and starts `agy
+--agent=knownex-curator` with that folder as the current directory. The fixed context
+drops from about 16k to 0.4k tokens, with no AGENTS.md, skills, plugins or MCP servers. The task
+goes as a single `--input-format=stream-json` turn on stdin. `-m` becomes `--model=`
+and `-r` becomes `--effort=` (agy rejects an effort that conflicts with an id that already includes it, for
+example `gemini-4-hydrogen-high`). Agy has no way to avoid persisting the session. It stays
+in its local conversations (`~/.gemini/antigravity-cli/conversations`). On stdin the command passes
+the whole task in a single message: skill, WINDOW.md and the frozen STATE, with no
+catalog of existing notes. From the skill it removes sections 1 (reading the batch)
+and 6 (delivery with tools), which apply only to the manual path with tools. Existing notes are neither rewritten nor read. To
+supersede one, the model copies its link from STATE (path from the root of the
+memory, valid both in the new STATE and in a new note). New notes are named
+`knowledge/<name>.md` and the runtime places them in `knowledge/H000NNN/<name>.md`, with
+the checkpoint's HISTORY id. The name can repeat across checkpoints. The model answers with a single
+JSON (proposal, STATE, notes, report) in one call, instead of one
+call per step with tools. Each call pays for the provider's fixed context again. The command writes the draft and validates it like `curate write`. If it is
+rejected, the command re-submits the task once with the error code. The re-submission applies
+only to errors in the model's answer. A busy lock (`DESTINATION_BUSY`) or
+an I/O error during delivery stops the command without consuming it and leaves the
+batch `prepared`, to be relaunched with the same command. If instead the draft
+is valid but the report declares uncertainties or anomalies, the second call is targeted.
+It passes only the blocking points, the batch events they cite (all of WINDOW.md if none
+are cited) and the previous answer, without skill and STATE. The model answers with
+only the keys that change (usually `review`) and the command merges them onto the previous
+answer. It removes only points resolved by the sources or already recorded in memory as an open
+problem. If the revision cannot be interpreted or is rejected, the first
+delivery stays, with outcome `BLOCKED`. Calls stay at two at most. The final message and the usage are read from the structured output of the
+provider (`codex exec --json`, `claude -p --output-format json`, the last `result` event
+of agy, which counts as failed if it does not arrive or is not `SUCCESS`). A missing final
+message (`CODEX_MESSAGE_MISSING`, `CLAUDE_RESULT_MISSING`) or a Claude result with
+`is_error` counts as a failed session. The raw answer
+stays in `session.log` in the run. Then it runs complete and prints only the outcome
+(`SUCCESS`, `BLOCKED`, `ERROR` with code) with `tokens`: input (cache included),
+cached, output and reasoning of all attempts. With `BLOCKED` the outcome reports the
+blocking points (`blocking`), the report to read (`review`) and two ready commands in `next`: `curate apply
+--confirm <seal>` to publish the proposal as is, `curate abandon` to
+discard it and return the events to pending. Model and reasoning are
+passed unchanged to the provider. A second start while one is running returns
+`CHECKPOINT_BUSY`. A failed session without delivery returns
+`CHECKPOINT_PROVIDER_FAILED` and leaves the batch repeatable.
 
-Il comando prepare e il trigger operativo, indipendentemente dal feed. Il runtime
-congela gli eventi gia acquisiti e gli snapshot prima della curatela. I messaggi
-amministrativi identificabili sono esclusi; non serve un finale assistant o un
-formato Codex per preparare il batch. Complete verifica il run, le ricevute e il
-prefisso al cutoff: gli append successivi sono per il prossimo batch.
+## Prepare, batch and result
 
-Prepare e complete verificano il feed acquisito e il binding del batch, senza
-App Server, history Codex, bridge o ampliamento dei permessi. I turni originali
-modificati retroattivamente fuori dal feed non sono una fonte di invalidazione:
-vale il compromesso esplicito del MEMORY-CONTRACT.
+The prepare command is the operational trigger, independent of the feed. The runtime
+freezes the events already captured and the snapshots before curation. Identifiable
+administrative messages are excluded. A final assistant message or a
+Codex format is not needed to prepare the batch. Complete verifies the run, the receipts and the
+prefix at the cutoff. Later appends are for the next batch.
 
-Il runtime si invoca con `npm exec --offline -- knownex ...`. Un runtime assente
-e un errore bloccante, non una richiesta di ricerca npm/npx.
+Only the user (or the main session on explicit request) starts the checkpoint.
+There is no consent token in the feed. Prepare reads the registry under the Curator
+lock and fixes the cutoff. By default this is the last captured non-administrative
+event. Otherwise it is an explicit cutoff within the captured prefix and not
+earlier than the confirmed checkpoint. The run contains `packet.json`, `WINDOW.md`,
+`inputs.json`, the `base/` snapshot of the memory and the frozen skill. The manifest
+records bytes and SHA-256 of the inputs. A repeated prepare returns the same active
+batch. An empty batch needs no curation. A failed preparation does not
+consume events. Events captured during curation do not enter the packet:
+the feed path stays a provenance reference, not a live document.
+The feed binding prevents a second Curator workspace from using it.
 
-Il risultato conclusivo di complete e un oggetto `SUCCESS`, `BLOCKED` o `ERROR`,
-con cutoff, conteggi disponibili, codice/fase, diagnostica essenziale e
-riferimenti agli artefatti interni. Non contiene documenti. Qualsiasi
-incertezza/anomalia dichiarata blocca l'applicazione automatica. Comando e percorso
-manuale (`curate prepare/validate/apply/write/complete --run`) condividono la
-stessa funzione di pubblicazione e le garanzie transazionali; la review e v4,
-con ogni evento del batch in `sources` o in `ignored` (v1-v3 solo per run gia scritti).
-`curate write` accetta solo note nuove: le Knowledge sono un diario di bordo, la
-verità attuale è nelle note linkate da STATE e le precedenti mostrano l'evoluzione.
+Prepare and complete verify the captured feed and the batch binding, without
+provider history, bridge or widening of permissions. Original turns
+modified retroactively outside the feed are not a source of invalidation.
+The explicit trade-off of the MEMORY-CONTRACT applies.
 
-## I/O del Curator
+The runtime is invoked with `npm exec --offline -- knownex ...`. A missing runtime
+is a blocking error, not a request to search npm/npx.
 
-Il Curator usa la CLI indicata in io.cli per leggere gli input congelati e consegnare
-proposta e review; restituisce soltanto le ricevute. La CLI riusa le primitive
-canoniche, senza writer alternativo o trascrizione del chiamante. Da checkout
-eseguire prima la build; skill congelata e runtime provengono dalla stessa
-distribuzione. Non mescolare pacchetto installato e working tree.
+The conclusive result of complete is a `SUCCESS`, `BLOCKED` or `ERROR` object,
+with cutoff, available counts, code/phase, essential diagnostics and
+references to internal artifacts. It contains no documents. Any declared
+uncertainty/anomaly blocks automatic application. The command and the manual path
+(`curate prepare/validate/apply/write/complete --run`) share the
+same publication function and transactional guarantees. The review is v4,
+with every batch event in `sources` or in `ignored` (v1-v3 only for runs already written).
+`curate write` accepts only new notes: Knowledge is a logbook, the current
+truth is in the notes linked from STATE and the earlier ones show the evolution.
 
-## Policy di pubblicazione e limiti semantici
+## Curator I/O
 
-Il comando prepare esplicito crea un batch congelato; apply richiede il suo sigillo.
-Con validazione positiva e array `uncertainties` e `anomalies` entrambi vuoti,
-il controller applica automaticamente sotto quell'autorizzazione. Qualsiasi voce
-blocca la pubblicazione: non esiste classificazione permissiva per gravità o parole
-chiave. Il blocco conserva gli artefatti per esame esplicito.
+In the manual path the Curator uses `curate read` and `curate write` of the
+installed CLI (`npm exec --offline -- knownex curate ...`) to read the frozen
+inputs and to deliver proposal and review. It returns only the receipts. The
+`knownex checkpoint` command uses no tools. It passes the task in one message and
+delivers the draft itself with the same validation. The CLI reuses the canonical
+primitives, with no alternative writer or transcription by the caller. From a checkout,
+run the build first. The frozen skill and the runtime come from the same
+distribution. Do not mix an installed package and a working tree.
 
-**Non esiste una review semantica indipendente nel percorso ordinario.**
-Il Curator conserva autoverifica di copertura, confronto storico e continuità critica.
-Hash, fonti, intervalli v2, link e validazione strutturale restano obbligatori,
-ma non dimostrano pertinenza semantica o assenza di omissioni non dichiarate.
-Un rapporto formalmente valido può essere incompleto: il risultato non lo segnala
-con alcun avviso, perché un avviso sempre presente non informa.
+## Publication policy and semantic limits
 
-Un batch già reclamato non rilancia la sessione. Gli errori restituiscono codice,
-fase, cutoff confermato o null se non verificabile, azione e percorso diagnostico;
-nessun dump documentale. Recovery di apply già autorizzato e replay sono idempotenti
-e non richiedono nuove sessioni. Un batch BLOCKED si esamina con `curate validate`
-e, solo dopo revisione esplicita, `curate apply --confirm`; un nuovo tentativo
-richiede il ritiro esplicito del vecchio batch (`curate abandon`) dopo la fine della
-sessione. I comandi manuali restano per eccezioni e legacy, senza conversione dei pending.
-Revisioni immutabili, layout, cutoff e journal non cambiano.
+The explicit prepare command creates a frozen batch. apply requires its seal.
+With a positive validation and the `uncertainties` and `anomalies` arrays both empty,
+the controller applies automatically under that authorization. Any entry
+blocks publication. There is no permissive classification by severity or keyword.
+The block keeps the artifacts for explicit examination.
+
+**There is no independent semantic review in the ordinary path.**
+The Curator keeps self-verification of coverage, historical comparison and critical continuity.
+Hashes, sources, v2 ranges, links and structural validation remain mandatory,
+but they do not prove semantic relevance or the absence of undeclared omissions.
+A formally valid report can be incomplete. The result does not flag it
+with any warning, because a warning that is always present does not inform.
+
+A batch already claimed does not relaunch the session. Errors return code,
+phase, confirmed cutoff or null if not verifiable, action and diagnostic path.
+There is no document dump. Recovery of an already authorized apply and replay are idempotent
+and need no new sessions. A BLOCKED batch is examined with `curate validate`
+and, only after explicit review, `curate apply --confirm`. A new attempt
+requires explicit withdrawal of the old batch (`curate abandon`) after the end of the
+session. Manual commands remain for exceptions and legacy, with no conversion of pending.
+Immutable revisions, layout, cutoff and journal do not change.

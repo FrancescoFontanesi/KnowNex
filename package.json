@@ -27,8 +27,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"tests/*.test.ts\"",
-    "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
-    "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
+    "format": "prettier --write . --ignore-path .gitignore",
+    "format:check": "prettier --check . --ignore-path .gitignore",
     "check": "npm run typecheck && npm test && npm run format:check && npm run build",
     "curate": "node src/cli/curator-cli.ts"
   },
@@ -36,5 +36,8 @@
     "@types/node": "24.13.5",
     "prettier": "3.9.10",
     "typescript": "7.0.2"
+  },
+  "prettier": {
+    "singleQuote": true
   }
 }

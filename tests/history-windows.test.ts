@@ -4,11 +4,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { historySegments, historyWindow } from '../src/history.ts';
-import { historyAppendix } from './legacy-history.ts';
-import { memoryFind, memoryHistory, memoryRead } from '../src/navigator.ts';
-import { initCurator } from '../src/curator.ts';
-import { appendFeedEvent } from '../src/feed.ts';
+import { historySegments, historyWindow } from '../src/curation/history.ts';
+import {
+  memoryFind,
+  memoryHistory,
+  memoryRead,
+} from '../src/memory/navigator.ts';
+import { initCurator } from '../src/curation/curator.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 
 const date = '2026-11-03T12:00:00.000Z';
 const details = (topic: string) => ({
@@ -17,7 +20,7 @@ const details = (topic: string) => ({
   transition: 'Confirmed ' + topic,
 });
 
-/** Standalone memory whose HISTORY mixes two inline segments and two later windows. */
+/** Standalone memory with four checkpoints, each an index line and a window. */
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'knownex-history-windows-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -26,16 +29,14 @@ async function fixture(t: TestContext) {
   await mkdir(join(memory, 'knowledge'), { recursive: true });
   await writeFile(join(memory, 'STATE.md'), '# State\n\nNow. [E004]\n');
   let history = '# History\n';
-  history += historyAppendix(history, '# Old\n', 1, 1, date, details('inline'));
-  history += historyAppendix(history, '# Old\n', 2, 2, date, details('inline'));
   const windows: Record<string, string> = {};
-  for (const n of [3, 4]) {
+  for (const n of [1, 2, 3, 4]) {
     const entry = historyWindow(
       history,
       n,
       n,
       date,
-      details(n === 3 ? 'windowtopic' : 'latest'),
+      details(n === 3 ? 'windowtopic' : n === 4 ? 'latest' : 'earlier'),
       [],
       `# State ${n}\n\nThen. [E00${n}]\n`,
     );
@@ -47,26 +48,23 @@ async function fixture(t: TestContext) {
   return { memory, history, windows };
 }
 
-test('inline segments and windows share one numbering and are read through the same references', async (t) => {
+test('windows are numbered in order and read by id or by path', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(
     historySegments(f.history, 4).map((s) => [s.id, s.window]),
     [
-      ['H000001', undefined],
-      ['H000002', undefined],
+      ['H000001', 'history/H000001.md'],
+      ['H000002', 'history/H000002.md'],
       ['H000003', 'history/H000003.md'],
       ['H000004', 'history/H000004.md'],
     ],
   );
   const window = f.windows['history/H000003.md']!;
-  for (const id of ['H000003', 'history/H000003.md', 'HISTORY.md#h000003']) {
+  for (const id of ['H000003', 'history/H000003.md']) {
     const read = await memoryRead(f.memory, id);
     assert.equal(read.content, window, id);
     assert.equal(read.path, 'history/H000003.md', id);
   }
-  const inline = await memoryRead(f.memory, 'H000002');
-  assert.equal(inline.path, 'HISTORY.md');
-  assert.match(inline.content, /### STATE precedente/);
   const [found] = await memoryFind(f.memory, 'windowtopic', 'history');
   assert.equal(found!.id, 'H000003');
   assert.equal(found!.reference, 'history/H000003.md');
@@ -80,7 +78,7 @@ test('memory history lists newest first, pages with --before and returns no bodi
     [
       ['H000004', 'history/H000004.md'],
       ['H000003', 'history/H000003.md'],
-      ['H000002', 'HISTORY.md'],
+      ['H000002', 'history/H000002.md'],
     ],
   );
   assert.equal(latest[0]!.description, 'latest outcome');

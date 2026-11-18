@@ -13,14 +13,14 @@
 - [VISION](VISION.md): principles and goal of the project.
 - [MEMORY-CONTRACT](MEMORY-CONTRACT.md): STATE, HISTORY, Knowledge and provenance.
 - [KNOWLEDGE-REVISIONS](KNOWLEDGE-REVISIONS.md): immutable revisions and per-checkpoint folders.
-- [MEMORY-LAYOUT](MEMORY-LAYOUT.md): memory layout and legacy compatibility.
+- [MEMORY-LAYOUT](MEMORY-LAYOUT.md): memory layout.
 - [CURATOR](CURATOR.md): manual cycle and critical continuity.
 - [STORAGE-DURABILITY](STORAGE-DURABILITY.md): recovery and persistence limits.
 - [ARCHITECTURE-RECAP](ARCHITECTURE-RECAP.md): actual components and limits of the guarantees.
 
 ## Capture
 
-- [AUTOMATIC-CAPTURE](AUTOMATIC-CAPTURE.md): installed hooks, errors and previous installations.
+- [AUTOMATIC-CAPTURE](AUTOMATIC-CAPTURE.md): installed hooks and errors.
 - [NATIVE-FEED](NATIVE-FEED.md): format, identity, recovery and lock of the project feed.
 - [INTERMEDIATE-MESSAGES](INTERMEDIATE-MESSAGES.md): commentary, identity and ordering.
 

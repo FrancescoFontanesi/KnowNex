@@ -55,14 +55,9 @@ There is no need to configure AGENTS.md, skills, memory or checkpoints.
 The initial STATE and the confirmed one have the same path .knownex/memory/STATE.md.
 HISTORY and the per-checkpoint Knowledge are in the same memory; the feed and the
 Curator live in .knownex/internal/. No seed/ or memory/ in the root.
-rc.11 ships this layout in new installations. [Canonical layout and legacy compatibility](MEMORY-LAYOUT.md).
+Only this layout is supported: [memory layout](MEMORY-LAYOUT.md).
 
-Init removes from previous installations, if unmodified, the skill
-`knownex-checkpoint`, the custom agents `knownex_curator`/`knownex_recaller`,
-`.codex/config.toml`, the `knownex-stop.cjs` wrapper with its `Stop` and
-`SessionEnd` entries (the transcript copy no longer exists,
-[details](AUTOMATIC-CAPTURE.md#previous-installations)) and the documents in
-`.knownex/internal/docs/` that are no longer shipped. No global configuration is modified. KnowNex does not
+No global configuration is modified. KnowNex does not
 install, initialize or run Graft.
 
 KnowNex captures the events, provides STATE and reports the pending between sessions.
@@ -89,12 +84,10 @@ idempotent. Init updates unmodified generated files, preserves personal text
 outside the KnowNex block in AGENTS.md and adds the necessary ignores
 without deleting existing rules.
 
-Feed, memory, checkpoints, consents, journal and staging stay intact, as do the
-old transcript copies in `captures/`, which no command reads any more.
-`.knownex/internal/install.json` (legacy: `.knownex/install.json`) contains only the version and hashes of the managed resources;
+Feed, memory, checkpoints, journal and staging stay intact.
+`.knownex/internal/install.json` contains only the version and hashes of the managed resources;
 it is not a memory registry. A difference in managed files is updated
-only if it matches the installed hash. For S3, which has no manifest, only the exact
-hashes of the resources shipped in the original archive are recognized.
+only if it matches the installed hash.
 
 Personal changes to hooks, skills or managed documents produce
 `BOOTSTRAP_CONFLICT` with the file involved, before updating the project files.
@@ -102,21 +95,16 @@ Do not delete memory or configuration to work around it: keep the changes and
 compare them explicitly with the new version. Ambiguous AGENTS markers, symlinks
 in managed paths or corrupt manifests are rejected.
 
-Legacy per-session feeds are kept and reported as
-`LEGACY_SESSION_FEEDS`: updating the package is not a migration of their
-content into the project feed. Moving a curated workspace also requires
+Moving a curated workspace requires
 review: checkpoints keep the paths of the original workspace.
 
-The question/answer policy has been removed since rc.4. Old consent.json files are
-preserved but not read. An unconfirmed batch of the old protocol can be
-withdrawn, not applied; already authorized applies recover through the journal.
+Already authorized applies recover through the journal.
 Starting a new batch requires a new start of `knownex checkpoint`.
 The update does not start checkpoints. Open a new chat to load the updated skills
 and avoid instructions of the previous workflow left in the context.
 
-Pre-existing `memory/` folders are not deleted or modified: they may
-contain personal notes or data from earlier versions. The new workflow does not
-use them implicitly; they remain readable with `--memory memory` if needed.
+Pre-existing `memory/` folders in the project root are not deleted or modified;
+the workflow does not use them implicitly.
 
 ## Uninstallation
 
@@ -144,9 +132,6 @@ npm pack --pack-destination "C:\pacchetti"
 $env:KNOWNEX_INSTALL_ARCHIVE = "C:\pacchetti\knownex-0.1.0-rc.11.tgz"
 node --test tests/bootstrap.test.ts
 ```
-
-The test on the original S3 fixture (`KNOWNEX_PREVIOUS_WORKSPACE`) is optional: a
-skipped case does not prove compatibility with that historical installation.
 
 These checks do not prove spontaneous skill selection, milestone recognition,
 real skill invocation, hook execution by the provider or delivery of STATE to

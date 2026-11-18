@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   emptyMemory,
   initCurator,
@@ -21,7 +21,7 @@ import {
   applyCurator,
   curatorStatus,
   readPendingEvents,
-} from '../src/curator.ts';
+} from '../src/curation/curator.ts';
 async function fixture(t: TestContext) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'knownex-feed-authority-')),
@@ -37,27 +37,21 @@ async function fixture(t: TestContext) {
     await writeFile(join(seed, n), text);
   await writeFile(feed, '');
   await initCurator(work, seed, feed, 0);
-  const checkpoint = join(work, 'checkpoint.json');
-  const cp = JSON.parse(await readFile(checkpoint, 'utf8'));
-  cp.nativeHistory = true;
-  await writeFile(checkpoint, JSON.stringify(cp));
   const event = async (
     turnId: string,
     text: string,
     type: 'user_message' | 'assistant_final' = 'user_message',
-    nativeThreadId: string | null = 'original-thread',
   ) =>
     appendFeedEvent(directory, {
       type,
       sessionId: 'original-session',
-      nativeThreadId,
       turnId,
       text,
       hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
     });
   const pair = async (turn: string) => {
     await event(turn, 'Persist ' + turn);
-    await event(turn, 'Confirmed ' + turn, 'assistant_final', null);
+    await event(turn, 'Confirmed ' + turn, 'assistant_final');
   };
   const prepare = () => prepareCurator(work);
   const proposal = async (p: Awaited<ReturnType<typeof prepare>>) => {
@@ -71,9 +65,7 @@ async function fixture(t: TestContext) {
         state:
           '# Project\n\nProgress [E' +
           String(packet.through).padStart(3, '0') +
-          '](' +
-          packet.feed +
-          ')\n',
+          ']\n',
         history: {
           summary: 'Progress',
           topics: ['Project'],
@@ -89,18 +81,17 @@ async function fixture(t: TestContext) {
     directory,
     feed,
     work,
-    checkpoint,
+    checkpoint: join(work, 'checkpoint.json'),
     event,
     pair,
     prepare,
     proposal,
   };
 }
-test('recorded feed is authoritative with legacy nativeHistory metadata', async (t) => {
+test('the recorded feed is authoritative across consecutive checkpoints', async (t) => {
   const f = await fixture(t);
   await f.pair('first');
   await f.pair('second');
-  await f.event('authorize', '$knownex-checkpoint');
   const raw = await readFile(f.feed),
     p = await f.prepare(),
     packet = JSON.parse(await readFile(join(p.run!, 'packet.json'), 'utf8'));
@@ -108,18 +99,12 @@ test('recorded feed is authoritative with legacy nativeHistory metadata', async 
     packet.events.map((e: { sequence: number }) => e.sequence),
     [1, 2, 3, 4],
   );
-  assert.equal(packet.discardedExcluded, 0);
   const approved = await f.proposal(p);
   await applyCurator(f.work, approved.seal);
   assert.equal((await curatorStatus(f.work, f.feed)).through, 4);
-  assert.equal(
-    JSON.parse(await readFile(f.checkpoint, 'utf8')).nativeHistory,
-    true,
-  );
   assert.deepEqual(await readFile(f.feed), raw);
   await applyCurator(f.work, approved.seal);
   await f.pair('third');
-  await f.event('authorize-next', '$knownex-checkpoint');
   const next = await f.prepare(),
     approval = await f.proposal(next);
   await applyCurator(f.work, approval.seal);
@@ -130,46 +115,6 @@ test('recorded feed is authoritative with legacy nativeHistory metadata', async 
     2,
   );
 });
-test('confirmed exclusions stay fixed and newly acquired administration is excluded', async (t) => {
-  const f = await fixture(t);
-  await f.pair('first');
-  await f.event('authorize', '$knownex-checkpoint');
-  const p = await f.prepare(),
-    file = join(p.run!, 'run.json');
-  const run = JSON.parse(await readFile(file, 'utf8'));
-  run.excluded = [1];
-  await writeFile(file, JSON.stringify(run));
-  const approved = await f.proposal(p);
-  await applyCurator(f.work, approved.seal);
-  await f.pair('next');
-  await f.event('authorize-next', '$knownex-checkpoint');
-  const raw = await readFile(f.feed),
-    next = await f.prepare(),
-    approval = await f.proposal(next);
-  await applyCurator(f.work, approval.seal);
-  assert.deepEqual(
-    JSON.parse(await readFile(f.checkpoint, 'utf8')).excluded,
-    [1, 3],
-  );
-  assert.deepEqual(await readFile(f.feed), raw);
-});
-test('legacy frozen run exclusions can complete without native history', async (t) => {
-  const f = await fixture(t);
-  await f.pair('first');
-  await f.event('authorize', '$knownex-checkpoint');
-  const p = await f.prepare(),
-    file = join(p.run!, 'run.json');
-  const run = JSON.parse(await readFile(file, 'utf8'));
-  run.excluded = [1];
-  run.nativeHistory = true;
-  await writeFile(file, JSON.stringify(run));
-  const approval = await f.proposal(p);
-  await applyCurator(f.work, approval.seal);
-  assert.deepEqual(
-    JSON.parse(await readFile(f.checkpoint, 'utf8')).excluded,
-    [1],
-  );
-});
 for (const kind of ['corrupt', 'truncate'] as const)
   test(
     'feed ' +
@@ -178,7 +123,6 @@ for (const kind of ['corrupt', 'truncate'] as const)
     async (t) => {
       const f = await fixture(t);
       await f.pair('first');
-      await f.event('authorize', '$knownex-checkpoint');
       const p = await f.prepare(),
         approval = await f.proposal(p);
       const cp = await readFile(f.checkpoint),
@@ -205,22 +149,18 @@ test('pending selection depends on recorded feed, not external native edits', as
     cursor: first.nextCursor!,
   });
   assert.ok(next.events.length);
-  assert.equal(
-    (await readPendingEvents(f.work, f.feed, { includeAdministrative: true }))
-      .discardedExcluded,
-    0,
-  );
 });
 
 test('feed is rechecked at the final apply boundary after staging sync', async (t) => {
   const f = await fixture(t);
   await f.pair('first');
-  await f.event('authorize', '$knownex-checkpoint');
   const p = await f.prepare(),
     approval = await f.proposal(p);
   const cp = await readFile(f.checkpoint),
     state = await readFile(join(f.work, 'memory/STATE.md'));
-  const module = pathToFileURL(join(process.cwd(), 'src/curator.ts')).href;
+  const module = pathToFileURL(
+    join(process.cwd(), 'src/curation/curator.ts'),
+  ).href;
   const code = `const fs=await import('node:fs/promises'),open=fs.default.open;
 fs.default.open=async(...args)=>{const h=await open(...args);
 if(String(args[0]).replaceAll('\\\\','/').endsWith('/runs/'+${JSON.stringify(p.run!.split(/[\\/]/).at(-1))}+'/run.json')){

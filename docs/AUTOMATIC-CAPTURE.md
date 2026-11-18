@@ -1,7 +1,7 @@
 # Capture hooks
 
 KnowNex captures the conversation only in the [project feed](NATIVE-FEED.md).
-There is no longer a copy of the provider transcripts: the hooks neither read nor
+There is no copy of the provider transcripts: the hooks neither read nor
 save the session JSONL, except for the intermediate messages of the turn that
 just ended ([criteria](INTERMEDIATE-MESSAGES.md)).
 
@@ -20,7 +20,7 @@ The wrapper sets `KNOWNEX_WORKSPACE` and `KNOWNEX_PROVIDER` (`codex` or `claude`
 With Claude Code the turn is the `prompt_id`, the commentary comes from the
 `assistant` records of the Claude transcript that do not close the turn, and
 subagent turns (`agent_id`, `isSidechain`) are ignored. Every event carries
-`provider`; events captured before providers existed do not have it.
+`provider`.
 
 With `KNOWNEX_CAPTURE=0` in the environment, set for the ephemeral sessions of the
 Curator, every hook exits with code 0 without writing feed or log and without emitting STATE.
@@ -39,19 +39,3 @@ rebuilt.
 timestamp, counts, sequence, hash and text length, or the error code,
 never the content. Hooks, workspace trust and approval must be authorized
 personally in the provider; init does not modify global configuration.
-
-## Previous installations
-
-Earlier versions also registered a `stop.cjs` hook on `Stop` and
-`SessionEnd`, which copied the transcript to `.knownex/captures/` or
-`.knownex/internal/captures/`. That copy was never a source for the
-checkpoint and has been removed:
-
-- the package keeps `stop.cjs` for one release as an inert stub, so a
-  `knownex-stop.cjs` wrapper that is still installed answers `{}` without errors;
-- `knownex init` removes the wrapper and the `Stop`/`SessionEnd` entries that
-  call it, if unmodified (otherwise `BOOTSTRAP_CONFLICT`); the user's other
-  entries stay;
-- files already present in `captures/` and `.codex/hooks/events.jsonl` are not
-  read or deleted: they contain original conversations and can be removed by
-  hand.

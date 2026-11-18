@@ -12,19 +12,22 @@ import {
 } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   applyCurator,
   emptyMemory,
   initCurator,
   prepareCurator,
   validateCurator,
-} from '../src/curator.ts';
-import { readCurationInput, writeCurationDraft } from '../src/curation-io.ts';
-import { transportJson } from '../src/artifact-io.ts';
+} from '../src/curation/curator.ts';
+import {
+  readCurationInput,
+  writeCurationDraft,
+} from '../src/checkpoint/curation-io.ts';
+import { transportJson } from '../src/shared/artifact-io.ts';
 const sample = "Caffè, già; l'ASCII e l’apostrofo, ≥ ≤, 漢字 😀, e\u0301";
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
@@ -50,7 +53,6 @@ async function fixture(t: test.TestContext, sourceText = sample) {
     appendFeedEvent(feed, {
       type,
       sessionId: 'io-session',
-      nativeThreadId: 'io-session',
       turnId,
       text,
       hook: type === 'user_message' ? 'UserPromptSubmit' : 'Stop',
@@ -60,7 +62,6 @@ async function fixture(t: test.TestContext, sourceText = sample) {
     const turn = n === 1 ? 'one' : 'two';
     const source = await append(turn, sourceText);
     await append(turn, 'Result: ' + sourceText, 'assistant_final');
-    await append('consent-' + turn, '$knownex-checkpoint');
     const p = await prepareCurator(work, undefined, {
       autonomous,
     });
@@ -144,7 +145,6 @@ for (const size of ['small', 'large'] as const)
           assert.equal(packet.events[1].text, 'Result: ' + source);
           assert.equal(packet.events[0].sequence, p.sequence);
           assert.equal(packet.events[0].sessionId, 'io-session');
-          assert.equal(packet.events[0].nativeThreadId, 'io-session');
           assert.equal(packet.events[0].hook, 'UserPromptSubmit');
         }
         if (name === 'WINDOW.md') {
@@ -234,9 +234,7 @@ test('production writer creates v4 artifacts on consecutive checkpoints, binds a
       sample +
       '\r\n\n[E' +
       String(p.sequence).padStart(3, '0') +
-      '](' +
-      packet.feed +
-      ')\n';
+      ']\n';
     const { proposal, review } = artifacts(
       packet,
       p.sequence,
@@ -257,7 +255,7 @@ test('production writer creates v4 artifacts on consecutive checkpoints, binds a
     assert.equal(v.review!.sha256, r.review!.sha256);
     await applyCurator(f.work, v.seal);
     // curate write reduces the link to the feed to its bare label.
-    const published = state.replace('](' + packet.feed + ')', ']');
+    const published = state.replace(']', ']');
     assert.equal(await readFile(join(f.memory, 'STATE.md'), 'utf8'), published);
     await assert.rejects(
       deliver(p.run, proposal, review),
@@ -280,7 +278,7 @@ test('I/O failures do not publish partial pairs, consume another authorization o
   const { proposal, review } = artifacts(
     packet,
     p.sequence,
-    '# Project\n\n' + sample + '\n\n[E001](' + packet.feed + ')\n',
+    '# Project\n\n' + sample + '\n\n[E001]\n',
     1,
   );
   const authority = join(f.feed, 'project.jsonl.curator.json'),
@@ -341,12 +339,14 @@ test('a writer killed after publishing review leaves an unvalidatable pair and t
   const { proposal, review } = artifacts(
     packet,
     p.sequence,
-    '# Project\n\n' + sample + '\n\n[E001](' + packet.feed + ')\n',
+    '# Project\n\n' + sample + '\n\n[E001]\n',
     1,
   );
   const authority = await readFile(join(f.feed, 'project.jsonl.curator.json'));
   await draft(p.run, proposal, review);
-  const module = pathToFileURL(join(process.cwd(), 'src/curation-io.ts')).href;
+  const module = pathToFileURL(
+    join(process.cwd(), 'src/checkpoint/curation-io.ts'),
+  ).href;
   const code = `const fs=await import('node:fs/promises');const h=await fs.open(${JSON.stringify(join(f.root, 'probe'))},'w');const p=Object.getPrototypeOf(h),sync=p.sync;await h.close();let n=0;p.sync=async function(){if(++n===3)process.exit(72);return sync.call(this)};const io=await import(${JSON.stringify(module)});await io.writeCurationDraft(${JSON.stringify(p.run)});`;
   const child = spawnSync(
     process.execPath,

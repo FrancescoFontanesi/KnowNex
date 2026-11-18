@@ -5,14 +5,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   applyCurator,
   emptyMemory,
   initCurator,
   prepareCurator,
   validateCurator,
-} from '../src/curator.ts';
+} from '../src/curation/curator.ts';
 
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
@@ -38,11 +38,8 @@ async function fixture(t: test.TestContext) {
     autonomous: true,
   });
   const dir = prepared.run!;
-  const packet = JSON.parse(await readFile(join(dir, 'packet.json'), 'utf8'));
   const state =
-    '# Project\n\nDOCUMENT_BODY_NOT_FOR_ORDINARY_PARENT\n\n[E001](' +
-    packet.feed +
-    ')\n';
+    '# Project\n\nDOCUMENT_BODY_NOT_FOR_ORDINARY_PARENT\n\n[E001]\n';
   const proposal = {
     action: 'update',
     state,
@@ -83,10 +80,7 @@ test('ordinary compact validation exposes decisions, checks and receipts without
   const f = await fixture(t);
   const raw = await readFile(join(f.dir, 'review.json'));
   const runSkill = await readFile(join(f.dir, 'SKILL.md'), 'utf8');
-  const sourceSkill = await readFile(
-    '.agents/skills/knownex-curator/SKILL.md',
-    'utf8',
-  );
+  const sourceSkill = await readFile('skills/knownex-curator/SKILL.md', 'utf8');
   assert.equal(runSkill, sourceSkill);
   // The skill is self-contained: the human contract is no longer frozen into runs.
   await assert.rejects(readFile(join(f.dir, 'MEMORY-CONTRACT.md')), {

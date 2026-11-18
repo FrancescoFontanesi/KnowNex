@@ -69,15 +69,13 @@ passed unchanged to the provider. A second start while one is running returns
 ## Prepare, batch and result
 
 The prepare command is the operational trigger, independent of the feed. The runtime
-freezes the events already captured and the snapshots before curation. Identifiable
-administrative messages are excluded. A final assistant message or a
+freezes the events already captured and the snapshots before curation. A final assistant message or a
 Codex format is not needed to prepare the batch. Complete verifies the run, the receipts and the
 prefix at the cutoff. Later appends are for the next batch.
 
 Only the user (or the main session on explicit request) starts the checkpoint.
 There is no consent token in the feed. Prepare reads the registry under the Curator
-lock and fixes the cutoff. By default this is the last captured non-administrative
-event. Otherwise it is an explicit cutoff within the captured prefix and not
+lock and fixes the cutoff. By default this is the last captured event. Otherwise it is an explicit cutoff within the captured prefix and not
 earlier than the confirmed checkpoint. The run contains `packet.json`, `WINDOW.md`,
 `inputs.json`, the `base/` snapshot of the memory and the frozen skill. The manifest
 records bytes and SHA-256 of the inputs. A repeated prepare returns the same active
@@ -100,7 +98,7 @@ references to internal artifacts. It contains no documents. Any declared
 uncertainty/anomaly blocks automatic application. The command and the manual path
 (`curate prepare/validate/apply/write/complete --run`) share the
 same publication function and transactional guarantees. The review is v4,
-with every batch event in `sources` or in `ignored` (v1-v3 only for runs already written).
+with every batch event in `sources` or in `ignored`; no other review version is accepted.
 `curate write` accepts only new notes: Knowledge is a logbook, the current
 truth is in the notes linked from STATE and the earlier ones show the evolution.
 
@@ -125,7 +123,7 @@ The block keeps the artifacts for explicit examination.
 
 **There is no independent semantic review in the ordinary path.**
 The Curator keeps self-verification of coverage, historical comparison and critical continuity.
-Hashes, sources, v2 ranges, links and structural validation remain mandatory,
+Hashes, sources, ranges, links and structural validation remain mandatory,
 but they do not prove semantic relevance or the absence of undeclared omissions.
 A formally valid report can be incomplete. The result does not flag it
 with any warning, because a warning that is always present does not inform.
@@ -136,5 +134,5 @@ There is no document dump. Recovery of an already authorized apply and replay ar
 and need no new sessions. A BLOCKED batch is examined with `curate validate`
 and, only after explicit review, `curate apply --confirm`. A new attempt
 requires explicit withdrawal of the old batch (`curate abandon`) after the end of the
-session. Manual commands remain for exceptions and legacy, with no conversion of pending.
+session. Manual commands remain for exceptions.
 Immutable revisions, layout, cutoff and journal do not change.

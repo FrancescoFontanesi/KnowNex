@@ -5,7 +5,7 @@ node_modules/
 dist/
 graft/
 
-# Cache e file temporanei.
+# Caches and temporary files.
 .cache/
 coverage/
 *.tsbuildinfo
@@ -15,7 +15,7 @@ coverage/
 *.swp
 *~
 
-# Credenziali e configurazione personale.
+# Credentials and personal configuration.
 .env
 .env.*
 !.env.example

@@ -9,22 +9,22 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import {
   readCommentary,
   captureCommentary,
   projectFeedEvents,
-} from '../src/commentary.ts';
-import { appendFeedEvent } from '../src/feed.ts';
-import type { FeedEvent } from '../src/feed.ts';
+} from '../src/feed/commentary.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
+import type { FeedEvent } from '../src/feed/feed.ts';
 import {
   initCurator,
   prepareCurator,
   validateCurator,
   applyCurator,
-} from '../src/curator.ts';
+} from '../src/curation/curator.ts';
 
 const sessionId = 'r2-synthetic',
   turnId = 'turn-one';
@@ -312,11 +312,7 @@ test('pending uses conversational order while preserving physical checkpoints, f
     work = join(f.root, 'work'),
     directive = join(f.root, 'directive.md');
   await mkdir(memory);
-  const name = f.destination.split(/[\\/]/).at(-1)!;
-  await writeFile(
-    join(memory, 'STATE.md'),
-    '# State\n\n[E001](../feed/' + name + ')\n',
-  );
+  await writeFile(join(memory, 'STATE.md'), '# State\n\n[E001]\n');
   await writeFile(join(memory, 'HISTORY.md'), '# History\n');
   await writeFile(directive, 'Preserve original messages and open work.');
   await initCurator(work, memory, f.destination, 1);

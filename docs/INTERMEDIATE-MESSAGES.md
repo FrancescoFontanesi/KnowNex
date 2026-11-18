@@ -1,6 +1,6 @@
 # R2 — Codex intermediates
 
-The `src/commentary.ts` adapter reads a verified snapshot through the S1 reader
+The `src/feed/commentary.ts` adapter reads a verified snapshot through the S1 reader
 during Stop, without modifying the source or keeping another cursor.
 It selects only `response_item` with `payload.type = message`, role
 `assistant`, phase `commentary` and textual `output_text` parts. The text joins

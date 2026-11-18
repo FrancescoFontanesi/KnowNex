@@ -13,8 +13,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { readJsonl, ReaderError } from '../src/reader.ts';
-import type { ReadCursor } from '../src/reader.ts';
+import { readJsonl, ReaderError } from '../src/feed/reader.ts';
+import type { ReadCursor } from '../src/feed/reader.ts';
 
 async function fixture(t: TestContext, data: string | Uint8Array = '') {
   const directory = await mkdtemp(join(tmpdir(), 'knownex-reader-'));

@@ -5,15 +5,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   applyCurator,
   emptyMemory,
   initCurator,
   prepareCurator,
   validateCurator,
-} from '../src/curator.ts';
-import { memoryEvent } from '../src/navigator.ts';
+} from '../src/curation/curator.ts';
+import { memoryEvent } from '../src/memory/navigator.ts';
 
 const entry = resolve('src/index.ts');
 const unicode = 'Caffè Ελληνικά 日本語 🧠 é "\n';

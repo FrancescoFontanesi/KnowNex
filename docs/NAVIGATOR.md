@@ -33,7 +33,7 @@ npm start -- memory read H000003 --memory .knownex/memory
 npm start -- memory event E017 --memory .knownex/memory
 npm start -- memory event E015..E016 --memory .knownex/memory
 npm start -- memory read kn-NOTE-ID --memory .knownex/memory
-npm start -- memory read "knowledge/storage.md#flush-locale" --memory .knownex/memory
+npm start -- memory read "knowledge/H000002/storage.md#flush-locale" --memory .knownex/memory
 # Copy an actual immutable reference from STATE or from read/find:
 npm start -- memory read "knowledge/H000004/name--kn-UUID--REV.md#policy" --memory .knownex/memory
 ```
@@ -42,11 +42,10 @@ The `knownex` binary exposes the same arguments. `--memory` indicates the direct
 of the project checkpoint; replace the IDs in the examples with those found
 through `find`. Before the first checkpoint the available directory is the initial STATE in the same memory/.
 Without the option, new installations always use .knownex/memory, also for the
-initial STATE. In legacy workspaces the previous paths and the seed remain.
+initial STATE.
 Outside a KnowNex workspace the standalone default `memory/` remains.
 Standalone copies are read-only; in workspaces the gate can complete an already
-authorized recovery. `memory --help` shows the syntax. The sync command remains
-available with the previous contract.
+authorized recovery. `memory --help` shows the syntax.
 
 - `state`: JSON `{status, content}` with the original STATE only. A standalone copy
   reads only STATE; in the workspace the gate also verifies the confirmed memory.
@@ -59,7 +58,7 @@ available with the previous contract.
 - `history [--last N] [--before H-ID]`: checkpoint chronology from the most recent (default 10,
   maximum 50), with ID, date, events, topics, description and reference, without the body
   of the windows. It serves to choose which windows to open without reading the whole HISTORY.
-- `read <id|reference>`: full content of the window or history segment alone, or of the note alone,
+- `read <id|reference>`: full content of the window alone, or of the note alone,
   with resolvable references. It does not follow links. Unknown ID: error
   MEMORY_NOT_FOUND, exit 1. Malformed IDs and invalid arguments: exit 2.
   For notes, if current notes in strictly later checkpoint folders link them,
@@ -67,9 +66,8 @@ available with the previous contract.
   absent if there are none. The logbook does not rewrite old notes, so this is the only way
   to know that a note read may have been superseded: it says only "linked by a
   later one", it does not decide semantic validity; read the notes indicated. It applies to ID,
-  logical alias and immutable reference (also `@REV`/`--at`). Order: legacy `checkpoint-NNNN`
-  before every `H00000N`, then by number; same folder, STATE, HISTORY, self-links and
-  legacy flat notes do not count. Read-only computation (no file, `memoryHash`
+  logical alias and immutable reference (also `@REV`/`--at`). Order: by checkpoint
+  folder number; same folder, STATE, HISTORY and self-links do not count. Read-only computation (no file, `memoryHash`
   unchanged), deterministic; cost: one verified read per current note in newer
   folders (zero for the last folder), with no index; it does not scan non-current revisions.
 
@@ -84,19 +82,16 @@ the STATE and recall instructions already present; do not run a cold start at ev
 If STATE is enough no calls are needed. With an identified document, read the
 direct reference; use find when the document is missing or another topic is needed.
 
-`read` accepts ID, the logical alias `knowledge/H000NNN/<name>.md` (or `knowledge/<name>.md`
-for notes published before the per-checkpoint folders), `HISTORY.md#h000003`,
+`read` accepts ID, the logical alias `knowledge/H000NNN/<name>.md`, the window as `H000003` or
 `history/H000003.md` and the physical path
-`knowledge/H000NNN/[category]/name--kn-UUID--REV.md` (or the earlier form `knowledge/checkpoint-NNNN/...`). The `name--` prefix
-serves those browsing the vault; earlier revisions without the prefix stay valid. The old
-references `../revisions/...` stay supported. These are restricted forms resolved by the navigator,
+`knowledge/H000NNN/[category]/name--kn-UUID--REV.md`. The `name--` prefix
+serves those browsing the vault. These are restricted forms resolved by the navigator,
 not access to arbitrary paths. References are relative to the memory root:
 a link inside a note must be resolved relative to the `path` of that note. The whole
 `[label](destination)` syntax is not passed and feeds or artifacts are not opened with read.
 No link is followed automatically; only the one needed is explored further.
 For new revisions the canonical reference includes the checkpoint folder and any
-category: `knowledge/H000004/experiments/kn-UUID--REV.md`. The earlier flat names
-stay valid. A requested path must match the authenticated path of the
+category: `knowledge/H000004/experiments/name--kn-UUID--REV.md`. A requested path must match the authenticated path of the
 revision; another file with the same basename is not resolved.
 
 An ATX `#anchor` fragment on a Knowledge note, even after `kn-ID@REV`, reads that
@@ -118,7 +113,7 @@ In versioned workspaces, `find` and `read kn-...` stay current and also return
 the revision and immutable reference. `read kn-...@REV` reads a precise version;
 `read kn-... --at N` resolves a confirmed checkpoint, including noops.
 `--at H000002` uses the cutoff preceding the segment (`from - 1`).
-No fallback for missing versions or requests earlier than the baseline.
+No fallback for missing versions.
 An immutable reference is not replaced with the latest revision. To read
 the present use the logical ID or the current path. Checkpoint number, HISTORY
 ID, feed E sequence and revision identifier have distinct roles;
@@ -146,10 +141,10 @@ and at most 160 UTF-16 units long, `section` shows its title/anchor
 (title limited to 160 characters) and `reference` points directly there.
 Distant occurrences can satisfy AND without all entering the excerpt.
 
-HISTORY uses the delimiters, IDs and validation of `src/history.ts`; the reference
-is, for example, `HISTORY.md#h000003`. Knowledge IDs come from the frontmatter
+HISTORY uses the IDs and validation of `src/curation/history.ts`; the reference
+is, for example, `H000003` or `history/H000003.md`. Knowledge IDs come from the frontmatter
 of the R1 contract and are resolved through the checkpoint HEADs to the revisions
-in `knowledge/H000NNN/` (or legacy `checkpoint-NNNN`); the logical alias
+in `knowledge/H000NNN/`; the logical alias
 `knowledge/H000NNN/topic.md` and the immutable reference indicate the same
 revision. There is no persistent index.
 Duplicate identities, invalid segments, invalid metadata and malformed UTF-8

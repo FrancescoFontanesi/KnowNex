@@ -9,9 +9,9 @@ const claude = process.env.KNOWNEX_PROVIDER === 'claude';
 const root = process.env.KNOWNEX_WORKSPACE
   ? resolve(process.env.KNOWNEX_WORKSPACE)
   : runtime;
-const entry = existsSync(join(runtime, 'dist/feed-hook.js'))
-  ? join(runtime, 'dist/feed-hook.js')
-  : join(runtime, 'src/feed-hook.ts');
+const entry = existsSync(join(runtime, 'dist/hooks/feed-hook.js'))
+  ? join(runtime, 'dist/hooks/feed-hook.js')
+  : join(runtime, 'src/hooks/feed-hook.ts');
 const safeCode = (value) =>
   typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)
     ? value

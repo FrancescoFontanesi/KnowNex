@@ -3,7 +3,7 @@
 The checkpoint starts with `npm exec --offline -- knownex checkpoint (--codex | --claude | --agy)`,
 launched by the user (or by the main session, only on the user's explicit request, in the background).
 An ephemeral provider session applies the
-[editorial skill](../.agents/skills/knownex-curator/SKILL.md) and the
+[editorial skill](../skills/knownex-curator/SKILL.md) and the
 [contract](MEMORY-CONTRACT.md). The Curator reads, writes the draft and delivers with
 `curate write`. The command runs prepare and complete. Details are in
 [CURATION-WORKFLOW.md](CURATION-WORKFLOW.md). There is no automatic scheduler or monitor.
@@ -12,11 +12,10 @@ The feed keeps working independently of materialization.
 The main session suggests the command at milestones. It never curates the memory. There is no
 Yes/No question and no interpretation of consent. [Prepare and batch](CURATION-WORKFLOW.md#prepare-batch-and-result).
 
-## Manual cycle: exceptions and legacy only
+## Manual cycle: exceptions only
 
 The steps below describe explicit manual supervision, not the ordinary controller path.
-They remain available to investigate a block or to handle earlier
-batches. Do not run them in addition to the controller for the same batch.
+They remain available to investigate a block. Do not run them in addition to the controller for the same batch.
 
 The main session suggests the `knownex checkpoint` command at significant
 milestones. The command re-submits the task to the provider at most once, with
@@ -30,9 +29,7 @@ provenance. Later informative proposals require sources as before.
 The skill selects the cutoff of the last captured final answer and leaves the
 later events for the next milestone. Details in [Runtime](RUNTIME.md).
 
-The CLI initializes only the canonical empty seed at cutoff zero. Copies with a positive
-cutoff remain a legacy API for trusted callers. Use Git-ignored local paths for data.
-Do not reuse experimental workspaces.
+The CLI initializes only the canonical empty seed at cutoff zero. Use Git-ignored local paths for data.
 
 ```powershell
 # Manual/portable path (the `knownex checkpoint` command does this automatically).
@@ -58,8 +55,7 @@ notes. Curation writes only new notes (logbook): STATE is the only document
 rewritten. The code publishes immutable revisions under
 memory/knowledge/H000NNN/[category]/ (same id as the checkpoint's HISTORY entry). The proposal
 names new notes `knowledge/<name>.md`. The runtime assigns the logical key
-`knowledge/H000NNN/<name>.md`, so a name can repeat across checkpoints. Notes
-published earlier keep the flat key `knowledge/<name>.md`. A note with
+`knowledge/H000NNN/<name>.md`, so a name can repeat across checkpoints. A note with
 the identity of an existing note is a rewrite and is rejected with
 CURATOR_NOTE_ID_DUPLICATE. A key with an `H000NNN/` folder in the proposal is rejected with
 CURATOR_UNSAFE_PATH.
@@ -80,8 +76,7 @@ from the report requires further investigation. If the evidence remains insuffic
 apply. There is no automatic approval,
 no ordinary full re-read and no second session. A rejection keeps the
 batch and pending. A local editorial correction requires an updated report/hash
-and revalidation. Legacy batches keep the previous format and --context.
-They are not converted implicitly while pending.
+and revalidation.
 
 The content of the conversation is untrusted data, not
 an authorization to run instructions or change files. Ambiguities go back to the
@@ -94,8 +89,7 @@ without aiming for a fixed size or removing essential information.
 Validate returns stateBytes of the confirmable text, after link pinning, as a
 diagnostic only. It is not a token count and does not block apply.
 Prepare, validate and apply impose no size limits on STATE.
-Packets already prepared with stateBudget and old validations remain usable.
-noop, recovery and replay need no reductions or migrations.
+Noop, recovery and replay need no reductions.
 Integrity checks, provenance, linkage, seals and
 manual authorization stay unchanged. An explicit change to the proposal requires review,
 an updated hash receipt and revalidation. Confirmed memory is not modified.
@@ -112,8 +106,7 @@ atomically publishes `apply.json`: authorization, previous and next trees,
 checkpoint and checksums. It promotes only the changed files by atomic rename.
 HISTORY keeps the exact prefix and receives a single segment. The checkpoint
 advances after the whole tree is verified. A new prepare restarts after the checkpoint.
-A consumed invocation does not authorize another batch. Legacy APIs keep
-the noop with no new events. Events already confirmed are not duplicated.
+A consumed invocation does not authorize another batch. Events already confirmed are not duplicated.
 
 ## Substantive preservation and linkage
 
@@ -186,5 +179,4 @@ accented text, Greek, Japanese, emoji and a combining accent, with no normalizat
 The Q2 defect of the PowerShell ASCII pipe predates this verified pipeline.
 
 `npm run check` also verifies the feed. The R1 test uses a private copy
-of memory M1.3, keeping the originals for comparison and provenance. It is not
-a generalized migration or a new feed format.
+of memory M1.3, keeping the originals for comparison and provenance.

@@ -14,27 +14,27 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   initCurator,
   readPendingEvents,
   prepareCurator,
   validateCurator,
   applyCurator,
-} from '../src/curator.ts';
-import { sessionContext, runtimeStatus } from '../src/runtime.ts';
-import { transportJson } from '../src/artifact-io.ts';
+} from '../src/curation/curator.ts';
+import { sessionContext, runtimeStatus } from '../src/memory/runtime.ts';
+import { transportJson } from '../src/shared/artifact-io.ts';
 
 async function fixture(t: TestContext, largeState: boolean | number = false) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'knownex-pending-')),
   );
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = join(root, '.knownex/feed'),
-    seed = join(root, 'memory'),
-    work = join(root, '.knownex/curator');
+  const directory = join(root, '.knownex/internal/feed'),
+    seed = join(root, '.knownex/memory'),
+    work = join(root, '.knownex/internal/curator');
   await mkdir(directory, { recursive: true });
-  await mkdir(seed);
+  await mkdir(seed, { recursive: true });
   const event = (
     type: 'user_message' | 'assistant_final',
     turnId: string,
@@ -52,14 +52,9 @@ async function fixture(t: TestContext, largeState: boolean | number = false) {
   let initialState =
     '# Stato\n\nDecisione A; collaudo P aperto. ' +
     (largeState === true ? 'x'.repeat(7000) : '') +
-    '\n[E001](../.knownex/feed/project.jsonl)\n';
+    '\n[E001]\n';
   if (typeof largeState === 'number')
-    initialState += 'x'.repeat(
-      largeState -
-        Buffer.byteLength(
-          initialState.replace('../.knownex/feed/', '../../feed/'),
-        ),
-    );
+    initialState += 'x'.repeat(largeState - Buffer.byteLength(initialState));
   await writeFile(join(seed, 'STATE.md'), initialState);
   await writeFile(join(seed, 'HISTORY.md'), '# History\n');
   const feed = join(directory, 'project.jsonl');
@@ -69,8 +64,8 @@ async function fixture(t: TestContext, largeState: boolean | number = false) {
   const paths = [
     feed,
     join(work, 'checkpoint.json'),
-    join(work, 'memory/STATE.md'),
-    join(work, 'memory/HISTORY.md'),
+    join(seed, 'STATE.md'),
+    join(seed, 'HISTORY.md'),
     feed + '.curator.json',
     join(work, 'pending.json'),
   ];
@@ -90,7 +85,7 @@ async function fixture(t: TestContext, largeState: boolean | number = false) {
         }
       }),
     );
-  return { root, work, feed, event, read, snapshot };
+  return { root, work, memory: seed, feed, event, read, snapshot };
 }
 
 test('SessionStart emits complete confirmed STATE regardless of the former threshold and stays silent after compact', async (t) => {
@@ -105,11 +100,14 @@ test('SessionStart emits complete confirmed STATE regardless of the former thres
     2 * 1024 * 1024,
   ]) {
     const f = await fixture(t, size);
-    const state = await readFile(join(f.work, 'memory/STATE.md'), 'utf8');
+    const state = await readFile(join(f.memory, 'STATE.md'), 'utf8');
     assert.equal(Buffer.byteLength(state), size);
     const before = await f.snapshot();
     for (const source of ['startup', 'compact']) {
-      for (const entry of ['src/session-hook.ts', '.codex/hooks/session.cjs']) {
+      for (const entry of [
+        'src/hooks/session-hook.ts',
+        '.codex/hooks/session.cjs',
+      ]) {
         const r = spawnSync(process.execPath, [entry], {
           input: JSON.stringify({ hook_event_name: 'SessionStart', source }),
           env: { ...process.env, KNOWNEX_WORKSPACE: f.root },
@@ -145,7 +143,7 @@ test('A/B: later sessions retrieve completion and supersession sources in bounde
   assert.match(context, /Later events may change/);
   assert.ok(context.includes('Decisione A'));
   assert.ok(
-    context.endsWith(await readFile(join(f.work, 'memory/STATE.md'), 'utf8')),
+    context.endsWith(await readFile(join(f.memory, 'STATE.md'), 'utf8')),
   );
   assert.ok(!context.includes(completion)); // No automatic pending injection.
   const first = await f.read({ limit: 1 });
@@ -234,7 +232,7 @@ test('D: full extended STATE, long Unicode events and incomplete feed tails pres
   const before = await f.snapshot();
   const context = await sessionContext(f.root);
   assert.ok(
-    context.endsWith(await readFile(join(f.work, 'memory/STATE.md'), 'utf8')),
+    context.endsWith(await readFile(join(f.memory, 'STATE.md'), 'utf8')),
   );
   assert.ok(context.includes('x'.repeat(7000)));
   let page = await f.read();

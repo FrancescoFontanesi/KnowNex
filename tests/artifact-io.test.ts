@@ -27,7 +27,7 @@ test('ORBIT writer transport fails before Node execution when TextEncoder is abs
 });
 
 test('canonical Node I/O preserves exact Unicode, BOM, CRLF and actual-byte hashes', async (t) => {
-  const io = await import('../src/artifact-io.ts');
+  const io = await import('../src/shared/artifact-io.ts');
   const root = await mkdtemp(join(tmpdir(), 'knownex-io-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'artifact.json');
@@ -59,7 +59,7 @@ test('canonical Node I/O preserves exact Unicode, BOM, CRLF and actual-byte hash
 });
 
 test('failed and silently partial writes publish no valid artifact and preserve existing atomic targets', async (t) => {
-  const io = await import('../src/artifact-io.ts');
+  const io = await import('../src/shared/artifact-io.ts');
   const root = await mkdtemp(join(tmpdir(), 'knownex-io-partial-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'confirmed.md');
@@ -91,7 +91,7 @@ test('failed and silently partial writes publish no valid artifact and preserve 
 });
 
 test('exclusive pair rolls back its own publication and never removes an existing foreign target', async (t) => {
-  const io = await import('../src/artifact-io.ts');
+  const io = await import('../src/shared/artifact-io.ts');
   const root = await mkdtemp(join(tmpdir(), 'knownex-io-pair-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const existing = join(root, 'proposal.json'),
@@ -113,7 +113,9 @@ test('a process killed during staging leaves no published partial artifact', asy
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'proposal.json'),
     probe = join(root, 'probe');
-  const module = pathToFileURL(join(process.cwd(), 'src/artifact-io.ts')).href;
+  const module = pathToFileURL(
+    join(process.cwd(), 'src/shared/artifact-io.ts'),
+  ).href;
   const code = `const fs=await import('node:fs/promises');const h=await fs.open(${JSON.stringify(probe)},'w');const p=Object.getPrototypeOf(h);await h.close();p.writeFile=async function(b){await this.write(b.subarray(0,2));process.exit(71)};const io=await import(${JSON.stringify(module)});await io.writeExclusiveFiles([{path:${JSON.stringify(file)},text:'new data'}]);`;
   const child = spawnSync(
     process.execPath,
@@ -129,7 +131,9 @@ test('a temporary-name collision cannot delete another file', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const foreign = join(root, 'collision.tmp');
   await writeFile(foreign, sample, 'utf8');
-  const module = pathToFileURL(join(process.cwd(), 'src/artifact-io.ts')).href;
+  const module = pathToFileURL(
+    join(process.cwd(), 'src/shared/artifact-io.ts'),
+  ).href;
   const code = `const c=await import('node:crypto');c.default.randomUUID=()=> 'collision';(await import('node:module')).syncBuiltinESMExports();const io=await import(${JSON.stringify(module)});try{await io.writeExclusiveFiles([{path:${JSON.stringify(join(root, 'new.json'))},text:'new'}]);process.exit(2)}catch(e){if(e.code!=='EEXIST')throw e}`;
   const child = spawnSync(
     process.execPath,

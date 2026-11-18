@@ -20,12 +20,11 @@ import {
   readReply,
   spawnProvider,
   type RunProvider,
-} from '../src/checkpoint-launcher.ts';
-import { writeCurationDraft } from '../src/curation-io.ts';
-import { emptyMemory } from '../src/curator.ts';
-import { appendFeedEvent } from '../src/feed.ts';
-import { acquireJournalLock } from '../src/journal-lock.ts';
-import { memoryFind, memoryRead } from '../src/navigator.ts';
+} from '../src/checkpoint/checkpoint-launcher.ts';
+import { emptyMemory } from '../src/curation/curator.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
+import { acquireJournalLock } from '../src/shared/journal-lock.ts';
+import { memoryFind, memoryRead } from '../src/memory/navigator.ts';
 
 async function fixture(t: test.TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'knownex-launch-')));
@@ -42,7 +41,6 @@ async function fixture(t: test.TestContext) {
     await appendFeedEvent(feed, {
       type,
       sessionId: 'launch',
-      nativeThreadId: 'launch',
       turnId: 'facts',
       text,
       hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
@@ -503,7 +501,6 @@ test('a new note reuses an earlier name under its own checkpoint and supersedes 
   await appendFeedEvent(join(f.root, '.knownex/internal/feed'), {
     type: 'user_message',
     sessionId: 'launch',
-    nativeThreadId: 'launch',
     turnId: 'more',
     text: 'Altro lavoro.',
     hook: 'UserPromptSubmit',
@@ -1107,7 +1104,7 @@ test("the model's own output never reaches the launcher's stdout", () => {
     [
       '--input-type=module',
       '-e',
-      "import { spawnProvider } from './src/checkpoint-launcher.ts';" +
+      "import { spawnProvider } from './src/checkpoint/checkpoint-launcher.ts';" +
         "await spawnProvider(process.execPath, ['-e', 'console.log(\"MODEL OUTPUT\")'], '.', '');",
     ],
     { encoding: 'utf8', windowsHide: true },

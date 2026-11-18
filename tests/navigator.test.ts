@@ -14,8 +14,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { memoryState, memoryFind, memoryRead } from '../src/navigator.ts';
-import { historyAppendix } from './legacy-history.ts';
+import {
+  memoryState,
+  memoryFind,
+  memoryRead,
+} from '../src/memory/navigator.ts';
+import { appendHistory } from './helpers/history.ts';
 
 const note = (n: number, title: string, body: string) =>
   `---\nid: kn-00000000-0000-4000-8000-${String(n).padStart(12, '0')}\ntype: knowledge\n---\n\n# ${title}\n\n${body}\n`;
@@ -27,7 +31,7 @@ async function fixture(t: TestContext) {
     await rm(root, { recursive: true, force: true });
   });
   const memory = join(root, 'memory');
-  await mkdir(join(memory, 'knowledge'), { recursive: true });
+  await mkdir(join(memory, 'knowledge/H000001'), { recursive: true });
   const state =
     '# Current state\n\nCurrent objective only. \u00e8 \ud83e\udde0\n';
   await writeFile(join(memory, 'STATE.md'), state);
@@ -35,7 +39,8 @@ async function fixture(t: TestContext) {
   const segments: string[] = [];
   for (let i = 1; i <= 7; i++) {
     const archived = `# Old state ${i}\n\nShared body. ${i === 1 ? 'ancestral-decision' : ''}\n`;
-    const suffix = historyAppendix(
+    const entry = await appendHistory(
+      memory,
       history,
       archived,
       i,
@@ -48,12 +53,12 @@ async function fixture(t: TestContext) {
         transition: 'Confirmed transition',
       },
     );
-    history += suffix;
-    segments.push(suffix.slice(suffix.indexOf('<!--')));
+    history = entry.history;
+    segments.push(entry.text);
   }
   await writeFile(join(memory, 'HISTORY.md'), history);
   await writeFile(
-    join(memory, 'knowledge/a.md'),
+    join(memory, 'knowledge/H000001/a.md'),
     note(
       1,
       'Targetdecision and Shared',
@@ -61,7 +66,7 @@ async function fixture(t: TestContext) {
     ),
   );
   await writeFile(
-    join(memory, 'knowledge/b.md'),
+    join(memory, 'knowledge/H000001/b.md'),
     note(
       2,
       'Body matches',
@@ -85,7 +90,7 @@ function invoke(memory: string, args: string[], cwd?: string) {
 test('state reads only STATE even with absent history and invalid Knowledge', async (t) => {
   const f = await fixture(t);
   await rm(join(f.memory, 'HISTORY.md'));
-  await writeFile(join(f.memory, 'knowledge/a.md'), 'invalid metadata');
+  await writeFile(join(f.memory, 'knowledge/H000001/a.md'), 'invalid metadata');
   assert.equal(await memoryState(f.memory), f.state);
   const r = invoke(f.memory, ['state']);
   assert.equal(r.status, 0);
@@ -115,7 +120,7 @@ test('find is capped, deterministic and ranks title/metadata above body frequenc
   const historyMatch = await memoryFind(f.memory, 'targetdecision', 'history');
   assert.deepEqual(historyMatch[0]!.events, { from: 2, through: 2 });
   assert.equal(historyMatch[0]!.date, '2026-11-03T12:00:00.000Z');
-  assert.equal(historyMatch[0]!.reference, 'HISTORY.md#h000002');
+  assert.equal(historyMatch[0]!.reference, 'history/H000002.md');
   assert.ok(
     shared.every(
       (r) => [...r.excerpt].length <= 240 && [...r.title].length <= 160,
@@ -138,7 +143,7 @@ test('read resolves stable IDs, returns exact single content and never follows M
   );
   assert.equal(
     knowledge.content,
-    await readFile(join(f.memory, 'knowledge/a.md'), 'utf8'),
+    await readFile(join(f.memory, 'knowledge/H000001/a.md'), 'utf8'),
   );
   assert.ok(knowledge.content.includes('../../absent.txt'));
   await rm(join(f.memory, 'HISTORY.md'));
@@ -153,18 +158,21 @@ test('linked references read one note or an exact section without following othe
   const body =
     '## Condizioni\n\nSolo filesystem locale; rete non verificata.\n\n```md\n## Condizioni\nIntestazione dentro codice.\n```\n\n### Eccezioni\n\nPreservare e\u0301. [Link non seguito](../../absent.txt)\n\n';
   await writeFile(
-    join(f.memory, 'knowledge/limits.md'),
+    join(f.memory, 'knowledge/H000001/limits.md'),
     note(
       3,
       'Storage',
       'Introduzione.\n\n' + body + '## Verifiche\n\nAltra attivita.',
     ),
   );
-  const direct = await memoryRead(f.memory, 'knowledge/limits.md');
+  const direct = await memoryRead(f.memory, 'knowledge/H000001/limits.md');
   assert.equal(direct.id, 'kn-00000000-0000-4000-8000-000000000003');
-  const section = await memoryRead(f.memory, 'knowledge/limits.md#condizioni');
+  const section = await memoryRead(
+    f.memory,
+    'knowledge/H000001/limits.md#condizioni',
+  );
   assert.equal(section.content, body);
-  assert.equal(section.reference, 'knowledge/limits.md#condizioni');
+  assert.equal(section.reference, 'knowledge/H000001/limits.md#condizioni');
   assert.equal(section.selection?.anchor, 'condizioni');
   assert.equal(
     section.selection!.throughLine - section.selection!.fromLine + 1,
@@ -175,17 +183,20 @@ test('linked references read one note or an exact section without following othe
     body,
   );
   assert.equal(
-    (await memoryRead(f.memory, 'HISTORY.md#h000002')).content,
+    (await memoryRead(f.memory, 'history/H000002.md')).content,
     f.segments[1],
   );
   const cli = invoke(f.memory, ['read', section.reference]);
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal(JSON.parse(cli.stdout).content, body);
-  await assert.rejects(memoryRead(f.memory, 'knowledge/limits.md#assente'), {
-    code: 'MEMORY_SECTION_NOT_FOUND',
-  });
+  await assert.rejects(
+    memoryRead(f.memory, 'knowledge/H000001/limits.md#assente'),
+    {
+      code: 'MEMORY_SECTION_NOT_FOUND',
+    },
+  );
   await writeFile(
-    join(f.memory, 'knowledge/limits.md'),
+    join(f.memory, 'knowledge/H000001/limits.md'),
     direct.content + '\n## Condizioni\nDuplicato.\n',
   );
   await assert.rejects(memoryRead(f.memory, section.reference), {
@@ -196,7 +207,7 @@ test('linked references read one note or an exact section without following othe
     'knowledge/../STATE.md',
     'knowledge%2flimits.md',
     'https://example.com/limits.md',
-    'knowledge/limits.md#x#y',
+    'knowledge/H000001/limits.md#x#y',
   ])
     await assert.rejects(memoryRead(f.memory, ref), {
       code: 'MEMORY_INVALID_ID',
@@ -210,11 +221,11 @@ test('multi-term excerpts select a denser passage and identify its section among
     'Ordinary background. '.repeat(200) +
     '\n\n## Flush locale\n\nJournal flush conserva il marcatore e\u0301; rete non verificata.\n\n## Altro\n\nContenuto separato.';
   await writeFile(
-    join(f.memory, 'knowledge/storage.md'),
+    join(f.memory, 'knowledge/H000001/storage.md'),
     note(3, 'Storage procedure', content),
   );
   await writeFile(
-    join(f.memory, 'knowledge/reports.md'),
+    join(f.memory, 'knowledge/H000001/reports.md'),
     note(
       4,
       'Storage reports',
@@ -229,9 +240,9 @@ test('multi-term excerpts select a denser passage and identify its section among
     await memoryFind(f.memory, 'journal flush', 'knowledge'),
     matches,
   );
-  const match = matches.find((m) => m.path === 'knowledge/storage.md')!;
+  const match = matches.find((m) => m.path === 'knowledge/H000001/storage.md')!;
   assert.ok(match.excerpt.includes('Journal flush conserva'));
-  assert.equal(match.reference, 'knowledge/storage.md#flush-locale');
+  assert.equal(match.reference, 'knowledge/H000001/storage.md#flush-locale');
   const selected = await memoryRead(f.memory, match.reference);
   assert.ok(selected.content.includes('rete non verificata'));
   assert.ok(
@@ -242,7 +253,7 @@ test('multi-term excerpts select a denser passage and identify its section among
     [],
   );
   await writeFile(
-    join(f.memory, 'knowledge/storage.md'),
+    join(f.memory, 'knowledge/H000001/storage.md'),
     note(
       3,
       'Boundary',
@@ -251,11 +262,11 @@ test('multi-term excerpts select a denser passage and identify its section among
   );
   const across = (
     await memoryFind(f.memory, 'journal flush', 'knowledge')
-  ).find((m) => m.path === 'knowledge/storage.md')!;
-  assert.equal(across.reference, 'knowledge/storage.md'); // One section cannot cover both matches.
+  ).find((m) => m.path === 'knowledge/H000001/storage.md')!;
+  assert.equal(across.reference, 'knowledge/H000001/storage.md'); // One section cannot cover both matches.
   assert.equal(across.section, undefined);
   await writeFile(
-    join(f.memory, 'knowledge/storage.md'),
+    join(f.memory, 'knowledge/H000001/storage.md'),
     note(
       3,
       'Bounded',
@@ -264,8 +275,8 @@ test('multi-term excerpts select a denser passage and identify its section among
   );
   const longHeading = (
     await memoryFind(f.memory, 'journal flush', 'knowledge')
-  ).find((m) => m.path === 'knowledge/storage.md')!;
-  assert.equal(longHeading.reference, 'knowledge/storage.md');
+  ).find((m) => m.path === 'knowledge/H000001/storage.md')!;
+  assert.equal(longHeading.reference, 'knowledge/H000001/storage.md');
   assert.equal(longHeading.section, undefined);
   assert.ok(Buffer.byteLength(JSON.stringify(longHeading)) < 2000);
   const unicode = note(
@@ -273,9 +284,10 @@ test('multi-term excerpts select a denser passage and identify its section among
     'Unicode',
     '## Modalit\u00e0\nCaff\u00e8 e\u0301 \ud83e\udde0.\n\n## Fine\nStop.',
   ).replaceAll('\n', '\r\n');
-  await writeFile(join(f.memory, 'knowledge/storage.md'), unicode);
+  await writeFile(join(f.memory, 'knowledge/H000001/storage.md'), unicode);
   assert.equal(
-    (await memoryRead(f.memory, 'knowledge/storage.md#modalit%C3%A0')).content,
+    (await memoryRead(f.memory, 'knowledge/H000001/storage.md#modalit%C3%A0'))
+      .content,
     '## Modalit\u00e0\r\nCaff\u00e8 e\u0301 \ud83e\udde0.\r\n\r\n',
   );
 });
@@ -283,7 +295,7 @@ test('multi-term excerpts select a denser passage and identify its section among
 test('ambiguous identities and broken History fail explicitly rather than returning an arbitrary document', async (t) => {
   const f = await fixture(t);
   await writeFile(
-    join(f.memory, 'knowledge/duplicate.md'),
+    join(f.memory, 'knowledge/H000001/duplicate.md'),
     note(1, 'Duplicate', 'PRIVATE_AMBIGUOUS_BODY'),
   );
   await assert.rejects(
@@ -294,16 +306,18 @@ test('ambiguous identities and broken History fail explicitly rather than return
     code: 'MEMORY_AMBIGUOUS_ID',
   });
   assert.equal((await memoryFind(f.memory, 'shared', 'history')).length, 5); // Filter does not load the other collection.
-  await writeFile(join(f.memory, 'HISTORY.md'), f.history + f.segments[0]);
+  await writeFile(
+    join(f.memory, 'HISTORY.md'),
+    f.history +
+      f.history.split('\n').find((l) => l.startsWith('- [H000001]')) +
+      '\n',
+  );
   await assert.rejects(memoryRead(f.memory, 'H000001'), {
-    code: 'MEMORY_AMBIGUOUS_ID',
+    code: 'MEMORY_INVALID',
   });
   await writeFile(
     join(f.memory, 'HISTORY.md'),
-    f.history.replace(
-      'knownex-history:H000001:end',
-      'knownex-history:H000001:broken',
-    ),
+    f.history.replace('(history/H000001.md)', '(history/broken.md)'),
   );
   await assert.rejects(memoryRead(f.memory, 'H000001'), {
     code: 'MEMORY_INVALID',
@@ -386,8 +400,8 @@ test('navigation creates no files and leaves memory, checkpoint bytes and mtimes
     'STATE.md',
     'HISTORY.md',
     'checkpoint.json',
-    'knowledge/a.md',
-    'knowledge/b.md',
+    'knowledge/H000001/a.md',
+    'knowledge/H000001/b.md',
   ];
   const before = await Promise.all(
     paths.map(async (n) => ({

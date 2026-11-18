@@ -2,12 +2,9 @@
 
 ## Ordinary command and inputs
 
-The checkpoint is the `knownex checkpoint` command ([details](CURATION-WORKFLOW.md#knownex-checkpoint-command)); `$knownex-checkpoint` is removed. `prepare --work .knownex/internal/curator` receives STATE
+The checkpoint is the `knownex checkpoint` command ([details](CURATION-WORKFLOW.md#knownex-checkpoint-command)). `prepare --work .knownex/internal/curator` receives STATE
 and events without requiring a directive or creating `.knownex/directive.md`.
 Additional guidance is optional and does not replace the sources.
-The old name `$knownex-handoff` does not authorize new batches; it stays readable to
-filter historical administration and to complete already authorized batches. Journal,
-seals, single consumption and recovery are not rewritten by the renaming.
 
 ## Integrity of captured events
 
@@ -21,8 +18,6 @@ review before the apply under the existing lock. An append after the cutoff
 stays for the next batch; corruption, truncation or modification of the necessary
 prefix do not authorize a publication. The trigger is the explicit prepare command, not a permission in the feed.
 
-The historical metadata nativeHistory and nativeThreadId (no longer written) do not
-trigger external reads.
 The exclusions already recorded in the checkpoints/runs stay frozen decisions:
 they are not removed, rebuilt or widened by consulting Codex. The pending cursors
 keep verifying feed, cutoff, selection and pagination.
@@ -49,7 +44,7 @@ SessionStart emits the confirmed STATE in full in additionalContext,
 at startup, resume and clear, with no omissions or size truncations by KnowNex;
 with source=compact it emits nothing (the summary already contains the context). The prefix declares the UTF-8 bytes emitted and distinguishes emission from
 delivery to the model. It does not load HISTORY or Knowledge; the pending stays selective.
-Size does not constrain prepare, validate, apply, noop or legacy reads.
+Size does not constrain prepare, validate, apply, noop or reads.
 Integrity errors produce an explicit warning, never a mixed confirmed state.
 
 ### Harness boundary
@@ -139,8 +134,7 @@ checkpoint, authorization or batch; it uses only transient locks. If it finds an
 recover, it returns CURATOR_RECOVERY_REQUIRED without running recovery. Corrupt
 journals block the read. The existing runtime/navigator can complete an
 already authorized apply: that is a separate storage phase, not reconciliation.
-The read resumes only with a consistent memory; legacy feeds stay
-flagged and are not migrated or implicitly ignored.
+The read resumes only with a consistent memory.
 
 The main session uses STATE and the relevant pages to update only its own temporary
 context. It distinguishes authoritative directives, statements, hypotheses and
@@ -166,9 +160,7 @@ checks remain unchanged. No checkpoint per turn or per elapsed time.
 
 The deterministic safeguards are feed/checksum and session/turn identity,
 checkpoint, frozen cutoff, single pending and the curator lock. An empty seed
-is initialized at sequence zero without inventing events. `readyThrough` indicates
-the last final response captured; it does not semantically certify completeness or
-truthfulness of the content. The messages of the current turn not yet captured
+is initialized at sequence zero without inventing events. The messages of the current turn not yet captured
 stay for a future batch. A session abandoned with no final keeps the
 prompts: the next batch can include them without treating them as verified results.
 
@@ -183,14 +175,10 @@ Stop requires no continuations, creates no checkpoint and generates no recursion
 
 ## Continuity and compatibility
 
-New workspaces use only `.knownex/internal/feed/project.jsonl`: same frame
-format, one global sequence and native identities per session. The legacy
-per-session feeds are no longer written or migrated.
+Workspaces use only `.knownex/internal/feed/project.jsonl`: one frame
+format, one global sequence and native identities per session. Per-session feed
+files are not supported.
 
-In the presence of legacy `<sha256-session>.jsonl` journals, the runtime flags
-`LEGACY_SESSION_FEEDS` and resolvable references, preserving all data.
-It does not ignore earlier pending and does not copy it into a parallel archive.
-Adoption on a legacy workspace requires an explicit revision.
 AGENTS.md keeps text outside `knownex:start/end` and updates only that
 block; ambiguous markers are rejected. Other conflicts stay explicit.
 
@@ -200,22 +188,11 @@ block; ambiguous markers are rejected. Other conflicts stay explicit.
 workspace, or installs the npm archive with `KNOWNEX_INSTALL_ARCHIVE`, and denies the
 runtime processes access to the sources. It verifies hook, skill, policy, pending
 across sessions, repeated Stop, invalid proposal, apply and recovery, replay with no
-duplicate HISTORY, idempotent bootstrap, retirement of resources no longer
-distributed, legacy block and rejection of altered memory, with synthetic payloads and
+duplicate HISTORY, idempotent bootstrap and rejection of altered memory, with synthetic payloads and
 no LLM. Hook approval, delivery of STATE to the model, recognition
 of milestones and the semantic behavior of the agent require a real
 session. Physical durability remains subject to the limits in
 [Storage](STORAGE-DURABILITY.md).
-
-## Administrative turns
-
-The turns of the old pure command `$knownex-checkpoint` (removed) are excluded from the operational view:
-command, intermediate steps and final in the same sessionId/turnId. The feed stays
-complete; pendingRaw and administrativePending expose the original counts.
-Pending and packet do not include these turns, without advancing the checkpoint.
-To read the originals use `knownex pending --include-administrative`.
-Cursors keep the filter fixed. Invocations with arguments and old Yes/No
-answers stay visible out of caution; no generic filter on tags or words.
 
 ## Coordination without re-reading STATE
 

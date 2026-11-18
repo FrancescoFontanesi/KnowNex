@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { acquireJournalLock } from '../src/journal-lock.ts';
+import { acquireJournalLock } from '../src/shared/journal-lock.ts';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'knownex-lock-'));
@@ -50,7 +50,7 @@ test(
   { timeout: 10000 },
   async (t) => {
     const { root, lock } = await fixture(t);
-    const moduleUrl = pathToFileURL(resolve('src/journal-lock.ts')).href;
+    const moduleUrl = pathToFileURL(resolve('src/shared/journal-lock.ts')).href;
     const script = `import {acquireJournalLock} from ${JSON.stringify(moduleUrl)}; await acquireJournalLock(${JSON.stringify(lock)}); console.log('ready'); setInterval(()=>{},1000);`;
     const child = spawn(
       process.execPath,

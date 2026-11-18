@@ -4,14 +4,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   emptyMemory,
   initCurator,
   prepareCurator,
   validateCurator,
   applyCurator,
-} from '../src/curator.ts';
+} from '../src/curation/curator.ts';
 
 const hash = (v: string | Buffer) =>
   createHash('sha256').update(v).digest('hex');
@@ -67,17 +67,11 @@ test('autonomous curation freezes references, binds targeted review and adds not
       (n > 1 ? '[Addition](knowledge/addition.md) ' : '') +
       '[E00' +
       n +
-      '](' +
-      packet.feed +
-      ')\n';
+      ']\n';
     const note =
       n === 1
-        ? '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n# Specification\n\nOriginal detail [E001](../' +
-          packet.feed +
-          ')\n'
-        : '---\nid: kn-00000000-0000-4000-8000-000000000002\ntype: knowledge\n---\n# Addition\n\nAdditional detail [E002](../' +
-          packet.feed +
-          ')\n';
+        ? '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n# Specification\n\nOriginal detail [E001]\n'
+        : '---\nid: kn-00000000-0000-4000-8000-000000000002\ntype: knowledge\n---\n# Addition\n\nAdditional detail [E002]\n';
     const key = n === 1 ? 'knowledge/detail.md' : 'knowledge/addition.md';
     const proposal =
       n === 3

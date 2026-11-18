@@ -12,21 +12,21 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   initCurator,
   prepareCurator,
   validateCurator,
   applyCurator,
   rebuildTaxonomy,
-} from '../src/curator.ts';
+} from '../src/curation/curator.ts';
 import {
   memoryState,
   memoryRead,
   memoryFind,
   memoryCategory,
-} from '../src/navigator.ts';
-import { archivePath } from '../src/knowledge-revisions.ts';
+} from '../src/memory/navigator.ts';
+import { archivePath } from '../src/curation/knowledge-revisions.ts';
 const ids = [
   'kn-00000000-0000-4000-8000-000000000001',
   'kn-00000000-0000-4000-8000-000000000002',
@@ -42,7 +42,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
     work = join(root, '.knownex/internal/curator'),
     directory = join(root, '.knownex/internal/feed');
   await mkdir(join(memory, 'knowledge'), { recursive: true });
-  const { emptyMemory } = await import('../src/curator.ts');
+  const { emptyMemory } = await import('../src/curation/curator.ts');
   for (const [name, text] of Object.entries(emptyMemory))
     await writeFile(join(memory, name), text);
   await writeFile(
@@ -68,9 +68,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
     body +
     ' [E' +
     String(n).padStart(3, '0') +
-    '](../' +
-    feed +
-    ')\n';
+    ']\n';
   async function commit(n: number, mode: 'new' | 'update' | 'noop') {
     const p = await prepareCurator(work, undefined, {
       through: n,
@@ -97,9 +95,7 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
                   ) + '\n[C](knowledge/c.md)\n'
                 : '# Project\n\n[A](knowledge/a.md) [B](knowledge/b.md) [E' +
                   String(n).padStart(3, '0') +
-                  '](' +
-                  packet.feed +
-                  ')\n',
+                  ']\n',
             history: {
               summary: 'Change',
               topics: ['Design'],
@@ -249,62 +245,4 @@ test('canonical memory has one physical copy per revision, linked STATE/HISTORY,
     code: 'CURATOR_RECOVERY_INVALID',
   });
   assert.equal((await cp()).sequence, 3);
-});
-
-test('a flat archived revision linked from canonical STATE is a link, not a logical note, at the next checkpoint', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'knownex-layout-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const memory = join(root, '.knownex/memory'),
-    work = join(root, '.knownex/internal/curator'),
-    directory = join(root, '.knownex/internal/feed');
-  await mkdir(join(memory, 'knowledge'), { recursive: true });
-  const { emptyMemory } = await import('../src/curator.ts');
-  for (const [name, text] of Object.entries(emptyMemory))
-    await writeFile(join(memory, name), text);
-  for (let n = 1; n <= 2; n++)
-    await appendFeedEvent(directory, {
-      type: 'user_message',
-      sessionId: 's',
-      turnId: String(n),
-      text: 'Input ' + n,
-      hook: 'UserPromptSubmit',
-    });
-  await initCurator(work, memory, join(directory, 'project.jsonl'), 0);
-  // A run prepared before the chronological layout publishes knowledge/kn-…--r-….md.
-  const first = await prepareCurator(work, undefined, { through: 1 });
-  const record = JSON.parse(
-    await readFile(join(first.run!, 'run.json'), 'utf8'),
-  );
-  delete record.revisionLayout;
-  await writeFile(join(first.run!, 'run.json'), JSON.stringify(record));
-  await writeFile(
-    first.proposal!,
-    JSON.stringify({
-      action: 'update',
-      state: '# Project\n\n[A](knowledge/a.md) [E001]\n',
-      history: { summary: 'A', topics: ['A'], transition: 'A.' },
-      knowledge: {
-        'knowledge/a.md': `---\nid: ${ids[0]}\ntype: knowledge\n---\n# A\n\nFlat. [E001]\n`,
-      },
-    }),
-  );
-  await applyCurator(work, (await validateCurator(work)).seal);
-  const link = /\[A\]\(([^)]+)\)/.exec(await memoryState(memory))![1]!;
-  assert.match(link, /^knowledge\/kn-[0-9a-f-]+--r-[0-9a-f-]+\.md$/);
-  assert.match((await memoryRead(memory, link)).content, /Flat\./);
-  // The next checkpoint carries the copied STATE link forward unchanged.
-  const next = await prepareCurator(work, undefined, { through: 2 });
-  const state = await readFile(join(next.run!, 'base/STATE.md'), 'utf8');
-  assert.ok(state.includes(`[A](${link})`));
-  await writeFile(
-    next.proposal!,
-    JSON.stringify({
-      action: 'update',
-      state: state + '\nNext. [E002]\n',
-      history: { summary: 'B', topics: ['B'], transition: 'B.' },
-      knowledge: {},
-    }),
-  );
-  await applyCurator(work, (await validateCurator(work)).seal);
-  assert.ok((await memoryState(memory)).includes(`[A](${link})`));
 });

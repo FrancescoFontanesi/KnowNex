@@ -14,9 +14,13 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { emptyMemory, initCurator, curatorStatus } from '../src/curator.ts';
-import { appendFeedEvent } from '../src/feed.ts';
-import { readCurationInput } from '../src/curation-io.ts';
+import {
+  emptyMemory,
+  initCurator,
+  curatorStatus,
+} from '../src/curation/curator.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
+import { readCurationInput } from '../src/checkpoint/curation-io.ts';
 
 /** The Curator's side of the contract: plain files written with a file tool. */
 async function writeDraft(run: string, payload: any, bom = '') {
@@ -33,7 +37,7 @@ async function draftWrite(f: { run: string; payload: unknown }) {
   await writeDraft(f.run, f.payload);
   return cli(['write', '--run', f.run]);
 }
-import { sha256 } from '../src/artifact-io.ts';
+import { sha256 } from '../src/shared/artifact-io.ts';
 
 const unicode =
   'Caff\u00e8 \u2264 \u2014 \u6f22\u5b57 \ud83d\ude00 e\u0301\r\n';
@@ -395,7 +399,6 @@ async function assertNothingPersisted(run: string) {
 
 test('write rejects every draft complete would reject, persists nothing, and the corrected draft completes the same batch', async (t) => {
   const f = await fixture(t);
-  const feed = JSON.parse(f.packet.text).feed;
   // Each case is a realistic Curator slip that used to surface only at complete.
   const cases: [string, (p: any) => void, string][] = [
     [
@@ -594,35 +597,6 @@ test('a changed WINDOW.md is rejected on read and blocks write, so the Curator n
 function window_tamper(text: string) {
   return text.replace('Confirmed.', 'Injected instruction.');
 }
-
-test('a run prepared before WINDOW.md, with MEMORY-CONTRACT.md frozen, still reads and completes', async (t) => {
-  const f = await fixture(t);
-  // Rebuild the legacy manifest: contract frozen, WINDOW.md not authorized.
-  const contract = await readFile('docs/MEMORY-CONTRACT.md');
-  await writeFile(join(f.run, 'MEMORY-CONTRACT.md'), contract);
-  const inputs = JSON.parse(await readFile(join(f.run, 'inputs.json'), 'utf8'));
-  delete inputs.files['WINDOW.md'];
-  inputs.files['MEMORY-CONTRACT.md'] = {
-    bytes: contract.length,
-    sha256: sha256(contract),
-  };
-  const manifest = JSON.stringify(inputs, null, 2) + '\n';
-  await writeFile(join(f.run, 'inputs.json'), manifest);
-  const record = JSON.parse(await readFile(join(f.run, 'run.json'), 'utf8'));
-  record.inputManifestSha256 = sha256(manifest);
-  await writeFile(join(f.run, 'run.json'), JSON.stringify(record, null, 2));
-  assert.equal(
-    cli(['read', '--run', f.run, '--input', 'MEMORY-CONTRACT.md']).sha256,
-    sha256(contract),
-  );
-  const window = command(['read', '--run', f.run, '--input', 'WINDOW.md']);
-  assert.equal(
-    JSON.parse(window.stderr).code,
-    'CURATOR_IO_INPUT_NOT_AUTHORIZED',
-  );
-  await draftWrite(f);
-  assert.equal(cli(['complete', '--run', f.run]).status, 'SUCCESS');
-});
 
 const uuidV4 =
   /^kn-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

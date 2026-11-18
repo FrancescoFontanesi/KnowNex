@@ -13,7 +13,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   emptyMemory,
   initCurator,
@@ -22,10 +22,10 @@ import {
   applyCurator,
   curatorStatus,
   abandonCurator,
-} from '../src/curator.ts';
-import { preparedCheckpoint } from '../src/native-checkpoint.ts';
-import { readCurationInput } from '../src/curation-io.ts';
-import { sha256 } from '../src/artifact-io.ts';
+} from '../src/curation/curator.ts';
+import { preparedCheckpoint } from '../src/checkpoint/native-checkpoint.ts';
+import { readCurationInput } from '../src/checkpoint/curation-io.ts';
+import { sha256 } from '../src/shared/artifact-io.ts';
 
 async function fixture(t: TestContext) {
   const root = await realpath(
@@ -269,34 +269,4 @@ test('removing the feed binding cannot authorize publication or re-preparation',
   });
   await assert.rejects(f.prepare(), { code: 'CURATOR_WORKSPACE_CONFLICT' });
   assert.equal((await json(join(f.work, 'checkpoint.json'))).sequence, 0);
-});
-
-test('checkpoint administration is recognized without a Codex hook while mixed content stays material', async (t) => {
-  const f = await fixture(t);
-  await f.append('Project fact.');
-  await f.append('$knownex-checkpoint');
-  await f.append('$knownex-checkpoint Keep this project decision.');
-  const p = await f.prepare();
-  const packet = await json(join(p.run!, 'packet.json'));
-  assert.equal(p.through, 3);
-  assert.deepEqual(
-    packet.events.map((e: { sequence: number }) => e.sequence),
-    [1, 3],
-  );
-  assert.deepEqual((await json(join(p.run!, 'run.json'))).excluded, [2]);
-  await applyNoop(f.work, p.run!);
-  assert.equal((await json(join(f.work, 'checkpoint.json'))).sequence, 3);
-});
-
-test('an explicit cutoff including trailing administration leaves subsequent empty prepare as a no-op', async (t) => {
-  const f = await fixture(t);
-  await f.append('Fact.');
-  await f.append('$knownex-checkpoint');
-  const p = await prepareCurator(f.work, undefined, { through: 2 });
-  await applyNoop(f.work, p.run!);
-  assert.equal((await f.prepare()).status, 'noop');
-  assert.equal(
-    (await curatorStatus(f.work, join(f.feed, 'project.jsonl'))).readyThrough,
-    2,
-  );
 });

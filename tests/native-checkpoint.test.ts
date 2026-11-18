@@ -15,16 +15,23 @@ import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { emptyMemory } from '../src/curator.ts';
-import { acquireJournalLock } from '../src/journal-lock.ts';
-import { appendFeedEvent } from '../src/feed.ts';
+import { emptyMemory } from '../src/curation/curator.ts';
+import { acquireJournalLock } from '../src/shared/journal-lock.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   preparedCheckpoint,
   delegationResult,
   type DelegationResult,
-} from '../src/native-checkpoint.ts';
-import { readCurationInput, writeCurationDraft } from '../src/curation-io.ts';
-import { jsonText, sha256, writeExclusiveFiles } from '../src/artifact-io.ts';
+} from '../src/checkpoint/native-checkpoint.ts';
+import {
+  readCurationInput,
+  writeCurationDraft,
+} from '../src/checkpoint/curation-io.ts';
+import {
+  jsonText,
+  sha256,
+  writeExclusiveFiles,
+} from '../src/shared/artifact-io.ts';
 
 /** A raw delivery past curate write's checks: what complete itself must still refuse. */
 async function deliverRaw(
@@ -43,7 +50,7 @@ async function deliverRaw(
   return { proposal: written.at(-1)! };
 }
 
-async function fixture(t: test.TestContext, authorized = true) {
+async function fixture(t: test.TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'knownex-native-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, '.knownex/memory'),
@@ -55,14 +62,10 @@ async function fixture(t: test.TestContext, authorized = true) {
   for (const [type, turnId, text] of [
     ['user_message', 'facts', 'SOURCE_SENTINEL: persist confirmed facts.'],
     ['assistant_final', 'facts', 'Confirmed.'],
-    ...(authorized
-      ? [['user_message', 'authorization', '$knownex-checkpoint']]
-      : []),
   ])
     await appendFeedEvent(feed, {
       type: type as 'user_message' | 'assistant_final',
       sessionId: 'native-fixture',
-      nativeThreadId: 'native-fixture',
       turnId: turnId!,
       text: text!,
       hook: type === 'assistant_final' ? 'Stop' : 'UserPromptSubmit',
@@ -79,8 +82,7 @@ async function begin(work: string) {
 }
 async function produce(run: string, kind = 'valid') {
   const p = JSON.parse((await readCurationInput(run, 'packet.json')).text);
-  const state =
-    '# Native result\n\nMEMORY_SENTINEL\n\n[E002](' + p.feed + ')\n';
+  const state = '# Native result\n\nMEMORY_SENTINEL\n\n[E002]\n';
   return deliverRaw(
     run,
     kind === 'noop'
@@ -260,15 +262,6 @@ for (const kind of [
       assert.equal(await readFile(join(f.memory, name), 'utf8'), expected);
   });
 
-test('native prepare works without any invocation in the feed', async (t) => {
-  const f = await fixture(t, false);
-  const p = await begin(f.work);
-  assert.equal(p.through, 2);
-  await produce(p.run);
-  const result = await finish(f.work, p.runId);
-  assert.equal(result.status, 'SUCCESS');
-});
-
 test('prepare and CLI complete expose only compact coordination results', async (t) => {
   const f = await fixture(t);
   const cli = (...args: string[]) =>
@@ -331,7 +324,7 @@ test('native apply crash recovers the same authorization without another delegat
     p = await begin(f.work);
   await produce(p.run);
   const module = pathToFileURL(
-    join(process.cwd(), 'src/native-checkpoint.ts'),
+    join(process.cwd(), 'src/checkpoint/native-checkpoint.ts'),
   ).href;
   const code = `const fs=await import('node:fs/promises'),rename=fs.default.rename;fs.default.rename=async(...a)=>{const r=await rename(...a);if(String(a[1]).replaceAll('\\\\','/').endsWith('/memory/STATE.md'))process.exit(73);return r};(await import('node:module')).syncBuiltinESMExports();const {preparedCheckpoint}=await import(${JSON.stringify(module)});await preparedCheckpoint(${JSON.stringify(f.work)},${JSON.stringify({ stage: 'complete', run: p.runId })});`;
   const child = spawnSync(
@@ -369,7 +362,7 @@ async function draft(run: string, source = 2, sentinel = 'MEMORY_SENTINEL') {
   );
   await writeFile(
     join(dir, 'STATE.md'),
-    '# Native result\n\n' + sentinel + '\n\n[E002](' + p.feed + ')\n',
+    '# Native result\n\n' + sentinel + '\n\n[E002]\n',
   );
   await writeFile(
     join(dir, 'review.json'),

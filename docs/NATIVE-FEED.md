@@ -12,17 +12,14 @@ The feed keeps `user_message`, `assistant_commentary` and `assistant_final`.
 User and final come from the hook payloads; only the textual intermediates
 are selected from the transcript during Stop
 ([criteria](INTERMEDIATE-MESSAGES.md)). The writer `appendFeedEvent(directory,
-input)` in `src/feed.ts` does not import provider formats: it receives `type`,
+input)` in `src/feed/feed.ts` does not import provider formats: it receives `type`,
 `sessionId`, `turnId`, `text` and `hook`, and adds `sequence` (from 1) and
 `capturedAt` (UTC ISO). `hook` is the provenance supplied by the caller, not an
-event identifier. The `nativeThreadId` field of events captured in the
-past stays valid but is no longer written.
+event identifier.
 
 The writer always writes `project.jsonl` in the feed folder
-(`.knownex/internal/feed/`, `.knownex/feed/` in the legacy layout), excluded from Git and
-shared between sessions. The per-session format `.knownex/feed/<sha256 UTF-8 of
-sessionId>.jsonl` remains the legacy format: init keeps it and the runtime
-reports its presence (`LEGACY_SESSION_FEEDS`), without an implicit migration.
+(`.knownex/internal/feed/`), excluded from Git and
+shared between sessions. Per-session feed files are not supported.
 Identities always keep the original session.
 
 Every complete LF line is a frame `{ block, checksum }`, with block
@@ -61,8 +58,8 @@ access the same registry through hard link or symlink aliases.
 
 ## Hook adapter
 
-The `feed.cjs` script passes the payload via stdin to `dist/feed-hook.js` in the
-installed package (`src/feed-hook.ts` in the development fallback). The adapter extracts the
+The `feed.cjs` script passes the payload via stdin to `dist/hooks/feed-hook.js` in the
+installed package (`src/hooks/feed-hook.ts` in the development fallback). The adapter extracts the
 original field (`prompt` or `last_assistant_message`) and calls the writer. During
 Stop it first tries to capture the commentary of the same turn: transcript
 problems do not prevent keeping the final and are reported as codes in

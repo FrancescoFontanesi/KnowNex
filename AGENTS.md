@@ -1,22 +1,49 @@
-<!-- knownex:start -->
+# KnowNex development
 
-## KnowNex continuity
+This repository develops KnowNex. KnowNex is not installed here: do not run
+`knownex checkpoint` or recall in this folder and do not suggest it. The usage
+instructions that `knownex init` writes into a user's workspace live in
+`policy` in `src/cli/bootstrap.ts`, not in this file.
 
-Hooks capture the conversation automatically. Do not ask the user what to save and do not write artificial summaries to feed the memory. These instructions are in English, but they do not set the language: talk with the user in the language they use.
+## Commands
 
-### Context and recall
+- `npm run check`: typecheck, all tests, prettier check and build. Run it
+  before handing work back.
+- `npm test`, `npm run typecheck`, `npm run format`.
+- Installer: `npm pack` builds the `.tgz` (`prepack` runs the build).
 
-- **STATE** is the automatic handoff when a new session starts in the same workspace: reuse it with the conversation context, without re-injecting it every turn or checking it periodically. After a compact STATE is not emitted again: the conversation summary already holds it.
-- STATE is the project state up to the last confirmed checkpoint. Later events may have changed it.
-- If the available context is enough, go on without Recall. Read a note already linked from STATE directly with `npm exec --offline -- knownex memory read`: it is a single read.
-- Delegate history (HISTORY, windows, revisions and events), taxonomy and searches for unknown references to a subagent with its own context, which follows the `knownex-recall` skill (`.agents/skills/knownex-recall/SKILL.md`) read-only and returns facts, references, provenance and limits. Pass a precise request and the references you already know, not the whole conversation. If the harness has no subagents, say so.
-- STATE holds the present, Knowledge the topic details, HISTORY the transitions. Do not explore whole archives without need.
-- Reuse information and documents already retrieved during the turn. Do not repeat reads just to confirm.
-- If the context is incomplete, the pending is partial or some information is missing, state the limits without inventing facts.
+## Layout
 
-### Checkpoint
+- `src/index.ts`: the `knownex` binary; it routes to the commands in `src/`:
+  - `cli/`: commands (`cli/cli.ts`, `curate` in `cli/curator-cli.ts`,
+    `taxonomy` in `cli/taxonomy-cli.ts`) and `init` (`cli/bootstrap.ts`, which
+    also holds the workspace `policy`).
+  - `hooks/`: what the installed hook scripts run (feed capture, SessionStart).
+  - `feed/`: the append-only event feed, its reader and intermediate messages.
+  - `checkpoint/`: `knownex checkpoint`: prepare, the one-call provider
+    session (`checkpoint/checkpoint-launcher.ts`), draft delivery, complete.
+  - `curation/`: memory writes: prepare, validate, apply and recovery
+    (`curation/curator.ts`), HISTORY, Knowledge revisions, taxonomy.
+  - `memory/`: memory reads (`memory/navigator.ts`) and session status.
+  - `shared/`: UTF-8 file I/O, locks, workspace paths.
+- `tests/`: one `*.test.ts` per area, `tests/helpers/` for shared builders.
+  Fixtures build memory through real checkpoints, not hand-written files.
+- `skills/`: the curator, recall and taxonomy skills shipped to users; `init`
+  installs them into the workspace's `.agents/skills/` (kept out of
+  `.agents/` here so no agent loads them while developing). The curator skill
+  is also the curation prompt (sections 1 and 6 are dropped for the one-call
+  flow).
+- `.codex/hooks/`: the hook scripts installed workspaces call through
+  wrappers, by this path in the package: do not move them. There is no
+  `.codex/hooks.json` here on purpose.
+- `docs/`: user and design documentation; `tests/docs-links.test.ts` checks
+  its links and the source paths it names.
 
-Keep the conversation natural. State decisions, results, evidence and open problems when they matter to the task, without templates or mandatory sections.
+## Conventions
 
-At significant milestones (superseded decisions, verified results, changes of focus, handoffs or relevant compactions) suggest in one line to run the checkpoint, for example `npm exec --offline -- knownex checkpoint --codex -m gpt-6.1-sol -r medium`, and keep working. The user decides the checkpoint: run it only on their explicit request, as a background command, and report only the outcome. Curation happens in a separate session: do not read or change the memory yourself to curate it.
-<!-- knownex:end -->
+- Code, comments, docs, skills and runtime messages are in English. Memory
+  content follows the user's language; runtime labels stay fixed.
+- Only the current memory format is supported: no compatibility code for
+  formats or installs of earlier releases. A format change needs a new
+  memory, not a reader for the old one.
+- Prettier formats everything; keep tests next to the behavior they prove.

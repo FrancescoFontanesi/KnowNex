@@ -4,9 +4,9 @@ const { existsSync } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { join, resolve } = require('node:path');
 const runtime = resolve(__dirname, '../..');
-const entry = existsSync(join(runtime, 'dist/session-hook.js'))
-  ? join(runtime, 'dist/session-hook.js')
-  : join(runtime, 'src/session-hook.ts');
+const entry = existsSync(join(runtime, 'dist/hooks/session-hook.js'))
+  ? join(runtime, 'dist/hooks/session-hook.js')
+  : join(runtime, 'src/hooks/session-hook.ts');
 // A broken harness output channel cannot receive a second diagnostic payload.
 process.stdout.on('error', () => {
   process.exitCode = 1;

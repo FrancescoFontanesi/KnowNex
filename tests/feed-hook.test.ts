@@ -26,22 +26,6 @@ async function fixture(t: TestContext) {
   return { root, script };
 }
 
-test('an existing legacy feed stays in place without creating a canonical feed', async (t) => {
-  const { root, script } = await fixture(t);
-  await mkdir(join(root, '.knownex/feed'), { recursive: true });
-  const result = await invoke(script, {
-    hook_event_name: 'UserPromptSubmit',
-    session_id: 'legacy',
-    turn_id: 'one',
-    prompt: 'Preserve legacy placement',
-  });
-  assert.equal(result.code, 0);
-  assert.equal((await readdir(join(root, '.knownex/feed'))).length, 1);
-  await assert.rejects(readdir(join(root, '.knownex/internal')), {
-    code: 'ENOENT',
-  });
-});
-
 function invoke(script: string, payload: unknown) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>(
     (resolve, reject) => {

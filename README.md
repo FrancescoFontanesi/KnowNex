@@ -82,7 +82,8 @@ in:
   the `[E017]` labels and the labels the runtime writes in HISTORY windows
   (`- Date:`, `- Events:`, `## Resulting STATE`).
 
-Memories written by earlier, Italian releases stay readable as they are.
+Only the current memory format is supported: a workspace installed with an
+earlier release candidate needs a fresh `knownex init` and a new memory.
 
 ## Guarantees and limits
 
@@ -115,12 +116,19 @@ npm run dev -- --help
 
 The code uses ESM and relative `.ts` imports; the build produces JavaScript in `dist/`.
 
-- `src/`: CLI, feed, curation, navigator, bootstrap.
-- `tests/`: deterministic checks with synthetic data.
-- `.agents/skills/`: curator, recall and taxonomy skills shipped with the package.
-- `.codex/`: hooks (the same scripts also serve Claude Code).
+- `src/`: `index.ts` (the `knownex` binary) and one folder per area: `cli/`
+  (commands and `init`), `hooks/`, `feed/`, `checkpoint/`, `curation/`
+  (memory writes), `memory/` (memory reads), `shared/` (I/O, locks, paths).
+- `tests/`: deterministic checks with synthetic data; `helpers/` for shared
+  builders.
+- `skills/`: curator, recall and taxonomy skills shipped with the package;
+  `init` installs them into the workspace's `.agents/skills/`.
+- `.codex/hooks/`: hook scripts (the same scripts also serve Claude Code).
+  Installed wrappers load them from this path in the package.
 - `docs/`: current contracts and procedures.
 
-`.knownex/`, `.local/`, `node_modules/`, `dist/` and the `graft/` cache are excluded from Git.
+KnowNex is not installed in this repository: there are no active hooks, skills
+or memory here. `node_modules/`, `dist/` and the `graft/` cache are excluded
+from Git.
 The evaluation harnesses (retrieval and cold restart, with `scripts/measure.ts`)
 are archived outside the repository, in `F:\KnowNex-archive\`.

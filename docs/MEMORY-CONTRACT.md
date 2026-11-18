@@ -10,8 +10,7 @@ automatically: the memory keeps the history as actually recorded.
 Hashes verify internal integrity. They do not verify the authenticity or
 completeness of the original conversation, and they do not protect independently
 against a process that can rewrite the feed and the metadata in the workspace.
-The legacy fields `nativeThreadId` and `nativeHistory: true` do not require
-external access; exclusions and revisions already confirmed stay preserved, with
+Confirmed exclusions and revisions stay preserved, with
 no retroactive reconstruction.
 
 ## Confirmed memory
@@ -47,10 +46,7 @@ make STATE smaller.
 
 Validate exposes stateBytes of the final text as a non-blocking UTF-8 diagnostic,
 after rebasing and link fixing. Prepare does not impose a budget and apply does not
-reject a proposal for size alone. Any stateBudget in the packets and size counters
-of old validations do not change the protocol or the seals: existing batches stay
-usable. Noop, recovery and replay fully preserve the authorized generation, also in
-legacy archives.
+reject a proposal for size alone. Noop, recovery and replay fully preserve the authorized generation.
 
 SessionStart tries to emit the complete STATE in additionalContext
 at startup (not after compact, where the summary already contains the context),
@@ -79,11 +75,11 @@ windows match one to one, with no orphans and none missing.
 - Events: `E015..E016`
 - Topics: contract; curation
 - Description: adopting the contract
-- Transition: state updated; reasons in the [note](../knowledge/contract.md).
+- Transition: state updated; reasons in the [note](../knowledge/H000003/contract--kn-UUID--REV.md).
 
 ## Notes written
 
-- [knowledge/contract.md](../knowledge/H000016/contract--kn-UUID--REV.md)
+- [knowledge/contract.md](../knowledge/H000003/contract--kn-UUID--REV.md)
 
 ## Resulting STATE
 
@@ -92,13 +88,10 @@ windows match one to one, with no orphans and none missing.
 …
 ```
 
-Segments written before the windows stay at the top of HISTORY.md, between the
-delimiters `<!-- knownex-history:H000001:begin -->` and `:end`, with the previous
-STATE quoted line by line (legacy format: its labels, such as `### STATE precedente`
-and `- Eventi:`, remain in Italian); numbering continues in the index lines.
+HISTORY.md holds only the index lines.
 The windows are not Curator input and are not copied into the runs.
 
-The IDs `H000001`, `H000002`, … are progressive; the delimiters are reserved.
+The IDs `H000001`, `H000002`, … are progressive.
 The date derives from the capture of the last included event; it does not claim to
 date the decision more precisely. The range indicates the materialized batch.
 An explicit `noop` confirmation can advance the checkpoint without replacing STATE
@@ -132,13 +125,12 @@ type: knowledge
 
 Real IDs are lowercase UUID v4 with the `kn-` prefix, unique and immutable.
 Confirmed paths are kept: this cycle exposes no deletion, renaming or alias
-families. The three M1.3 IDs of the test copy are preserved.
+families.
 There are no other mandatory documents and no separate provenance index.
 
 The [revisions contract](KNOWLEDGE-REVISIONS.md) adds an immutable archive outside
 the active tree. Current notes stay complete; the v3 checkpoint keeps the current
-references. The adoption of v2 workspaces happens only at the next authorized
-promotion, with no retroactive guarantees on the old history.
+references.
 
 ## Pending window and provenance
 
@@ -154,28 +146,28 @@ text, session and turn when they change, and a header with citable
 artifacts, approved categories, directive and ordering warnings.
 
 Explicit provenance is a label in square brackets without a link, for example
-`[E017]` or `[E015–E016]`, or the `- Eventi` field (the legacy format's label) in
-the HISTORY segments.
+`[E017]` or `[E015–E016]`, or the `- Events` field in
+the HISTORY windows.
 The feed lives outside the memory folder: a link to it would be broken in Obsidian
 and would open a whole JSONL for an agent, while the label is enough to read the
-event by sequence. `curate write` reduces to a label the feed links copied from the
-previous STATE; feed links already published stay valid and are checked as before.
+event by sequence. A link to the feed is not accepted in memory and the feed is not an authorized
+link target. When a Curator draft still writes a linked label, `curate write`
+reduces it to the bare label.
 Titles, topics and ordinary prose not in square brackets (even `Catalogo E1` or
 `E999`) do not declare provenance.
 
 Every reference uses `E` followed by the number with at least three digits, with no
 extra zeros: `E001`, `E017`, `E1000`. Text in square brackets that starts like a
 label (`[E1]`, `[E002–E001]`) is treated as a label and therefore rejected if
-malformed. In feed links, descriptive labels such as `repetition E009` are allowed;
-all IDs present must be valid. Ranges use `E015–E016`, `E015..E016` or `E015-E016`,
+malformed; all IDs present must be valid. Ranges use `E015–E016`, `E015..E016` or `E015-E016`,
 with ordered, inclusive endpoints; incomplete or chained ones are rejected. The
-HISTORY field keeps the syntax `E015..E016`. A label linked to a document other
-than the feed is rejected.
+HISTORY field keeps the syntax `E015..E016`. A linked label (`[E017](...)`) is
+rejected: provenance is only the bare label.
 Code and artifacts are cited as paths from the workspace root in backticks;
 any links to external files stay limited to authorized artifacts.
 
 For recognized references, the sequence is
-scoped to the feed fixed by the workspace (session or project). They are not JSONL
+scoped to the project feed. They are not JSONL
 anchors. Cited sequences must exist and be within the frozen cutoff. STATE and every
 Knowledge note must have at least one reference to the feed. The only exception is
 the canonical empty seed of the bootstrap, with no materialized facts; init at
@@ -216,13 +208,8 @@ needed; it reads an existing note only to cite or supersede it, without rewritin
 It does not preload all the Knowledge notes. Missing essential sources require a
 stop, not duplication or implicit widening of the batch. No second session.
 
-Legacy batches without a manifest stay compatible: --context selects explicit
-notes; the mode is not changed in a pending batch. The new workflow does not require
-this selection from the main session.
-
 The packet, WINDOW.md, the skill and the frozen base are the authorized inputs;
-this contract is no longer frozen into the runs (runs prepared before still include
-it and stay valid). The published proposal
+this contract is not frozen into the runs. The published proposal
 is a UTF-8 JSON with no Markdown fences; `curate write` assembles it from the draft,
 in which the Curator writes STATE and notes as separate files:
 
@@ -251,9 +238,8 @@ The optional categories field of update associates only new notes
 with keys of the taxonomy registry frozen in the packet. Omission means no
 category. The knowledge/topic.md paths are logical keys of the packet/proposal. New
 or modified confirmed revisions use memory/knowledge/H000NNN/[category]/ (the id of
-the HISTORY entry; the earlier `checkpoint-NNNN` folders stay readable),
-with no second flat current copy; legacy workspaces stay unchanged. Details,
-compatibility and registry format are in the [revisions contract](KNOWLEDGE-REVISIONS.md).
+the HISTORY entry), with no second flat current copy. Details
+and registry format are in the [revisions contract](KNOWLEDGE-REVISIONS.md).
 A proposal with no effective change is rejected: use `{"action":"noop"}`.
 
 `validate` generates the candidate and the history segment, verifies Knowledge
@@ -269,7 +255,7 @@ advances only after the writes. The historical comparison, critical continuity a
 the preliminary coverage check belong to the Curator; there is no independent
 semantic review in the controller. This trade-off remains: validation does not
 prove semantic completeness or relevance. The targeted review and apply --confirm
-remain an explicit manual path for exceptions and legacy, not an ordinary step.
+remain an explicit manual path for exceptions, not an ordinary step.
 The command passes to the session only the run's task. Feed sequence/checksum
 are frozen in the run and in the controller receipt.
 Complete requires only the same run, with no new authorizations. Before the
@@ -305,9 +291,7 @@ JSONL reads and incremental hashes preserve the original bytes.
 The CLI carries values as ASCII-safe JSON, separately from the serialization
 of the artifacts: escapes do not change values after parsing, hashes or files.
 No Unicode normalization, newline conversion or retroactive rewriting.
-Legacy files and v1/v2 reviews stay accepted without requiring new receipts
-or I/O markers; compatibility does not authorize alternative writers in new
-runs. Operational instructions are in the Curator skill, without changing its
+Operational instructions are in the Curator skill, without changing its
 semantic task or that of the main session.
 
 ### Autonomous Curator report
@@ -336,18 +320,14 @@ review.json is a run artifact, not a second memory or a task registry:
 changes contains exactly STATE and the proposed notes; noop requires an empty changes.
 The STATE entry also declares closed or removed decisions, blockers or prerequisites.
 sources (events used) and ignored (events deliberately discarded) are disjoint and
-together cover exactly the sequences of the batch in packet.json, therefore
-excluding the filtered administrative ones: a forgotten event is rejected with
+together cover exactly the sequences of the batch in packet.json: a forgotten event is rejected with
 CURATOR_REVIEW_INVALID. On noop sources can be empty and everything is in ignored.
 The sequences in changes can also cite earlier relevant sources, not future events.
 
-Version 4 adds ignored. An already sealed v3 review, for example of a BLOCKED batch
-awaiting explicit apply, stays accepted without the coverage check.
-Version 3 no longer has the line-by-line `critical` map: the model chose it
+Only version 4 (with `ignored`) is accepted; earlier versions and the `critical`
+list are not supported. There is no line-by-line critical map: the model chose it
 itself, so an omission stayed invisible, and a lost entry remains recoverable from
-HISTORY and the immutable revisions. The v1/v2 reviews already written,
-for example of a BLOCKED batch awaiting explicit apply, stay accepted:
-`critical` must be a list but its content is no longer verified.
+HISTORY and the immutable revisions.
 The canonical writer produces only version 4.
 
 Validate verifies shape, document correspondence, citations and input hashes.
@@ -358,10 +338,9 @@ truthfulness of the report.
 
 ## Integrity and recovery
 
-A cross-process lock serializes every operation. The legacy v2/versioned v3 checkpoint, tree hash,
+A cross-process lock serializes every operation. The v3 checkpoint, tree hash,
 feed chain, frozen run and seal prevent the application of stale or altered
-proposals in the supported cases. Experimental v1 workspaces are rejected;
-no automatic migration. A canonical copy is initialized with a revised cutoff.
+proposals in the supported cases. Workspaces in any other format are rejected.
 
 Before touching the confirmed files, `apply` atomically publishes `apply.json`, with
 the authorized seal, previous and next trees, checkpoint and record checksum.
@@ -379,8 +358,7 @@ proposal or LLM invocations are needed. A HISTORY suffix is never re-added durin
 recovery. An interruption before publication leaves the previous state.
 
 An incomplete/corrupt record, unexpected files or an incompatible checkpoint stop
-the operation with no arbitrary repairs. Promotions interrupted before
-this protocol, with no record, stay blocked by the hash verification.
+the operation with no arbitrary repairs.
 V2.3b synchronizes journal contents and namespace before the Markdown files, then
 the whole tree before the checkpoint; it keeps the journal after the pending cleanup.
 Recovery can rebuild missing Markdown names and checkpoint from the intact record.

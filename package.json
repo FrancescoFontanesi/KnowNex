@@ -2,20 +2,19 @@
   "name": "knownex",
   "version": "0.1.0-rc.11",
   "private": true,
-  "description": "Memoria procedurale locale per workspace Codex e Claude Code.",
+  "description": "Local project memory for Codex, Claude Code and Antigravity workspaces.",
   "type": "module",
   "bin": {
     "knownex": "dist/index.js"
   },
   "files": [
     "dist/",
-    ".codex/hooks/stop.cjs",
     ".codex/hooks/feed.cjs",
     ".codex/hooks/session.cjs",
-    ".agents/skills/knownex-curator/SKILL.md",
-    ".agents/skills/knownex-recall/SKILL.md",
-    ".agents/skills/knownex-taxonomy/SKILL.md",
-    ".agents/skills/knownex-taxonomy/agents/openai.yaml",
+    "skills/knownex-curator/SKILL.md",
+    "skills/knownex-recall/SKILL.md",
+    "skills/knownex-taxonomy/SKILL.md",
+    "skills/knownex-taxonomy/agents/openai.yaml",
     "docs/"
   ],
   "engines": {
@@ -31,7 +30,7 @@
     "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
     "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
     "check": "npm run typecheck && npm test && npm run format:check && npm run build",
-    "curate": "node src/curator-cli.ts"
+    "curate": "node src/cli/curator-cli.ts"
   },
   "devDependencies": {
     "@types/node": "24.13.5",

@@ -21,13 +21,13 @@ async function fixture(t: TestContext, script: string) {
     await rm(root, { recursive: true, force: true });
   });
   await mkdir(join(root, '.codex/hooks'), { recursive: true });
-  await mkdir(join(root, 'dist'));
+  await mkdir(join(root, 'dist/hooks'), { recursive: true });
   const wrapper = join(root, '.codex/hooks/session.cjs');
   await copyFile(
     process.env.KNOWNEX_SESSION_WRAPPER ?? resolve('.codex/hooks/session.cjs'),
     wrapper,
   );
-  await writeFile(join(root, 'dist/session-hook.js'), script);
+  await writeFile(join(root, 'dist/hooks/session-hook.js'), script);
   return { root, wrapper };
 }
 const payload = (state: string) =>
@@ -168,7 +168,7 @@ test('SessionStart wrapper discards stderr and fails explicitly when its downstr
   // Use a valid large payload so the failure occurs while delivering, not validating.
   await writeFile(join(f.root, 'payload.bin'), expected);
   await writeFile(
-    join(f.root, 'dist/session-hook.js'),
+    join(f.root, 'dist/hooks/session-hook.js'),
     `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(join(f.root, 'payload.bin'))}));`,
   );
   const child = spawn(process.execPath, [f.wrapper], {

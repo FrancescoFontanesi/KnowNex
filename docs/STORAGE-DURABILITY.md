@@ -2,7 +2,7 @@
 
 The [Knowledge versioning](KNOWLEDGE-REVISIONS.md) extends the journal to the new
 archives/receipts only. Their files and the `revisions/` namespace are synchronized
-before the v3 checkpoint. v1 recovery stays supported. This extension is
+before the v3 checkpoint. This extension is
 verified with simulated crash/EIO and adds no evidence of physical durability.
 
 **Protocol implemented and verified under conditional model B.**
@@ -133,10 +133,10 @@ No additional LLM, agentic benchmark, new dependency or final qualification.
 
 ## Canonical memory layout
 
-New installations publish the revisions directly in .knownex/memory/knowledge
+The revisions are published directly in .knownex/memory/knowledge
 and STATE/HISTORY in .knownex/memory. Journal and receipts stay in internal/curator.
 The publication and parent barriers follow the effective paths. Before the
 checkpoint the current HEADs are also synchronized, with no persistent
 flat projections. Recovery rebuilds the same logical generation from the HEADs.
-Legacy workspaces are not moved. No new guarantee of physical durability.
+No new guarantee of physical durability.
 Details and limits of external Markdown readers: [MEMORY-LAYOUT.md](MEMORY-LAYOUT.md).

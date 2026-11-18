@@ -15,7 +15,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 import {
   initCurator,
   prepareCurator,
@@ -23,34 +23,17 @@ import {
   applyCurator,
   abandonCurator,
   readPendingEvents,
-} from '../src/curator.ts';
-import { historySegments } from '../src/history.ts';
-import { historyAppendix } from './legacy-history.ts';
-import { memoryState, memoryFind, memoryRead } from '../src/navigator.ts';
+  emptyMemory,
+} from '../src/curation/curator.ts';
+import { historySegments, historyWindow } from '../src/curation/history.ts';
+import {
+  memoryState,
+  memoryFind,
+  memoryRead,
+} from '../src/memory/navigator.ts';
 
-test('S3 exact empty seed initializes at zero without rewriting the original seed', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'knownex-s3-seed-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const seed = join(root, 'seed'),
-    work = join(root, 'curator'),
-    feed = join(root, 'project.jsonl');
-  await mkdir(seed);
-  const old =
-    '# Stato iniziale\n\nNessun evento e ancora rappresentato da un checkpoint curator.\n';
-  await writeFile(join(seed, 'STATE.md'), old);
-  await writeFile(join(seed, 'HISTORY.md'), '# History\n');
-  await writeFile(feed, '');
-  await initCurator(work, seed, feed, 0);
-  assert.equal(await readFile(join(seed, 'STATE.md'), 'utf8'), old);
-  assert.equal(
-    JSON.parse(await readFile(join(work, 'checkpoint.json'), 'utf8')).sequence,
-    0,
-  );
-  assert.match(
-    await memoryState(join(work, 'memory')),
-    /Nothing materialized yet/,
-  );
-});
+const TOPIC = 'knowledge/H000001/topic.md',
+  SECOND = 'knowledge/H000001/second.md';
 
 async function fixture(t: TestContext, twoNotes = false) {
   const root = await mkdtemp(join(tmpdir(), 'knownex-r1-'));
@@ -74,34 +57,42 @@ async function fixture(t: TestContext, twoNotes = false) {
     directive,
     'Preserve the open task and explain the transition.',
   );
-  await mkdir(join(memory, 'knowledge'), { recursive: true });
+  // E0 is the empty memory; a first real checkpoint at E1 writes STATE and the notes.
+  await mkdir(memory, { recursive: true });
+  for (const [name, text] of Object.entries(emptyMemory))
+    await writeFile(join(memory, name), text);
+  await initCurator(work, memory, feed, 0);
+  const note =
+    '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n\n# Topic\n\nTechnical detail. [E001]\n';
+  const seed = await prepareCurator(work, directive, { through: 1 });
   await writeFile(
-    join(memory, 'STATE.md'),
-    '# State\n\nOpen: preserve task. [E001](../feed/' +
-      feed.split(/[\\/]/).at(-1) +
-      ')\n\n[Topic](knowledge/topic.md)\n',
+    seed.proposal!,
+    JSON.stringify({
+      action: 'update',
+      state:
+        '# State\n\nOpen: preserve task. [E001]\n\n[Topic](knowledge/topic.md)\n',
+      history: {
+        summary: 'Seed',
+        topics: ['Seed'],
+        transition: 'Initial state.',
+      },
+      knowledge: {
+        'knowledge/topic.md': note,
+        ...(twoNotes
+          ? {
+              'knowledge/second.md': note
+                .replace('000000000001', '000000000002')
+                .replace('# Topic', '# Second'),
+            }
+          : {}),
+      },
+    }),
   );
-  await writeFile(join(memory, 'HISTORY.md'), '# History\n');
-  await writeFile(
-    join(memory, 'knowledge/topic.md'),
-    '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n\n# Topic\n\nTechnical detail. [E001](../../feed/' +
-      feed.split(/[\\/]/).at(-1) +
-      ')\n',
-  );
-  if (twoNotes)
-    await writeFile(
-      join(memory, 'knowledge/second.md'),
-      (await readFile(join(memory, 'knowledge/topic.md'), 'utf8'))
-        .replace('000000000001', '000000000002')
-        .replace('# Topic', '# Second'),
-    );
-  await initCurator(work, memory, feed, 1);
+  await applyCurator(work, (await validateCurator(work)).seal);
   async function propose(through = 2, extra: Record<string, unknown> = {}) {
     const prep = await prepareCurator(work, directive, {
       through,
-      context: twoNotes
-        ? ['knowledge/topic.md', 'knowledge/second.md']
-        : ['knowledge/topic.md'],
+      context: twoNotes ? [TOPIC, SECOND] : [TOPIC],
     });
     assert.ok(prep.run);
     const packet = JSON.parse(
@@ -112,9 +103,7 @@ async function fixture(t: TestContext, twoNotes = false) {
       state:
         '# State\n\nOpen: preserve task. New advancement. [E00' +
         through +
-        '](' +
-        packet.feed +
-        ')\n\n[Topic](knowledge/topic.md)\n',
+        ']\n\n[Topic](knowledge/H000001/topic.md)\n',
       history: {
         summary: 'Advancement',
         topics: ['Memory'],
@@ -138,30 +127,15 @@ async function fixture(t: TestContext, twoNotes = false) {
   };
 }
 
-async function pinnedBaselineState(work: string, state: string) {
-  const { record } = JSON.parse(
-    await readFile(join(work, 'apply.json'), 'utf8'),
-  );
-  const file = record.revisionFiles.find((p: { file: string }) =>
-    p.file
-      .split('/')
-      .at(-1)!
-      .startsWith('kn-00000000-0000-4000-8000-000000000001--b-'),
-  ).file;
-  assert.match(
-    await readFile(join(work, 'revisions', file), 'utf8'),
-    /id: kn-00000000-0000-4000-8000-000000000001/,
-  );
-  return state.replace('knowledge/topic.md', '../revisions/' + file);
-}
-
 test('STATE sizes across the old threshold validate, confirm and noop without losing linked knowledge', async (t) => {
   const f = await fixture(t),
     p = await f.propose();
   assert.equal(p.packet.stateBudget, undefined);
   const first = await validateCurator(f.work);
   const feed = await readFile(f.feed);
-  const knowledge = await readFile(join(f.memory, 'knowledge/topic.md'));
+  const knowledge = await readFile(
+    join(f.memory, 'knowledge/H000001/topic.md'),
+  );
   let latest = first;
   for (const size of [6143, 6144, 6145, 24576]) {
     const padding = size - first.stateBytes;
@@ -185,7 +159,7 @@ test('STATE sizes across the old threshold validate, confirm and noop without lo
     (await memoryRead(f.memory, target)).content.includes('Technical detail.'),
   );
   assert.deepEqual(
-    await readFile(join(f.memory, 'knowledge/topic.md')),
+    await readFile(join(f.memory, 'knowledge/H000001/topic.md')),
     knowledge,
   );
   assert.deepEqual(await readFile(f.feed), feed);
@@ -197,17 +171,17 @@ test('STATE sizes across the old threshold validate, confirm and noop without lo
   assert.equal(await memoryState(f.memory), confirmed);
 });
 
-test('legacy extended STATE remains readable and authorized noop recovery and replay remain intact', async (t) => {
+test('an extended STATE remains readable and authorized noop recovery and replay remain intact', async (t) => {
   const f = await fixture(t);
   const legacyState =
-    '# Legacy extended\n\n' +
-    'é'.repeat(10000) +
-    '\n[E001](../feed/' +
-    basename(f.feed) +
-    ')\n';
+    '# Legacy extended\n\n' + 'é'.repeat(10000) + '\n[E001]\n';
   await writeFile(join(f.initialMemory, 'STATE.md'), legacyState);
-  const work = join(f.root, 'legacy');
-  await initCurator(work, f.initialMemory, f.feed, 1);
+  // A workspace of its own: the fixture's workspace already owns its feed.
+  const work = join(f.root, 'legacy'),
+    feed = join(f.root, 'legacy-feed/project.jsonl');
+  await mkdir(dirname(feed));
+  await writeFile(feed, await readFile(f.feed));
+  await initCurator(work, f.initialMemory, feed, 1);
   const memory = join(work, 'memory');
   const confirmed = await memoryState(memory);
   assert.ok(Buffer.byteLength(confirmed) > 6144);
@@ -233,7 +207,7 @@ test('legacy extended STATE remains readable and authorized noop recovery and re
     await applyCurator(work, noop.seal);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'DESTINATION_BUSY') {
-      const owner = JSON.parse(await readFile(f.feed + '.lock', 'utf8'));
+      const owner = JSON.parse(await readFile(feed + '.lock', 'utf8'));
       const processInfo =
         process.platform === 'win32'
           ? spawnSync(
@@ -264,7 +238,9 @@ test('two materializations freeze the window, preserve active context and keep e
   const f = await fixture(t),
     source = await readFile(f.feed);
   const state0 = await readFile(join(f.memory, 'STATE.md'), 'utf8');
-  const knowledge0 = await readFile(join(f.memory, 'knowledge/topic.md'));
+  const knowledge0 = await readFile(
+    join(f.memory, 'knowledge/H000001/topic.md'),
+  );
   const first = await f.propose();
   assert.deepEqual(
     first.packet.events.map((e: { sequence: number }) => e.sequence),
@@ -272,12 +248,12 @@ test('two materializations freeze the window, preserve active context and keep e
   );
   assert.deepEqual(Object.keys(first.packet.context), [
     'STATE.md',
-    'knowledge/topic.md',
+    'knowledge/H000001/topic.md',
   ]);
   assert.ok(!JSON.stringify(first.packet.context).includes('HISTORY.md'));
   await f.event('four'); // Arrival while the proposal is pending stays out of its batch.
   const again = await prepareCurator(f.work, f.directive, {
-    context: ['knowledge/topic.md'],
+    context: ['knowledge/H000001/topic.md'],
   });
   assert.equal(again.run, first.run);
   const v1 = await validateCurator(f.work);
@@ -285,7 +261,7 @@ test('two materializations freeze the window, preserve active context and keep e
   const history1 = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
   const state1 = await readFile(join(f.memory, 'STATE.md'), 'utf8');
   // The checkpoint window carries the STATE it produced, links moved into history/.
-  assert.equal(await windowState(f.memory, 'H000001'), up(state1));
+  assert.equal(await windowState(f.memory, 'H000002'), up(state1));
   assert.ok(!history1.includes(state1), 'the index does not copy STATE');
   assert.ok(state0 !== state1);
   const second = await f.propose(4);
@@ -297,7 +273,7 @@ test('two materializations freeze the window, preserve active context and keep e
   // Explicit CLI apply validates and publishes the same sealed batch.
   const child = spawnSync(
     process.execPath,
-    ['src/curator-cli.ts', 'apply', '--work', f.work, '--confirm', v2.seal],
+    ['src/cli/curator-cli.ts', 'apply', '--work', f.work, '--confirm', v2.seal],
     { encoding: 'utf8' },
   );
   assert.equal(child.status, 0, child.stderr);
@@ -307,7 +283,7 @@ test('two materializations freeze the window, preserve active context and keep e
     [
       '--input-type=module',
       '--eval',
-      "import { applyCurator } from './src/curator.ts'; await applyCurator(process.argv[1], process.argv[2]);",
+      "import { applyCurator } from './src/curation/curator.ts'; await applyCurator(process.argv[1], process.argv[2]);",
       f.work,
       v2.seal,
     ],
@@ -317,16 +293,17 @@ test('two materializations freeze the window, preserve active context and keep e
   const history2 = await readFile(join(f.memory, 'HISTORY.md'), 'utf8');
   assert.ok(history2.startsWith(history1));
   assert.equal(
-    await windowState(f.memory, 'H000002'),
+    await windowState(f.memory, 'H000003'),
     up(await readFile(join(f.memory, 'STATE.md'), 'utf8')),
   );
   // The first window is unchanged by the second checkpoint.
-  assert.equal(await windowState(f.memory, 'H000001'), up(state1));
+  assert.equal(await windowState(f.memory, 'H000002'), up(state1));
   assert.deepEqual(
     historySegments(history2, 4).map((s) => [s.id, s.from, s.through]),
     [
-      ['H000001', 2, 2],
-      ['H000002', 3, 4],
+      ['H000001', 1, 1],
+      ['H000002', 2, 2],
+      ['H000003', 3, 4],
     ],
   );
   assert.match(
@@ -334,7 +311,7 @@ test('two materializations freeze the window, preserve active context and keep e
     /Open: preserve task/,
   );
   assert.deepEqual(
-    await readFile(join(f.memory, 'knowledge/topic.md')),
+    await readFile(join(f.memory, 'knowledge/H000001/topic.md')),
     knowledge0,
   );
   const checkpoint = await readFile(join(f.work, 'checkpoint.json'));
@@ -350,13 +327,13 @@ test('validation failure leaves confirmed files and checkpoint untouched; seal b
   const f = await fixture(t),
     cp = await readFile(join(f.work, 'checkpoint.json'));
   const p = await f.propose(2);
-  p.proposal.state = '# State\n\nInvented [E999](' + p.packet.feed + ')\n';
+  p.proposal.state = '# State\n\nInvented [E999]\n';
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal));
   await assert.rejects(validateCurator(f.work), {
     code: 'CURATOR_PROVENANCE_INVALID',
   });
   assert.deepEqual(await readFile(join(f.work, 'checkpoint.json')), cp);
-  p.proposal.state = '# State\n\nValid [E002](' + p.packet.feed + ')\n';
+  p.proposal.state = '# State\n\nValid [E002]\n';
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal));
   const v = await validateCurator(f.work);
   await appendFile(join(v.candidate, 'STATE.md'), '\nTampered\n');
@@ -371,9 +348,7 @@ test('ordinary event-like prose and Catalogo E1 titles are not provenance; real 
     p = await f.propose();
   p.proposal.state =
     '# Catalogo E1\n\nEsperimenti E01, E999 e E0000 sono nomi ordinari.\n' +
-    '[Catalogo E1](knowledge/topic.md) [E002](' +
-    p.packet.feed +
-    ')\n';
+    '[Catalogo E1](knowledge/H000001/topic.md) [E002]\n';
   p.proposal.history.topics = ['Catalogo E1'];
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal));
   const v = await validateCurator(f.work);
@@ -405,10 +380,7 @@ test('event labels, bare or as legacy feed links, validate canonical ID and decl
     'E001–E',
     'E001..E002..E002',
   ])
-    for (const cited of [
-      '[' + label + ']',
-      '[' + label + '](' + p.packet.feed + ')',
-    ]) {
+    for (const cited of ['[' + label + ']', '[' + label + ']']) {
       await writeFile(
         p.proposalFile!,
         JSON.stringify({
@@ -437,7 +409,7 @@ test('event labels, bare or as legacy feed links, validate canonical ID and decl
       p.proposalFile!,
       JSON.stringify({
         ...p.proposal,
-        state: p.proposal.state + '\n[' + label + '](' + p.packet.feed + ')\n',
+        state: p.proposal.state + '\n[' + label + ']\n',
       }),
     );
     assert.equal((await validateCurator(f.work)).status, 'validated');
@@ -447,7 +419,7 @@ test('event labels, bare or as legacy feed links, validate canonical ID and decl
     p.proposalFile!,
     JSON.stringify({
       ...p.proposal,
-      state: p.proposal.state + '\n[E002](knowledge/topic.md)\n',
+      state: p.proposal.state + '\n[E002](knowledge/H000001/topic.md)\n',
     }),
   );
   await assert.rejects(validateCurator(f.work), {
@@ -466,32 +438,47 @@ test('event labels, bare or as legacy feed links, validate canonical ID and decl
 
 test('dedicated HISTORY event ranges remain structural, canonical and bounded', async (t) => {
   const f = await fixture(t);
-  const original = await readFile(join(f.initialMemory, 'STATE.md'), 'utf8');
-  const history =
-    '# History\n' +
-    historyAppendix('# History\n', original, 1, 1, '2026-11-03T12:00:00.000Z', {
+  // Workspaces of their own: the fixture's workspace already owns its feed.
+  const feed = join(f.root, 'range-feed/project.jsonl');
+  await mkdir(dirname(feed));
+  await writeFile(feed, await readFile(f.feed));
+  const memory = join(f.root, 'range-memory');
+  await mkdir(join(memory, 'history'), { recursive: true });
+  await writeFile(join(memory, 'STATE.md'), '# State\n\nOpen. [E001]\n');
+  const entry = historyWindow(
+    '# History\n',
+    1,
+    1,
+    '2026-11-03T12:00:00.000Z',
+    {
       summary: 'Catalogo E1',
       topics: ['E1'],
       transition: 'Ordinary prose E999',
-    });
-  await writeFile(join(f.initialMemory, 'HISTORY.md'), history);
-  await initCurator(join(f.root, 'valid-range'), f.initialMemory, f.feed, 1);
-  for (const [i, [range, code]] of [
-    ['E01..E001', 'CURATOR_PROVENANCE_INVALID'],
-    ['E001..E999', 'CURATOR_HISTORY_INVALID'],
-    ['E002..E001', 'CURATOR_HISTORY_INVALID'],
+    },
+    [],
+    '# State\n\nOpen. [E001]\n',
+  );
+  const write = (index: string, window: string) =>
+    Promise.all([
+      writeFile(join(memory, 'HISTORY.md'), '# History\n' + index),
+      writeFile(join(memory, entry.name), window),
+    ]);
+  await write(entry.index, entry.text);
+  await initCurator(join(f.root, 'valid-range'), memory, feed, 1);
+  // A malformed label in the window is bad provenance; a bad range in the index is bad HISTORY.
+  for (const [i, [where, range, code]] of [
+    ['window', 'E01..E001', 'CURATOR_PROVENANCE_INVALID'],
+    ['index', 'E001..E999', 'CURATOR_HISTORY_INVALID'],
+    ['index', 'E002..E001', 'CURATOR_HISTORY_INVALID'],
   ].entries()) {
-    await writeFile(
-      join(f.initialMemory, 'HISTORY.md'),
-      history.replace('`E001..E001`', '`' + range + '`'),
+    const swap = (text: string) =>
+      text.replace('`E001..E001`', '`' + range + '`');
+    await write(
+      where === 'index' ? swap(entry.index) : entry.index,
+      swap(entry.text),
     );
     await assert.rejects(
-      initCurator(
-        join(f.root, 'invalid-range-' + i),
-        f.initialMemory,
-        f.feed,
-        1,
-      ),
+      initCurator(join(f.root, 'invalid-range-' + i), memory, feed, 1),
       { code },
     );
   }
@@ -500,7 +487,9 @@ test('dedicated HISTORY event ranges remain structural, canonical and bounded', 
 test('selective packet and two authored updates add linked detail notes and leave existing notes untouched', async (t) => {
   // Authored expectations exercise transport/integrity, not LLM semantic selection.
   const f = await fixture(t, true);
-  const untouched = await readFile(join(f.memory, 'knowledge/second.md'));
+  const untouched = await readFile(
+    join(f.memory, 'knowledge/H000001/second.md'),
+  );
   const checkpointBefore = await readFile(join(f.work, 'checkpoint.json'));
   const texts = [
     'Riscrivi il riepilogo in parole semplici, senza nuovi fatti.',
@@ -520,19 +509,19 @@ test('selective packet and two authored updates add linked detail notes and leav
   const feedBefore = await readFile(f.feed);
   const prepared = await prepareCurator(f.work, undefined, {
     through: 8,
-    context: ['knowledge/topic.md', 'knowledge/topic.md'],
+    context: ['knowledge/H000001/topic.md', 'knowledge/H000001/topic.md'],
   });
   const packet = JSON.parse(
     await readFile(join(prepared.run!, 'packet.json'), 'utf8'),
   );
   assert.deepEqual(Object.keys(packet.context), [
     'STATE.md',
-    'knowledge/topic.md',
+    'knowledge/H000001/topic.md',
   ]);
   const run = JSON.parse(
     await readFile(join(prepared.run!, 'run.json'), 'utf8'),
   );
-  assert.deepEqual(run.context, ['knowledge/topic.md']);
+  assert.deepEqual(run.context, ['knowledge/H000001/topic.md']);
   for (const name of Object.keys(packet.context))
     assert.equal(
       packet.context[name],
@@ -552,7 +541,7 @@ test('selective packet and two authored updates add linked detail notes and leav
     '\n## Diagnosi e limiti\n\nPercorso risolto dal cwd errato, correzione applicata. Build dichiarata verde; collaudo funzionale non eseguito.\n\n' +
     '## Formato\n\nR-31 e e\u0301 senza normalizzazione.\n\n' +
     '## Decisione e qualificazioni\n\nB sostituisce A solo per export locale, su direttiva utente. Nessun errore osservato sui file locali; rete non provata.\n\n' +
-    `[E006-E008](../${packet.feed})\n\n[Altro dettaglio](second.md)\n[Nota di partenza](topic.md)\n`;
+    `[E006-E008]\n\n[Altro dettaglio](H000001/second.md)\n[Nota di partenza](H000001/topic.md)\n`;
   const detailsNote =
     '---\nid: kn-00000000-0000-4000-8000-000000000003\ntype: knowledge\n---\n\n# Dettagli tecnici\n' +
     details;
@@ -561,7 +550,7 @@ test('selective packet and two authored updates add linked detail notes and leav
     state:
       '# Export\n\nObiettivo: completare export. Decisione attiva: B per export locale. Vincolo: preservare il formato.\n\n' +
       'Open: preserve task. Blocker: rete non provata; collaudo funzionale ancora aperto. Prossima azione: verificare export su rete.\n\n' +
-      `[Dettagli tecnici](knowledge/details.md) [E008](${packet.feed})\n`,
+      `[Dettagli tecnici](knowledge/details.md) [E008]\n`,
     history: {
       summary: 'Export locale',
       topics: ['Export'],
@@ -593,28 +582,27 @@ test('selective packet and two authored updates add linked detail notes and leav
     assert.ok(archived.includes(text), text);
     assert.ok(current.content.includes(text), text);
   }
-  // The new note is filed under its checkpoint: links to the legacy flat notes go one level up.
+  // The new note is filed under its checkpoint: links to the first checkpoint's notes are rebased.
   const related = /\[Altro dettaglio\]\(([^)]+)\)/.exec(current.content)![1]!;
   assert.ok(
     (
-      await readFile(resolve(f.memory, 'knowledge/H000001', related), 'utf8')
+      await readFile(resolve(f.memory, 'knowledge/H000002', related), 'utf8')
     ).includes('# Second'),
   );
   assert.deepEqual(
-    await readFile(join(f.memory, 'knowledge/second.md')),
+    await readFile(join(f.memory, 'knowledge/H000001/second.md')),
     untouched,
   );
   assert.deepEqual((await readdir(join(f.memory, 'knowledge'))).sort(), [
     'H000001',
-    'second.md',
-    'topic.md',
+    'H000002',
   ]);
-  assert.deepEqual(await readdir(join(f.memory, 'knowledge/H000001')), [
+  assert.deepEqual(await readdir(join(f.memory, 'knowledge/H000002')), [
     'details.md',
   ]);
   // The reader finds it in its folder, by logical path and by search.
   assert.match(
-    (await memoryRead(f.memory, 'knowledge/H000001/details.md')).content,
+    (await memoryRead(f.memory, 'knowledge/H000002/details.md')).content,
     /R-31/,
   );
   assert.ok(
@@ -633,7 +621,7 @@ test('selective packet and two authored updates add linked detail notes and leav
   });
   const next = await prepareCurator(f.work, undefined, {
     through: 9,
-    context: ['knowledge/topic.md'],
+    context: ['knowledge/H000001/topic.md'],
   });
   const nextPacket = JSON.parse(
     await readFile(join(next.run!, 'packet.json'), 'utf8'),
@@ -642,13 +630,11 @@ test('selective packet and two authored updates add linked detail notes and leav
     next.proposal!,
     JSON.stringify({
       ...proposal,
-      state:
-        nextPacket.context['STATE.md'] +
-        `\nProgresso locale: [E009](${nextPacket.feed}).\n`,
+      state: nextPacket.context['STATE.md'] + `\nProgresso locale: [E009].\n`,
       knowledge: {
         'knowledge/verification.md':
           '---\nid: kn-00000000-0000-4000-8000-000000000004\ntype: knowledge\n---\n\n# Verifica aggiuntiva\n\n' +
-          `L'utente dichiara: solo export locale verificato; rete ancora non provata. [E009](../${nextPacket.feed})\n`,
+          `L'utente dichiara: solo export locale verificato; rete ancora non provata. [E009]\n`,
       },
     }),
   );
@@ -664,7 +650,7 @@ test('selective packet and two authored updates add linked detail notes and leav
     exact.content,
   );
   assert.deepEqual(
-    await readFile(join(f.memory, 'knowledge/second.md')),
+    await readFile(join(f.memory, 'knowledge/H000001/second.md')),
     untouched,
   );
 });
@@ -691,11 +677,11 @@ test('proposal cannot supply HISTORY, escape memory, rewrite existing Knowledge 
       'CURATOR_UNSAFE_PATH',
     ],
     [
-      // A legacy flat name is reusable, but an existing note's identity is not: no rewrite.
+      // A name may repeat across checkpoints, but an existing note's identity cannot: no rewrite.
       {
         ...p.proposal,
         knowledge: {
-          'knowledge/topic.md': p.packet.context['knowledge/topic.md'],
+          'knowledge/topic.md': p.packet.context['knowledge/H000001/topic.md'],
         },
       },
       'CURATOR_NOTE_ID_DUPLICATE',
@@ -721,7 +707,7 @@ test('proposal cannot supply HISTORY, escape memory, rewrite existing Knowledge 
     JSON.stringify({
       ...p.proposal,
       knowledge: {
-        'knowledge/topic.md': p.packet.context['knowledge/topic.md'],
+        'knowledge/topic.md': p.packet.context['knowledge/H000001/topic.md'],
       },
     }),
   );
@@ -756,7 +742,7 @@ test('links require existing targets and real anchors; original artifacts requir
     p = await f.propose();
   for (const link of [
     '[bad](missing.md)',
-    '[bad](knowledge/topic.md#absent)',
+    '[bad](knowledge/H000001/topic.md#absent)',
     '[bad](../../secret.txt)',
   ]) {
     await writeFile(
@@ -771,7 +757,7 @@ test('links require existing targets and real anchors; original artifacts requir
     p.proposalFile!,
     JSON.stringify({
       ...p.proposal,
-      state: p.proposal.state + '\n[E999](' + p.packet.feed + ')',
+      state: p.proposal.state + '\n[E999]',
     }),
   );
   await assert.rejects(validateCurator(f.work), {
@@ -836,7 +822,7 @@ function crashApply(
       };
     }
     syncBuiltinESMExports();
-    const { applyCurator } = await import('./src/curator.ts');
+    const { applyCurator } = await import('./src/curation/curator.ts');
     try { await applyCurator(work, seal); }
     catch (error) {
       if (fault === 'crash' || error.code !== 'EIO') throw error;
@@ -960,7 +946,7 @@ test('simulated checkpoint rename EIO leaves authorization recoverable and repla
   assert.equal(JSON.parse(recovered.checkpoint).sequence, 2);
   assert.deepEqual(
     historySegments(recovered.tree['HISTORY.md']!, 2).map((s) => s.id),
-    ['H000001'],
+    ['H000001', 'H000002'],
   );
   await applyCurator(f.work, v.seal);
   assert.deepEqual(await snapshot(f.work), recovered);
@@ -1045,7 +1031,7 @@ function tracedApply(work: string, seal: string): StorageEvent[] {
       if (rel(path) === 'pending.json') events.push({kind:'unlink', path:'pending.json'});
     };
     syncBuiltinESMExports();
-    const { applyCurator } = await import('./src/curator.ts');
+    const { applyCurator } = await import('./src/curation/curator.ts');
     await applyCurator(work, seal);
     console.log(JSON.stringify(events));
   `,
@@ -1069,7 +1055,7 @@ const newNotes = (text: string, feed: string) =>
         n +
         '\n\n' +
         text +
-        ` [E002](../${feed})\n`,
+        ` [E002]\n`,
     ]),
   );
 
@@ -1078,6 +1064,8 @@ test('flush-order model loses unsynced data and name subsets and survives repeat
     p = await f.propose();
   p.proposal.knowledge = newNotes('Durable update.', p.packet.feed);
   await writeFile(p.proposalFile!, JSON.stringify(p.proposal));
+  // The model starts without a journal: drop the seed checkpoint's receipt.
+  await rm(join(f.work, 'apply.json'));
   const v = await validateCurator(f.work),
     before = await snapshot(f.work);
   const pointer = await readFile(join(f.work, 'pending.json'), 'utf8');
@@ -1206,7 +1194,7 @@ test('flush-order model loses unsynced data and name subsets and survives repeat
     assert.deepEqual(await snapshot(f.work), expected, JSON.stringify(row));
     await applyCurator(f.work, v.seal);
     assert.deepEqual(await snapshot(f.work), expected);
-    assert.equal(historySegments(expected.tree['HISTORY.md']!, 2).length, 1);
+    assert.equal(historySegments(expected.tree['HISTORY.md']!, 2).length, 2);
   }
   // Recovery over notes already in place rewrites nothing, yet flushes their folder's names.
   await writeFile(join(f.work, 'checkpoint.json'), before.checkpoint);
@@ -1216,7 +1204,7 @@ test('flush-order model loses unsynced data and name subsets and survives repeat
   );
   assert.ok(
     replay.some(
-      (e) => e.kind === 'directory' && e.path === 'memory/knowledge/H000001',
+      (e) => e.kind === 'directory' && e.path === 'memory/knowledge/H000002',
     ),
   );
   assert.deepEqual(await snapshot(f.work), expected);
@@ -1226,6 +1214,8 @@ test('a failed journal persistence barrier prevents Markdown promotion until rec
   const f = await fixture(t),
     _p = await f.propose(),
     v = await validateCurator(f.work);
+  // Without the seed checkpoint's receipt, the only apply.json synced is this apply's journal.
+  await rm(join(f.work, 'apply.json'));
   const before = await snapshot(f.work);
   crashApply(f.work, v.seal, 'apply.json', false, 'sync');
   assert.deepEqual(await snapshot(f.work), before);
@@ -1234,7 +1224,7 @@ test('a failed journal persistence barrier prevents Markdown promotion until rec
   await memoryState(f.memory);
   const after = await snapshot(f.work);
   assert.equal(JSON.parse(after.checkpoint).sequence, 2);
-  assert.equal(historySegments(after.tree['HISTORY.md']!, 2).length, 1);
+  assert.equal(historySegments(after.tree['HISTORY.md']!, 2).length, 2);
   await applyCurator(f.work, v.seal);
   assert.deepEqual(await snapshot(f.work), after);
 });
@@ -1263,8 +1253,8 @@ test('process crashes across promotion boundaries recover the authorized generat
   for (const name of [
     'STATE.md',
     window,
-    'knowledge/H000001/detail-a.md',
-    'knowledge/H000001/detail-b.md',
+    'knowledge/H000002/detail-a.md',
+    'knowledge/H000002/detail-b.md',
   ])
     assert.ok(expected.tree[name]!.includes(sample), name);
   assert.ok(
@@ -1284,16 +1274,16 @@ test('process crashes across promotion boundaries recover the authorized generat
     'memory/STATE.md',
     'memory/HISTORY.md',
     'memory/' + window,
-    'memory/knowledge/H000001/detail-b.md',
-    'memory/knowledge/H000001/detail-a.md',
+    'memory/knowledge/H000002/detail-b.md',
+    'memory/knowledge/H000002/detail-a.md',
     'checkpoint.json',
     'pending.json',
   ]) {
     await t.test(boundary, async () => {
       // Reset only this synthetic workspace to the verified pre-apply generation.
-      await rm(join(f.memory, 'history'), { recursive: true, force: true });
+      await rm(join(f.memory, window), { force: true });
       for (const note of ['a', 'b'])
-        await rm(join(f.memory, `knowledge/H000001/detail-${note}.md`), {
+        await rm(join(f.memory, `knowledge/H000002/detail-${note}.md`), {
           force: true,
         });
       for (const [name, text] of Object.entries(before.tree))
@@ -1318,7 +1308,7 @@ test('process crashes across promotion boundaries recover the authorized generat
       } else {
         // Recovery itself can crash, then resume without duplicating HISTORY.
         if (boundary === 'memory/HISTORY.md')
-          crashApply(f.work, v.seal, 'memory/knowledge/H000001/detail-b.md');
+          crashApply(f.work, v.seal, 'memory/knowledge/H000002/detail-b.md');
         assert.equal(await memoryState(f.memory), expected.tree['STATE.md']);
         assert.deepEqual(await snapshot(f.work), expected);
       }
@@ -1330,7 +1320,7 @@ test('process crashes across promotion boundaries recover the authorized generat
       assert.deepEqual(await snapshot(f.work), expected);
       assert.deepEqual(
         historySegments(expected.tree['HISTORY.md']!, 2).map((s) => s.id),
-        ['H000001'],
+        ['H000001', 'H000002'],
       );
       const receipt = await readFile(join(f.work, 'apply.json'));
       await applyCurator(f.work, v.seal);
@@ -1387,7 +1377,7 @@ test('prepare and validate recover first; incomplete recovery evidence blocks al
         assert.equal((await memoryFind(f.memory, 'Advancement')).length, 1);
       else if (operation === 'read')
         assert.match(
-          (await memoryRead(f.memory, 'H000001')).content,
+          (await memoryRead(f.memory, 'H000002')).content,
           /Advancement/,
         );
       else if (operation === 'abandon')
@@ -1427,7 +1417,7 @@ test('prepare and validate recover first; incomplete recovery evidence blocks al
         await writeFile(join(f.work, 'checkpoint.json'), 'null\n');
       if (corruption === 'unexpected-file')
         await writeFile(
-          join(f.memory, 'knowledge/topic.md'),
+          join(f.memory, 'knowledge/H000001/topic.md'),
           'unexpected edit',
         );
       const before = await readFile(join(f.memory, 'HISTORY.md'));
@@ -1487,7 +1477,7 @@ test('authorized original artifacts and new thematic Knowledge are linked withou
   assert.ok(
     window.includes('## Main session directive\n\n' + packet.directive),
   );
-  const original = await readFile(join(f.memory, 'knowledge/topic.md'));
+  const original = await readFile(join(f.memory, 'knowledge/H000001/topic.md'));
   const artifact =
     '../' + packet.artifacts.find((p: string) => p.endsWith('/experiment.csv'));
   await writeFile(
@@ -1495,9 +1485,7 @@ test('authorized original artifacts and new thematic Knowledge are linked withou
     JSON.stringify({
       action: 'update',
       state:
-        '# State\n\nOpen: preserve task. [E002](' +
-        packet.feed +
-        ') [Result](knowledge/result.md)\n',
+        '# State\n\nOpen: preserve task. [E002] [Result](knowledge/result.md)\n',
       history: {
         summary: 'Experiment result',
         topics: ['Experiment'],
@@ -1507,25 +1495,23 @@ test('authorized original artifacts and new thematic Knowledge are linked withou
         'knowledge/result.md':
           '---\nid: kn-00000000-0000-4000-8000-000000000002\ntype: knowledge\n---\n\n# Result\n\n[CSV](' +
           artifact +
-          ') [E002](../' +
-          packet.feed +
-          ')\n',
+          ') [E002]\n',
       },
     }),
   );
   const v = await validateCurator(f.work);
   crashApply(f.work, v.seal, 'memory/HISTORY.md');
   await assert.rejects(
-    readFile(join(f.memory, 'knowledge/H000001/result.md')),
+    readFile(join(f.memory, 'knowledge/H000002/result.md')),
     { code: 'ENOENT' },
   );
   await applyCurator(f.work, v.seal);
   assert.deepEqual(
-    await readFile(join(f.memory, 'knowledge/topic.md')),
+    await readFile(join(f.memory, 'knowledge/H000001/topic.md')),
     original,
   );
   assert.match(
-    await readFile(join(f.memory, 'knowledge/H000001/result.md'), 'utf8'),
+    await readFile(join(f.memory, 'knowledge/H000002/result.md'), 'utf8'),
     /experiment.csv/,
   );
   assert.equal(await readFile(csv, 'utf8'), 'result\n42\n');
@@ -1565,13 +1551,15 @@ test('a rewritten valid feed prefix is rejected against the confirmed checkpoint
   });
 });
 
-test('legacy layout and unsupported checkpoint formats are rejected', async (t) => {
+test('unknown memory files and unsupported checkpoint formats are rejected', async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.memory, 'WORKING.md'), '# Old view');
   await assert.rejects(prepareCurator(f.work, f.directive), {
     code: 'CURATOR_UNSAFE_PATH',
   });
   await rm(join(f.memory, 'WORKING.md'));
+  // No replay receipt, so the checkpoint itself is what gets read.
+  await rm(join(f.work, 'apply.json'));
   const cp = JSON.parse(
     await readFile(join(f.work, 'checkpoint.json'), 'utf8'),
   );
@@ -1586,7 +1574,7 @@ test('legacy layout and unsupported checkpoint formats are rejected', async (t) 
 
 test('process lock rejects concurrent materialization', async (t) => {
   const f = await fixture(t);
-  const { acquireJournalLock } = await import('../src/journal-lock.ts');
+  const { acquireJournalLock } = await import('../src/shared/journal-lock.ts');
   const release = await acquireJournalLock(join(f.work, 'curator.lock'));
   try {
     await assert.rejects(prepareCurator(f.work, f.directive), {

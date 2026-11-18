@@ -75,8 +75,8 @@ It does not change bytes, hash, path, provenance or meaning of the revision.
 The immutable receipts `taxonomy-changes/t-SHA256.json` record proposal,
 seal, approval reference, before/after fingerprints and previous receipt.
 The authenticated head detects alterations of the canonical data; it is not a signature against external
-writers that can rewrite all the files. Workspaces without this metadata
-and with only `taxonomy.json` stay valid without migration.
+writers that can rewrite all the files. A workspace with only `taxonomy.json`
+and no association metadata is valid.
 
 ## Navigation and views
 
@@ -84,8 +84,7 @@ and with only `taxonomy.json` stay valid without migration.
 exact revisions in chronological order, with provenance, current state and
 original/retroactive classification. Pages: default 5, maximum 20 results,
 `--limit N --cursor CURSOR`; changes to the checkpoint or metadata invalidate
-the cursor. It is not a limit on the number of categories. Legacy notes not yet
-versioned stay readable but do not appear in the historical catalog.
+the cursor. It is not a limit on the number of categories.
 
 Find keeps searching current notes, including effective categories in the metadata;
 `category` in the results stays the original placement, `thematicCategories`

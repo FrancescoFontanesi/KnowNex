@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { policy } from '../src/cli/bootstrap.ts';
 
 const repository = resolve('.');
 const archive = process.env.KNOWNEX_INSTALL_ARCHIVE
@@ -122,13 +123,10 @@ test(
     await assert.rejects(stat(join(project, 'memory')), { code: 'ENOENT' });
     const agents = await readFile(join(project, 'AGENTS.md'), 'utf8');
     assert.ok(agents.startsWith(personal));
-    const currentPolicy = (
-      await readFile(join(repository, 'AGENTS.md'), 'utf8')
-    ).match(/<!-- knownex:start -->[\s\S]*?<!-- knownex:end -->/)?.[0];
-    assert.ok(currentPolicy);
+    // The installed block is the package's policy, not this repository's own AGENTS.md.
     assert.equal(
       agents.match(/<!-- knownex:start -->[\s\S]*?<!-- knownex:end -->/)?.[0],
-      currentPolicy,
+      policy.trimEnd(),
     );
     assert.equal(agents.split('<!-- knownex:start -->').length, 2);
     assert.deepEqual(initialized.updated, ['AGENTS.md', '.gitignore']);
@@ -148,17 +146,6 @@ test(
     assert.match(initialized.nextSteps.join(' '), /explicitly approve/);
     assert.match(initialized.nextSteps.join(' '), /SessionStart/);
     assert.ok(initialized.created.includes('.codex/hooks.json'));
-    // Curation runs through `knownex checkpoint`: no Codex roles, agent config or delegation skill.
-    const retiredNames = [
-      '.codex/config.toml',
-      '.codex/agents/knownex_curator.toml',
-      '.codex/agents/knownex_recaller.toml',
-      '.agents/skills/knownex-checkpoint/SKILL.md',
-    ];
-    for (const name of retiredNames) {
-      assert.ok(!initialized.created.includes(name), name);
-      await assert.rejects(stat(join(project, name)), { code: 'ENOENT' });
-    }
     assert.match(agents, /knownex checkpoint --codex/);
     assert.match(agents, /subagent/);
     assert.match(agents, /knownex-recall/);
@@ -182,116 +169,6 @@ test(
       recallSkill,
       /main session's delegation instructions do not apply/,
     );
-    // Upgrade from an install that still owned roles, agent config and the delegation skill.
-    const installPath = join(project, '.knownex/internal/install.json');
-    const owned: Record<string, string> = {
-      '.codex/config.toml':
-        '[agents]\ndefault_subagent_model = "gpt-6.1-terra"\n',
-      '.codex/agents/knownex_curator.toml': 'name = "knownex_curator"\n',
-      '.codex/agents/knownex_recaller.toml': 'name = "knownex_recaller"\n',
-      '.agents/skills/knownex-checkpoint/SKILL.md':
-        '---\nname: knownex-checkpoint\n---\n',
-    };
-    const manifestBeforeUpgrade = await readFile(installPath, 'utf8');
-    const oldInstall = JSON.parse(manifestBeforeUpgrade);
-    for (const [name, text] of Object.entries(owned)) {
-      oldInstall.files[name] = createHash('sha256').update(text).digest('hex');
-      await mkdir(dirname(join(project, name)), { recursive: true });
-      await writeFile(join(project, name), text);
-    }
-    await writeFile(installPath, JSON.stringify(oldInstall, null, 2) + '\n');
-    // A user-modified retired file blocks init before anything changes.
-    const guardedNames = [
-      'AGENTS.md',
-      '.codex/hooks.json',
-      '.knownex/internal/install.json',
-      '.knownex/memory/STATE.md',
-      '.knownex/memory/HISTORY.md',
-      '.knownex/internal/feed/project.jsonl',
-      ...retiredNames,
-    ];
-    const recallPath = '.codex/agents/knownex_recaller.toml';
-    await writeFile(join(project, recallPath), owned[recallPath] + '# mine\n');
-    const guarded = await Promise.all(
-      guardedNames.map(
-        async (name) => [name, await readFile(join(project, name))] as const,
-      ),
-    );
-    const roleConflict = node([entry, 'init']);
-    assert.equal(roleConflict.status, 1);
-    assert.equal(JSON.parse(roleConflict.stderr).code, 'BOOTSTRAP_CONFLICT');
-    assert.equal(JSON.parse(roleConflict.stderr).file, recallPath);
-    for (const [name, bytes] of guarded)
-      assert.deepEqual(await readFile(join(project, name)), bytes, name);
-    await writeFile(join(project, recallPath), owned[recallPath]!);
-    const upgrade = cli(['init']);
-    assert.deepEqual([...upgrade.removed].sort(), [...retiredNames].sort());
-    for (const name of retiredNames)
-      await assert.rejects(stat(join(project, name)), { code: 'ENOENT' });
-    await assert.rejects(stat(join(project, '.codex/agents')), {
-      code: 'ENOENT',
-    });
-    assert.equal(await readFile(installPath, 'utf8'), manifestBeforeUpgrade);
-    // A project's own Codex config, never installed by KnowNex, is left alone.
-    const ownConfig = 'model = "personal"\n';
-    await writeFile(join(project, '.codex/config.toml'), ownConfig);
-    assert.deepEqual(cli(['init']).removed, []);
-    assert.equal(
-      await readFile(join(project, '.codex/config.toml'), 'utf8'),
-      ownConfig,
-    );
-    await rm(join(project, '.codex/config.toml'));
-    // Upgrade from an install that still captured transcripts: the old Stop
-    // wrapper runs the inert package stub, then init retires it with the
-    // capture hook entries and the managed docs no longer distributed.
-    const oldStop = '.codex/hooks/knownex-stop.cjs';
-    const oldStopText =
-      "const { resolve, join } = require('node:path');\n" +
-      "const root = resolve(__dirname, '../..');\n" +
-      'process.env.KNOWNEX_WORKSPACE = root;\n' +
-      "process.env.KNOWNEX_PROJECT_FEED = '1';\n" +
-      "process.env.KNOWNEX_PROVIDER = 'codex';\n" +
-      "require(join(root, 'node_modules/knownex/.codex/hooks/stop.cjs'));\n";
-    const oldDoc = '.knownex/internal/docs/CURATOR.md';
-    const oldDocText = '# Previous managed doc\n';
-    const captureHooks = JSON.parse(
-      await readFile(join(project, '.codex/hooks.json'), 'utf8'),
-    );
-    captureHooks.hooks.SessionEnd = [
-      {
-        hooks: [{ type: 'command', command: `node "${oldStop}"`, timeout: 3 }],
-      },
-    ];
-    const captureHooksText = JSON.stringify(captureHooks, null, 2) + '\n';
-    const captureInstall = JSON.parse(await readFile(installPath, 'utf8'));
-    for (const [name, text] of [
-      [oldStop, oldStopText],
-      [oldDoc, oldDocText],
-      ['.codex/hooks.json', captureHooksText],
-    ] as const) {
-      await writeFile(join(project, name), text);
-      captureInstall.files[name] = createHash('sha256')
-        .update(text)
-        .digest('hex');
-    }
-    await writeFile(
-      installPath,
-      JSON.stringify(captureInstall, null, 2) + '\n',
-    );
-    const oldStopRun = node([join(project, oldStop)], {
-      hook_event_name: 'SessionEnd',
-      session_id: 'synthetic-old-stop',
-      transcript_path: join(project, 'absent.jsonl'),
-    });
-    assert.equal(oldStopRun.status, 0, oldStopRun.stderr);
-    assert.equal(oldStopRun.stderr, '');
-    assert.deepEqual(JSON.parse(oldStopRun.stdout), {});
-    const captureRetired = cli(['init']);
-    assert.deepEqual([...captureRetired.removed].sort(), [oldStop, oldDoc]);
-    assert.ok(captureRetired.updated.includes('.codex/hooks.json'));
-    for (const name of [oldStop, oldDoc])
-      await assert.rejects(stat(join(project, name)), { code: 'ENOENT' });
-    assert.equal(await readFile(installPath, 'utf8'), manifestBeforeUpgrade);
     // The installed launcher runs directly; with nothing to curate it starts no session.
     const launched = node([entry, 'checkpoint', '--codex']);
     assert.equal(launched.status, 0, launched.stderr + launched.stdout);
@@ -481,17 +358,6 @@ test(
       '--through',
       '0',
     ]);
-    function invokeHandoff(milestone: string) {
-      hooks('UserPromptSubmit', {
-        turn_id: milestone + '-yes',
-        prompt:
-          '[$knownex-checkpoint](' +
-          join(project, '.agents/skills/knownex-checkpoint/SKILL.md') +
-          ')',
-      });
-      return { sequence: cli(['runtime']).latest };
-    }
-    const request = invokeHandoff('one');
     combined = await readFile(feed);
     const prep = cli([
       'curate',
@@ -529,7 +395,6 @@ test(
     await writeFile(prep.proposal, '{"action":"invalid"}\n');
     assert.equal(node([entry, 'curate', 'validate', '--work', work]).status, 1);
     assert.equal(cli(['runtime']).pending, 4);
-    assert.equal(cli(['runtime']).pendingRaw, 5);
     assert.equal(cli(['runtime']).through, 0);
     assert.equal(cli(['runtime']).activeRun, prep.run);
     assert.match(
@@ -541,10 +406,7 @@ test(
       prep.proposal,
       JSON.stringify({
         action: 'update',
-        state:
-          '# Synthetic A+B state\n\nA+B result. [E001..E004](' +
-          packet.feed +
-          ')\n',
+        state: '# Synthetic A+B state\n\nA+B result. [E001..E004]\n',
         history: {
           summary: 'A+B',
           topics: ['Synthetic'],
@@ -552,9 +414,7 @@ test(
         },
         knowledge: {
           'knowledge/bootstrap.md':
-            '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n\n# Synthetic bootstrap\n\nReusable fixture detail. [E004](../' +
-            packet.feed +
-            ')\n',
+            '---\nid: kn-00000000-0000-4000-8000-000000000001\ntype: knowledge\n---\n\n# Synthetic bootstrap\n\nReusable fixture detail. [E004]\n',
         },
       }),
     );
@@ -562,12 +422,13 @@ test(
     await writeFile(
       join(prep.run, 'review.json'),
       JSON.stringify({
-        version: 1,
+        version: 4,
         proposalSha256: createHash('sha256')
           .update(writtenProposal)
           .digest('hex'),
         summary: 'Fixture review, not a semantic-model evaluation',
         sources: [1, 4],
+        ignored: [2, 3],
         changes: [
           { path: 'STATE.md', summary: 'Initial state', sources: [1, 4] },
           {
@@ -576,7 +437,6 @@ test(
             sources: [4],
           },
         ],
-        critical: [],
         uncertainties: [],
         anomalies: [],
       }),
@@ -643,7 +503,7 @@ test(
       .hookSpecificOutput.additionalContext;
     assert.match(resumed, /Synthetic A\+B state/);
     assert.match(resumed, /0 pending project events/);
-    // S4.4 A: the consumed invocation is not a new milestone, even under a new key.
+    // With nothing new after the checkpoint, prepare is a noop and the feed is untouched.
     const checkpointBeforeReport = await readFile(
       join(work, 'checkpoint.json'),
     );
@@ -651,18 +511,6 @@ test(
     const feedBeforeReport = await readFile(feed);
     assert.equal(cli(['curate', 'prepare', '--work', work]).status, 'noop');
     assert.deepEqual(await readFile(feed), feedBeforeReport);
-    hooks('Stop', {
-      turn_id: 'one-yes',
-      last_assistant_message: 'Memoria consolidata.',
-    });
-    combined = await readFile(feed);
-    assert.ok(combined.toString('utf8').includes('Memoria consolidata.'));
-    assert.ok(
-      combined.subarray(0, feedBeforeReport.length).equals(feedBeforeReport),
-    );
-    const reportOnly = node([entry, 'curate', 'prepare', '--work', work]);
-    assert.equal(reportOnly.status, 0);
-    assert.equal(JSON.parse(reportOnly.stdout).status, 'noop');
     // E: a new SessionStart reports pending without treating it as progress or
     // mutating the checkpoint/authorization. This checks context, not model semantics.
     const cold = hooks('SessionStart', {
@@ -704,25 +552,18 @@ test(
     hooks('UserPromptSubmit', { prompt: technicalPrompt });
     hooks('Stop', { last_assistant_message: 'No changes' });
     combined = await readFile(feed);
-    const secondRequest = invokeHandoff('two');
-    combined = await readFile(feed);
     const second = cli(['curate', 'prepare', '--work', work]);
     const secondPacket = JSON.parse(
       await readFile(join(second.run, 'packet.json'), 'utf8'),
     );
     assert.deepEqual(
       secondPacket.events.map((e: { sequence: number }) => e.sequence),
-      [7, 8],
+      [5, 6],
     );
     assert.deepEqual(secondPacket.orderingIssues, []);
     assert.ok(
       secondPacket.events.some(
         (e: { text: string }) => e.text === technicalPrompt,
-      ),
-    );
-    assert.ok(
-      !secondPacket.events.some(
-        (e: { text: string }) => e.text === 'Memoria consolidata.',
       ),
     );
     // Same frozen batch on repeated prepare; no additional run/delegation.
@@ -936,270 +777,8 @@ test(
       assert.deepEqual(reinstalled.created, []);
       assert.deepEqual(reinstalled.updated, []);
       assert.deepEqual(await critical(), reinstallSnapshot);
-
-      // Exact S3 resources are adopted; previous user data and journals stay byte-identical.
-      await t.test(
-        'upgrade from the optional original S3 workspace',
-        {
-          skip: process.env.KNOWNEX_PREVIOUS_WORKSPACE
-            ? false
-            : 'Original S3 fixture not supplied; this run does not verify S3 adoption',
-        },
-        async () => {
-          assert.ok(process.env.KNOWNEX_PREVIOUS_WORKSPACE);
-          const previous = await realpath(
-            process.env.KNOWNEX_PREVIOUS_WORKSPACE,
-          );
-          assert.equal(dirname(previous), await realpath(tmpdir()));
-          const previousEntry = join(
-            previous,
-            'node_modules/knownex/dist/index.js',
-          );
-          assert.equal(
-            JSON.parse(
-              await readFile(
-                join(previous, 'node_modules/knownex/package.json'),
-                'utf8',
-              ),
-            ).version,
-            '0.0.0',
-          );
-          const previousOptions = permissions.replaceAll(
-            canonical.replaceAll('\\', '/'),
-            previous.replaceAll('\\', '/'),
-          );
-          function oldNode(args: string[], input?: unknown) {
-            const r = spawnSync(process.execPath, args, {
-              cwd: previous,
-              env: { ...process.env, NODE_OPTIONS: previousOptions },
-              encoding: 'utf8',
-              windowsHide: true,
-              timeout: 15000,
-              input: input === undefined ? undefined : JSON.stringify(input),
-            });
-            assert.ifError(r.error);
-            assert.equal(r.status, 0, r.stderr + r.stdout);
-            return JSON.parse(r.stdout);
-          }
-          const previousSession = 's5-previous-synthetic';
-          const previousHash = createHash('sha256')
-            .update(previousSession)
-            .digest('hex');
-          const previousTranscript = join(previous, 'synthetic.jsonl');
-          await writeFile(
-            previousTranscript,
-            JSON.stringify({
-              type: 'session_meta',
-              payload: { id: previousSession },
-            }) + '\n',
-          );
-          const payload = {
-            session_id: previousSession,
-            turn_id: 'previous',
-            transcript_path: previousTranscript,
-          };
-          oldNode([join(previous, '.codex/hooks/knownex-feed.cjs')], {
-            ...payload,
-            hook_event_name: 'UserPromptSubmit',
-            prompt: 'Previous project fact',
-          });
-          oldNode([join(previous, '.codex/hooks/knownex-feed.cjs')], {
-            ...payload,
-            hook_event_name: 'Stop',
-            last_assistant_message: 'Previous report',
-          });
-          oldNode([join(previous, '.codex/hooks/knownex-stop.cjs')], {
-            ...payload,
-            hook_event_name: 'SessionEnd',
-          });
-          await writeFile(
-            join(previous, 'memory/STATE.md'),
-            '# Previous state\n\nOpen task. [E001](../.knownex/feed/' +
-              previousHash +
-              '.jsonl)\n',
-          );
-          await writeFile(
-            join(previous, 'memory/knowledge/previous.md'),
-            '---\nid: kn-00000000-0000-4000-8000-000000000002\ntype: knowledge\n---\n\n# Previous detail\n\nFact. [E001](../../.knownex/feed/' +
-              previousHash +
-              '.jsonl)\n',
-          );
-          const previousWork = join(previous, '.knownex/curator');
-          oldNode([
-            previousEntry,
-            'curate',
-            'init',
-            '--work',
-            previousWork,
-            '--memory',
-            join(previous, 'memory'),
-            '--feed',
-            join(previous, '.knownex/feed', previousHash + '.jsonl'),
-            '--through',
-            '1',
-          ]);
-          const previousDirective = join(previous, 'directive.md');
-          await writeFile(previousDirective, 'Synthetic prior version test.');
-          const previousRun = oldNode([
-            previousEntry,
-            'curate',
-            'prepare',
-            '--work',
-            previousWork,
-            '--directive',
-            previousDirective,
-          ]);
-          await writeFile(previousRun.proposal, '{"action":"noop"}');
-          const previousValidation = oldNode([
-            previousEntry,
-            'curate',
-            'validate',
-            '--work',
-            previousWork,
-          ]);
-          oldNode([
-            previousEntry,
-            'curate',
-            'apply',
-            '--work',
-            previousWork,
-            '--confirm',
-            previousValidation.seal,
-          ]);
-          const previousData = [
-            'memory/STATE.md',
-            'memory/HISTORY.md',
-            'memory/knowledge/previous.md',
-            '.knownex/feed/' + previousHash + '.jsonl',
-            '.knownex/captures/' + previousHash + '.jsonl',
-            '.knownex/curator/checkpoint.json',
-            '.knownex/curator/apply.json',
-            '.knownex/curator/memory/STATE.md',
-            '.knownex/curator/memory/HISTORY.md',
-            '.knownex/curator/memory/knowledge/previous.md',
-          ];
-          const previousSnapshot = await Promise.all(
-            previousData.map(async (p) => ({
-              p,
-              bytes: await readFile(join(previous, p)),
-              mtime: (await stat(join(previous, p), { bigint: true })).mtimeNs,
-            })),
-          );
-          const previousAgents = await readFile(
-            join(previous, 'AGENTS.md'),
-            'utf8',
-          );
-          npm(
-            [
-              'install',
-              '--offline',
-              '--no-save',
-              '--package-lock=false',
-              '--ignore-scripts',
-              '--no-audit',
-              '--no-fund',
-              archive,
-            ],
-            previous,
-          );
-          const oldUpgraded = oldNode([previousEntry, 'init']);
-          assert.ok(oldUpgraded.updated.includes('.codex/hooks.json'));
-          assert.deepEqual(oldUpgraded.warnings, ['LEGACY_SESSION_FEEDS']);
-          assert.ok(
-            (await readFile(join(previous, 'AGENTS.md'), 'utf8')).startsWith(
-              previousAgents,
-            ),
-          );
-          assert.equal(
-            oldNode([previousEntry, 'runtime']).code,
-            'LEGACY_SESSION_FEEDS',
-          );
-          for (const x of previousSnapshot) {
-            assert.deepEqual(await readFile(join(previous, x.p)), x.bytes, x.p);
-            assert.equal(
-              (await stat(join(previous, x.p), { bigint: true })).mtimeNs,
-              x.mtime,
-              x.p,
-            );
-          }
-          assert.deepEqual(oldNode([previousEntry, 'init']).updated, []);
-          if (process.env.KNOWNEX_SMOKE_REPORT)
-            await writeFile(
-              process.env.KNOWNEX_SMOKE_REPORT,
-              JSON.stringify(
-                {
-                  status: 'passed',
-                  version: metadata.version,
-                  archive,
-                  workspace: project,
-                  sourceAccessDenied: true,
-                  hooks: true,
-                  crossSessionPending: true,
-                  boundedRecall: true,
-                  manualHandoff: true,
-                  failedCheckpoint: true,
-                  singlePassHelper: true,
-                  sameVersionReinstall: true,
-                  ownedResourceUpgrade: true,
-                  s3UpgradePreservesMemoryAndJournal: true,
-                  legacyFeed: 'preserved and explicitly blocked, no migration',
-                  llmCalls: 0,
-                  realCodexSession: 'unmeasured',
-                },
-                null,
-                2,
-              ) + '\n',
-            );
-        },
-      );
     }
 
-    // Rename only owned entrypoints; refuse modified/unowned old skills before any writes.
-    const oldSkill = '.agents/skills/knownex-handoff/SKILL.md';
-    const oldBody =
-      '---\nname: knownex-handoff\ndescription: Previous managed skill.\n---\n';
-    const manifestPath = join(project, '.knownex/internal/install.json');
-    const ownedManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    ownedManifest.files[oldSkill] = createHash('sha256')
-      .update(oldBody)
-      .digest('hex');
-    await mkdir(dirname(join(project, oldSkill)), { recursive: true });
-    await writeFile(
-      manifestPath,
-      JSON.stringify(ownedManifest, null, 2) + '\n',
-    );
-    await writeFile(join(project, oldSkill), oldBody + 'User modification\n');
-    const agentsBeforeRename = await readFile(join(project, 'AGENTS.md'));
-    const beforeConflict = await readFile(manifestPath);
-    const modifiedOld = node([entry, 'init']);
-    assert.equal(modifiedOld.status, 1);
-    assert.equal(JSON.parse(modifiedOld.stderr).file, oldSkill);
-    assert.deepEqual(await readFile(manifestPath), beforeConflict);
-    assert.deepEqual(
-      await readFile(join(project, 'AGENTS.md')),
-      agentsBeforeRename,
-    );
-    await writeFile(join(project, oldSkill), oldBody);
-    delete ownedManifest.files[oldSkill];
-    await writeFile(
-      manifestPath,
-      JSON.stringify(ownedManifest, null, 2) + '\n',
-    );
-    assert.equal(JSON.parse(node([entry, 'init']).stderr).file, oldSkill);
-    ownedManifest.files[oldSkill] = createHash('sha256')
-      .update(oldBody)
-      .digest('hex');
-    await writeFile(
-      manifestPath,
-      JSON.stringify(ownedManifest, null, 2) + '\n',
-    );
-    const extra = join(project, '.agents/skills/knownex-handoff/personal.txt');
-    await writeFile(extra, 'Preserve this user resource.');
-    const renamed = cli(['init']);
-    assert.deepEqual(renamed.removed, [oldSkill]);
-    await assert.rejects(stat(join(project, oldSkill)), { code: 'ENOENT' });
-    assert.equal(await readFile(extra, 'utf8'), 'Preserve this user resource.');
-    assert.deepEqual(cli(['init']).removed, []);
     // Claude Code: the same package hooks through .claude wrappers, merged settings and CLAUDE.md.
     const ownSettings = {
       permissions: { allow: ['Bash(ls:*)'] },
@@ -1262,7 +841,7 @@ test(
     );
     // Without --provider, init keeps both installed providers and changes nothing.
     const kept = cli(['init']);
-    assert.deepEqual([kept.created, kept.updated, kept.removed], [[], [], []]);
+    assert.deepEqual([kept.created, kept.updated], [[], []]);
     // A Claude turn through the installed wrapper lands in the shared project feed.
     const claudeTurn = node([join(project, '.claude/hooks/knownex-feed.cjs')], {
       hook_event_name: 'UserPromptSubmit',
@@ -1294,21 +873,6 @@ test(
       JSON.stringify(settings, null, 2) + '\n',
     );
     assert.deepEqual(cli(['init']).updated, []);
-    const legacy = join(
-      project,
-      '.knownex/internal/feed',
-      'a'.repeat(64) + '.jsonl',
-    );
-    await writeFile(legacy, 'legacy evidence must not be silently migrated');
-    assert.deepEqual(cli(['runtime']), {
-      status: 'blocked',
-      code: 'LEGACY_SESSION_FEEDS',
-      journals: ['.knownex/internal/feed/' + 'a'.repeat(64) + '.jsonl'],
-    });
-    assert.match(
-      hooks('SessionStart', {}).hookSpecificOutput.additionalContext,
-      /LEGACY_SESSION_FEEDS/,
-    );
     if (!archive) assert.deepEqual(await readFile(feed), combined);
     const stateBeforeConflict = await readFile(
       join(project, '.knownex/memory/STATE.md'),
@@ -1335,7 +899,7 @@ test(
       assert.equal(node([entry, ...args]).status, 2);
     t.diagnostic(
       archive
-        ? 'Packed RC: offline install/reinstall, private ignores, hooks, A-to-B continuity, bounded pending, manual handoff, failed-batch withdrawal/fresh approval, single-pass helper, S3 resource upgrade and data/journal preservation passed. Runtime source access denied. Real Codex/model behavior unmeasured.'
+        ? 'Packed RC: offline install/reinstall, private ignores, hooks, A-to-B continuity, bounded pending, manual handoff, failed-batch withdrawal/fresh approval and single-pass helper passed. Runtime source access denied. Real Codex/model behavior unmeasured.'
         : 'Staged compiled payload (no installer generated), project hooks, A-to-B pending, repeated Stop, failed validation, sequence-zero init, update/recovery/replay, managed policy, navigator and idempotence passed with source access denied to runtime Node processes.',
     );
   },

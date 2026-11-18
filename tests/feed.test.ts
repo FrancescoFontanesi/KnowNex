@@ -12,9 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { appendFeedEvent } from '../src/feed.ts';
-import type { FeedInput } from '../src/feed.ts';
-import { acquireJournalLock } from '../src/journal-lock.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
+import type { FeedInput } from '../src/feed/feed.ts';
+import { acquireJournalLock } from '../src/shared/journal-lock.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const input: FeedInput = {

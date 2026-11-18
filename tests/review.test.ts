@@ -10,9 +10,9 @@ import {
   initCurator,
   prepareCurator,
   validateCurator,
-} from '../src/curator.ts';
-import { writeCurationDraft } from '../src/curation-io.ts';
-import { appendFeedEvent } from '../src/feed.ts';
+} from '../src/curation/curator.ts';
+import { writeCurationDraft } from '../src/checkpoint/curation-io.ts';
+import { appendFeedEvent } from '../src/feed/feed.ts';
 
 const hash = (text: string | Buffer) =>
   createHash('sha256').update(text).digest('hex');
@@ -47,10 +47,9 @@ async function fixture(t: test.TestContext) {
     autonomous: true,
   });
   const dir = prepared.run!;
-  const packet = JSON.parse(await readFile(join(dir, 'packet.json'), 'utf8'));
   const proposal = {
     action: 'update',
-    state: '# Progetto\n\nRetention: 14 giorni [E001](' + packet.feed + ').\n',
+    state: '# Progetto\n\nRetention: 14 giorni [E001].\n',
     history: { summary: 'Retention', topics: ['Dati'], transition: 'Avvio.' },
     knowledge: {},
   };
@@ -103,28 +102,6 @@ test('a v4 review rejects critical, unknown versions, v3 with ignored and v2 wit
   }
   await f.save();
   await validateCurator(f.work);
-});
-
-test('sealed v1/v2 reviews still publish, whatever their critical list says', async (t) => {
-  for (const version of [1, 2]) {
-    const f = await fixture(t);
-    // Line references that the removed checker would have rejected: they are now inert.
-    f.review.version = version;
-    delete f.review.ignored;
-    f.review.critical = [
-      { before: { startLine: 99, endLine: 1 }, after: 'missing', reason: '' },
-    ];
-    await f.save();
-    await applyCurator(f.work, (await validateCurator(f.work)).seal);
-  }
-});
-
-test('a sealed v3 review, without ignored, still publishes', async (t) => {
-  const f = await fixture(t);
-  f.review.version = 3;
-  delete f.review.ignored;
-  await f.save();
-  await applyCurator(f.work, (await validateCurator(f.work)).seal);
 });
 
 test('sources and ignored are disjoint and together cover exactly the batch', async (t) => {
